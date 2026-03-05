@@ -63,7 +63,7 @@ sequenceDiagram
     Plugin->>GeminiCLI: HTTP POST /v1/a2a/chat (with ofetch)
     
     rect rgb(255, 240, 245)
-        Note over Plugin, GeminiCLI: Resilience Layer<br/>Timeout: 60s, Retry: Max 3
+        Note over Plugin, GeminiCLI: Resilience Layer<br/>Timeout: 60s, Retry: Max 3 (only before connection established)
     end
     
     GeminiCLI-->>Plugin: Stream Response (A2A Format)
@@ -82,7 +82,7 @@ sequenceDiagram
 
 * **[Must Have]** `@ai-sdk/provider` パッケージの `LanguageModelV1` インターフェース（またはOpenCode公式Provider API）への完全準拠。
 * **[Must Have]** AI SDKフォーマットからA2Aペイロードへのマッピング（`mapper.ts`）。
-* **[Must Have]** `ofetch`を用いた、ストリーミング通信と自動リトライ（最大3回、60秒タイムアウト）。再試行は「接続確立（初回ヘッダ/レスポンス受信）前」のみ許可対象とする。また、再試行を許すリクエストは必ず `idempotency key` を要求し、キーがない場合は再試行しないこと。
+* **[Must Have]** `ofetch`を用いた、ストリーミング通信と自動リトライ（最大3回、60秒タイムアウト）。再試行は「接続確立（初回ヘッダ/レスポンス受信）前」のみ許可対象とする。また、再試行を許すリクエストは必ず `idempotencyKey`（HTTPヘッダー `Idempotency-Key` にマッピング）を要求し、キーがない場合は再試行しないこと。
 * **[Must Have]** Gemini CLIからのツールコール要求をAI SDKのツールコール形式へマッピングし、OpenCodeへ返却。
 * **[Should Have]** `zod`を用いたA2Aレスポンス（Chunk）のパースとスキーマ検証。
 * **[Won't Have]** 中間プロキシサーバー（Express/Hono等）の立ち上げ（直接プロバイダークラスとして動作させるため）。
@@ -172,7 +172,7 @@ export type A2AResponseChunk = z.infer<typeof A2AResponseChunkSchema>;
       "retryStatusCodes": [408, 429, 500, 502, 503, 504]
     }
     ```
-    > **Note:** `a2a-client.ts` における通信ラッパー実装では、上記グローバル設定のみに依存せず、リクエスト送信前に必ずペイロード内の `idempotencyKey` の有無を確認すること。万が一 `idempotencyKey` が存在しない場合は、その呼び出し時に `ofetch` へ渡す `retry` オプションを強制的に `0` に動的設定するか、リトライを行わず即座に例外をスローすることで、「idempotency key がない場合は再試行しない」条件を担保すること。
+    > **Note:** `a2a-client.ts` における通信ラッパー実装では、上記グローバル設定のみに依存せず、リクエスト送信前に必ずペイロード内の `idempotencyKey` の有無を確認すること。万が一 `idempotencyKey` が存在しない場合は、その呼び出し時に `ofetch` へ渡す `retry` オプションを強制的に `0` に動的設定するか、リトライを行わず即座に例外をスローすることで、「idempotencyKey がない場合は再試行しない」条件を担保すること。
 
 ## 7. LLM Guidelines (For AI Developer)
 
