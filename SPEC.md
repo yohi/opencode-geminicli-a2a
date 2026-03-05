@@ -114,6 +114,7 @@ export type A2AConfig = z.infer<typeof ConfigSchema>;
 
 // 2. A2A Request Schema (to Gemini CLI)
 export const A2ARequestSchema = z.object({
+  idempotencyKey: z.string().min(1),
   model: z.string(),
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant', 'system']),
@@ -171,6 +172,7 @@ export type A2AResponseChunk = z.infer<typeof A2AResponseChunkSchema>;
       "retryStatusCodes": [408, 429, 500, 502, 503, 504]
     }
     ```
+    > **Note:** `a2a-client.ts` における通信ラッパー実装では、上記グローバル設定のみに依存せず、リクエスト送信前に必ずペイロード内の `idempotencyKey` の有無を確認すること。万が一 `idempotencyKey` が存在しない場合は、その呼び出し時に `ofetch` へ渡す `retry` オプションを強制的に `0` に動的設定するか、リトライを行わず即座に例外をスローすることで、「idempotency key がない場合は再試行しない」条件を担保すること。
 
 ## 7. LLM Guidelines (For AI Developer)
 
