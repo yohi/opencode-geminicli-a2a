@@ -5,6 +5,7 @@ export const ConfigSchema = z.object({
     host: z.string().default('127.0.0.1'),
     port: z.number().int().default(41242),
     token: z.string().optional(),
+    protocol: z.enum(['http', 'https']).optional(),
 });
 
 export type A2AConfig = z.infer<typeof ConfigSchema>;

@@ -2,6 +2,8 @@ import { ofetch, FetchError } from 'ofetch';
 import { APICallError } from '@ai-sdk/provider';
 import type { A2AConfig, A2ARequest } from './schemas';
 
+const RETRY_STATUS_CODES = [408, 409, 425, 429, 500, 502, 503, 504];
+
 export interface ChatStreamOptions {
     request: A2ARequest;
     idempotencyKey?: string;
@@ -20,7 +22,7 @@ export class A2AClient {
 
     constructor(config: A2AConfig) {
         this.config = config;
-        this.endpoint = `http://${config.host}:${config.port}/v1/a2a/chat`;
+        this.endpoint = `${config.protocol ?? 'http'}://${config.host}:${config.port}/v1/a2a/chat`;
     }
 
     /**
@@ -36,7 +38,13 @@ export class A2AClient {
         }
 
         if (this.config.token) {
-            headers['Authorization'] = `Bearer ${this.config.token}`;
+            const isSecure = this.endpoint.startsWith('https://');
+            const isLocalhost = this.config.host === '127.0.0.1' || this.config.host === 'localhost' || this.config.host === '[::1]';
+            if (isSecure || isLocalhost) {
+                headers['Authorization'] = `Bearer ${this.config.token}`;
+            } else {
+                console.warn('A2AClient: Token is present but endpoint is not secure and not localhost. Authorization header will not be sent.');
+            }
         }
 
         const retryCount = idempotencyKey ? 3 : 0;
@@ -48,7 +56,7 @@ export class A2AClient {
                 body: request, // ofetch will automatically JSON.stringify if object
                 retry: retryCount,
                 retryDelay: 500,
-                retryStatusCodes: [408, 409, 425, 429, 500, 502, 503, 504],
+                retryStatusCodes: RETRY_STATUS_CODES,
                 timeout: 60000,
                 signal: abortSignal,
                 ignoreResponseError: true,
@@ -61,7 +69,7 @@ export class A2AClient {
                     url: this.endpoint,
                     requestBodyValues: request,
                     statusCode: response.status,
-                    isRetryable: [408, 409, 425, 429, 500, 502, 503, 504].includes(response.status),
+                    isRetryable: RETRY_STATUS_CODES.includes(response.status),
                 });
             }
 
@@ -92,7 +100,7 @@ export class A2AClient {
                 }
             }
 
-            const isRetryableStatus = statusCode ? [408, 409, 425, 429, 500, 502, 503, 504].includes(statusCode) : true;
+            const isRetryableStatus = statusCode ? RETRY_STATUS_CODES.includes(statusCode) : true;
 
             // その他のネットワークエラー等
             throw new APICallError({

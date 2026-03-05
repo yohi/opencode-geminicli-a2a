@@ -2,6 +2,7 @@ import {
     type LanguageModelV1Prompt,
     type LanguageModelV1StreamPart,
     type LanguageModelV1CallOptions,
+    type LanguageModelV1FinishReason,
 } from '@ai-sdk/provider';
 import type { A2ARequest, A2AResponseChunk } from '../schemas';
 
@@ -21,14 +22,18 @@ export function mapPromptToA2AMessages(prompt: LanguageModelV1Prompt): A2AReques
                     contentStr += item.text;
                 }
             }
-            messages.push({ role: 'user', content: contentStr });
+            if (contentStr) {
+                messages.push({ role: 'user', content: contentStr });
+            }
         } else if (part.role === 'assistant') {
             for (const item of part.content) {
                 if (item.type === 'text') {
                     contentStr += item.text;
                 }
             }
-            messages.push({ role: 'assistant', content: contentStr });
+            if (contentStr) {
+                messages.push({ role: 'assistant', content: contentStr });
+            }
         } else if (part.role === 'tool') {
             // For tool responses, map them stringified or as expected by A2A.
             // Often, provider mapping serializes tool results as user messages or specialized tool msgs.
@@ -53,7 +58,7 @@ export function mapTools(options: LanguageModelV1CallOptions): A2ARequest['tools
             type: 'function',
             function: {
                 name: tool.name,
-                description: tool.description,
+                description: tool.type === 'function' ? tool.description : undefined,
                 parameters: tool.type === 'function' ? tool.parameters : undefined,
             }
         };
@@ -103,7 +108,7 @@ export function mapA2AChunkToStreamParts(chunk: A2AResponseChunk): LanguageModel
 
     // 3. Finish Reason
     if (choice.finish_reason) {
-        let finishReason: any = 'unknown';
+        let finishReason: LanguageModelV1FinishReason = 'unknown';
         switch (choice.finish_reason) {
             case 'stop': finishReason = 'stop'; break;
             case 'length': finishReason = 'length'; break;
@@ -114,7 +119,8 @@ export function mapA2AChunkToStreamParts(chunk: A2AResponseChunk): LanguageModel
         parts.push({
             type: 'finish',
             finishReason,
-            usage: { promptTokens: 0, completionTokens: 0 }, // If A2A provides usage, map it here
+            // TODO: map actual usage tokens into usage when A2A responses include them
+            usage: { promptTokens: 0, completionTokens: 0 },
         });
     }
 
