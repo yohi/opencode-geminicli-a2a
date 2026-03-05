@@ -87,7 +87,7 @@ sequenceDiagram
     また、再試行を許すリクエストは必ず `idempotencyKey` に基づくHTTPヘッダー `Idempotency-Key` を要求する。
     `idempotencyKey` の生成責任と振る舞いは以下の仕様に従う：
     1. OpenCode（呼び出し元）がキーを提供した場合は、それを `Idempotency-Key` ヘッダにマッピングして使用する。
-    2. 提供されなかった場合、プラグイン側でUUID等を自動生成して使用するか、あるいはキー無しリクエストとして続行する代わりに再試行を無効化（`retry: 0`）する。
+    2. 提供されなかった場合、UUID等の自動生成は行わず、強制的に再試行を無効化（`retry: 0`）した上で、キー無しのリクエストとして続行する。
     なお、特定のエンドポイントで明示的に許可されている場合を除き、キーをリクエストボディに埋め込んではならない。
 * **[Must Have]** Gemini CLIからのツールコール要求をAI SDKのツールコール形式へマッピングし、OpenCodeへ返却。
 * **[Should Have]** `zod`を用いたA2Aレスポンス（Chunk）のパースとスキーマ検証。
@@ -120,7 +120,6 @@ export type A2AConfig = z.infer<typeof ConfigSchema>;
 
 // 2. A2A Request Schema (to Gemini CLI)
 export const A2ARequestSchema = z.object({
-  idempotencyKey: z.string().min(1).optional(),
   model: z.string(),
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant', 'system']),
