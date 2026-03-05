@@ -78,4 +78,30 @@ describe('resolveConfig', () => {
         process.env.GEMINI_A2A_PORT = 'invalid-port';
         expect(() => resolveConfig()).toThrow();
     });
+
+    it('should fall back to defaults or options when env vars are empty strings', () => {
+        process.env.GEMINI_A2A_HOST = '';
+        process.env.GEMINI_A2A_PORT = '   '; // Whitespace only
+        process.env.GEMINI_A2A_TOKEN = '';
+
+        const config = resolveConfig();
+        expect(config).toEqual({
+            host: '127.0.0.1',
+            port: 41242,
+            token: undefined,
+            protocol: undefined,
+        });
+
+        const configWithOptions = resolveConfig({
+            host: 'fallback-host',
+            port: 1234,
+            protocol: 'https',
+        });
+        expect(configWithOptions).toEqual({
+            host: 'fallback-host',
+            port: 1234,
+            token: undefined,
+            protocol: 'https',
+        });
+    });
 });

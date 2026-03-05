@@ -1,13 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseA2AStream } from './stream';
-import { A2ARequest } from '../schemas';
 
 describe('parseA2AStream', () => {
-    const dummyRequest: A2ARequest = {
-        model: 'test',
-        messages: [],
-        stream: true,
-    };
 
     function createStream(chunks: string[]): ReadableStream<Uint8Array> {
         return new ReadableStream({
@@ -31,7 +25,7 @@ describe('parseA2AStream', () => {
         const stream = createStream(sseData);
         const results = [];
 
-        for await (const chunk of parseA2AStream(stream, dummyRequest)) {
+        for await (const chunk of parseA2AStream(stream)) {
             results.push(chunk);
         }
 
@@ -49,7 +43,7 @@ describe('parseA2AStream', () => {
         const stream = createStream(ndjsonData);
         const results = [];
 
-        for await (const chunk of parseA2AStream(stream, dummyRequest)) {
+        for await (const chunk of parseA2AStream(stream)) {
             results.push(chunk);
         }
 
@@ -67,7 +61,7 @@ describe('parseA2AStream', () => {
         const stream = createStream(fragmentedData);
         const results = [];
 
-        for await (const chunk of parseA2AStream(stream, dummyRequest)) {
+        for await (const chunk of parseA2AStream(stream)) {
             results.push(chunk);
         }
 
