@@ -60,7 +60,7 @@ describe('Integration: Gemini CLI A2A Provider', () => {
     });
 
     afterAll(async () => {
-        await new Promise(resolve => server.close(resolve));
+        await new Promise<void>((resolve) => server.close(() => resolve()));
     });
 
     it('should complete a full streaming request to the mock server', async () => {

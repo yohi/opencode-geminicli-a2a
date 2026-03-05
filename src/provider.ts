@@ -3,6 +3,7 @@ import type {
     LanguageModelV1CallOptions,
     LanguageModelV1StreamPart,
     LanguageModelV1FunctionToolCall,
+    LanguageModelV1FinishReason,
 } from '@ai-sdk/provider';
 import { resolveConfig, type OpenCodeProviderOptions } from './config';
 import { A2AClient } from './a2a-client';
@@ -68,7 +69,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
             stream,
             rawCall: {
                 rawPrompt: request.messages,
-                rawSettings: { ...options }, // Store raw options as settings
+                rawSettings: {},
             },
             rawResponse: {
                 headers,
@@ -88,7 +89,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         const reader = sdkStream.getReader();
         let text = '';
         const toolCalls: LanguageModelV1FunctionToolCall[] = [];
-        let finishReason: any = 'unknown';
+        let finishReason: LanguageModelV1FinishReason = 'unknown';
         const usage = { promptTokens: 0, completionTokens: 0 };
 
         // To reconstruct tool arguments that arrive in deltas:
