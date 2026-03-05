@@ -1,33 +1,33 @@
 # opencode-geminicli-a2a-provider
 
-OpenCode to Gemini CLI A2A Provider Plugin. This package provides a custom provider for the Vercel AI SDK that communicates directly with a local Gemini CLI instance using the A2A (Agent-to-Agent) protocol.
+OpenCode と Gemini CLI を A2A (Agent-to-Agent) プロトコルを介して直接連携させるためのカスタムプロバイダープラグインです。Vercel AI SDK 互換のインターフェースを提供します。
 
-## Features
+## 特徴
 
-- **Native A2A Support**: Direct communication with Gemini CLI without intermediate proxy servers.
-- **AI SDK Compatible**: Implements the `LanguageModelV1` interface for seamless integration with @ai-sdk.
-- **Resilient**: Built-in support for retries and timeouts using `ofetch`.
-- **Type Safe**: Schema validation with `Zod`.
+- **ネイティブ A2A サポート**: 中間プロキシサーバーを介さず、Gemini CLI と直接通信します。
+- **AI SDK 互換**: `@ai-sdk/provider` の `LanguageModelV1` インターフェースを実装しており、`@ai-sdk` とシームレスに統合可能です。
+- **堅牢な設計**: `ofetch` による自動リトライとタイムアウト機能を内蔵しています。
+- **型安全**: `Zod` によるランタイム・スキーマバリデーションを適用しています。
 
-## Installation
+## インストール
 
 ```bash
 npm install opencode-geminicli-a2a-provider
 ```
 
-## Configuration
+## 設定
 
-The provider can be configured via environment variables or explicitly in code.
+環境変数またはコード内での明示的な設定の両方に対応しています。
 
-### Environment Variables
+### 環境変数
 
-- `GEMINI_A2A_PORT`: Port of the Gemini CLI A2A server (default: `41242`)
-- `GEMINI_A2A_HOST`: Host of the Gemini CLI A2A server (default: `127.0.0.1`)
-- `GEMINI_A2A_TOKEN`: Optional authorization token.
+- `GEMINI_A2A_PORT`: Gemini CLI A2A サーバーのポート (デフォルト: `41242`)
+- `GEMINI_A2A_HOST`: Gemini CLI A2A サーバーのホスト (デフォルト: `127.0.0.1`)
+- `GEMINI_A2A_TOKEN`: 認証用トークン（任意）
 
-### OpenCode Configuration
+### OpenCode での設定例
 
-In your `opencode.jsonc`, you can specify the provider settings:
+`opencode.jsonc` に以下の設定を追加することで、プロバイダーの動作をカスタマイズできます。
 
 ```jsonc
 {
@@ -39,10 +39,11 @@ In your `opencode.jsonc`, you can specify the provider settings:
 }
 ```
 
-## Usage
+## 使い方
 
 ```typescript
 import { createGeminiA2AProvider } from 'opencode-geminicli-a2a-provider';
+import { generateText } from 'ai';
 
 const geminiA2A = createGeminiA2AProvider({
   port: 41242
@@ -50,27 +51,26 @@ const geminiA2A = createGeminiA2AProvider({
 
 const model = geminiA2A('gemini-2.5-pro');
 
-// Use with AI SDK generateText or streamText
-import { generateText } from 'ai';
-
+// AI SDK の generateText や streamText を使用
 const { text } = await generateText({
   model,
-  prompt: 'Hello, how can you help me today?'
+  prompt: 'こんにちは、今日の調子はどうですか？'
 });
 ```
 
-## Architecture
+## アーキテクチャ
 
-For detailed architectural decisions and specifications, please refer to [SPEC.md](./SPEC.md).
+詳細なアーキテクチャ設計や通信プロトコルの仕様については、[SPEC.md](./SPEC.md) を参照してください。
 
-## Development
+## 開発ガイド
 
-### Prerequisites
-- Node.js (v18+)
+### 前提条件
+- Node.js (v18 以上)
 - npm
 
-### Commands
-- `npm run dev`: Start development mode with hot reload.
-- `npm run build`: Build the project (CJS/ESM).
-- `npm run test`: Run tests using Vitest.
-- `npm run typecheck`: Run TypeScript type checking.
+### 開発用コマンド
+- `npm run dev`: ホットリロードを有効にしてビルドを開始します。
+- `npm run build`: プロジェクトをビルドします (CJS/ESM 両対応)。
+- `npm run test`: Vitest による全テストを実行します。
+- `npm run typecheck`: TypeScript の型チェックを実行します。
+
