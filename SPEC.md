@@ -4,7 +4,7 @@
 
 本プロジェクトは、ターミナルIDEエージェント「OpenCode」と「Gemini CLI」を、公式のA2A（Agent-to-Agent）プロトコルを介してローカルフェデレーションさせるためのカスタムプロバイダープラグイン（opencode-geminicli-a2a-provider）の開発を目的とする。
 
-中間にOpenAI互換プロキシサーバーを立てるアプローチを排除し、OpenCodeのプラグインAPI（AI SDK互換）内で直接A2Aプロトコルへの変換を行うことで、遅延のない堅牢なローカルプロセス間通信を実現する。
+中間にOpenAI互換プロキシサーバーを立てるアプローチを排除し、OpenCodeのプラグインAPI（AI SDK互換）内で直接A2Aプロトコルへの変換を行うことで、遅延を最小化した堅牢なローカルプロセス間通信を実現する。
 
 ### 1.1 Scope
 
@@ -82,7 +82,7 @@ sequenceDiagram
 
 * **[Must Have]** `@ai-sdk/provider` パッケージの `LanguageModelV1` インターフェース（またはOpenCode公式Provider API）への完全準拠。
 * **[Must Have]** AI SDKフォーマットからA2Aペイロードへのマッピング（`mapper.ts`）。
-* **[Must Have]** `ofetch`を用いた、ストリーミング通信と自動リトライ（最大3回、60秒タイムアウト）。
+* **[Must Have]** `ofetch`を用いた、ストリーミング通信と自動リトライ（最大3回、60秒タイムアウト）。再試行は「接続確立（初回ヘッダ/レスポンス受信）前」のみ許可対象とする。また、再試行を許すリクエストは必ず `idempotency key` を要求し、キーがない場合は再試行しないこと。
 * **[Must Have]** Gemini CLIからのツールコール要求をAI SDKのツールコール形式へマッピングし、OpenCodeへ返却。
 * **[Should Have]** `zod`を用いたA2Aレスポンス（Chunk）のパースとスキーマ検証。
 * **[Won't Have]** 中間プロキシサーバー（Express/Hono等）の立ち上げ（直接プロバイダークラスとして動作させるため）。
@@ -119,7 +119,14 @@ export const A2ARequestSchema = z.object({
     role: z.enum(['user', 'assistant', 'system']),
     content: z.string(),
   })),
-  tools: z.array(z.any()).optional(),
+  tools: z.array(z.object({
+    type: z.string(),
+    function: z.object({
+      name: z.string(),
+      description: z.string().optional(),
+      parameters: z.unknown().optional(),
+    }).passthrough().optional(),
+  }).passthrough()).optional(),
   stream: z.literal(true),
 });
 
@@ -131,7 +138,14 @@ export const A2AResponseChunkSchema = z.object({
   choices: z.array(z.object({
     delta: z.object({
       content: z.string().optional(),
-      tool_calls: z.array(z.any()).optional(),
+      tool_calls: z.array(z.object({
+        id: z.string().optional(),
+        type: z.string().optional(),
+        function: z.object({
+          name: z.string().optional(),
+          arguments: z.string().optional(),
+        }).passthrough().optional(),
+      }).passthrough()).optional(),
     }),
     finish_reason: z.string().nullable(),
   })),
