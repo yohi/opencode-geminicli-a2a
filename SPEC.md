@@ -114,7 +114,7 @@ export type A2AConfig = z.infer<typeof ConfigSchema>;
 
 // 2. A2A Request Schema (to Gemini CLI)
 export const A2ARequestSchema = z.object({
-  idempotencyKey: z.string().min(1),
+  idempotencyKey: z.string().min(1).optional(),
   model: z.string(),
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant', 'system']),
@@ -178,6 +178,6 @@ export type A2AResponseChunk = z.infer<typeof A2AResponseChunkSchema>;
 
 このドキュメントを読み込んだAIアシスタントへ：
 
-* **実装の最初のステップ**: まず `@opencode-ai/plugin` および `@ai-sdk/provider` の型定義を調査してください。OpenCodeがカスタムプロバイダーとして要求するインターフェース（例: Vercel AI SDK の `LanguageModelV1` クラスの `doStream` メソッドの実装）を特定することが最優先事項です。
+* **実装の最初のステップ**: まず `@opencode-ai/plugin` および `@ai-sdk/provider` を参照し、それらが提供する型インターフェース定義を調査してください。OpenCodeがカスタムプロバイダーとして要求する仕様（例: Vercel AI SDK の公式定義に準拠した `LanguageModelV1` インターフェースの `doGenerate` と `doStream` メソッドの実装）を特定することが最優先事項です。
 * **アンチパターン**: 調査の結果、OpenCodeのAPIが不明瞭だったとしても、「ローカルにExpressサーバーを立てて `@ai-sdk/openai-compatible` を使うアプローチ」に逃げないでください。本プロジェクトの目的は、A2Aプロトコルをネイティブに喋るカスタムプロバイダークラス（TSプラグイン）を作ることです。
 * **エラーハンドリング**: Gemini CLI（ローカルサーバー）は起動していない可能性があります。`ofetch`の接続エラー時には、OpenCode（AI SDK）が想定するエラークラスをスローするか、わかりやすいエラーメッセージを伝播させてください。
