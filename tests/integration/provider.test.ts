@@ -48,12 +48,16 @@ describe('Integration: Gemini CLI A2A Provider', () => {
             });
         });
 
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((resolve, reject) => {
+            server.once('error', reject);
             server.listen(0, '127.0.0.1', () => {
+                server.off('error', reject);
                 const address = server.address();
-                if (address && typeof address === 'object') {
-                    port = address.port;
+                if (!address || typeof address !== 'object') {
+                    reject(new Error('Failed to get server address'));
+                    return;
                 }
+                port = address.port;
                 resolve();
             });
         });
