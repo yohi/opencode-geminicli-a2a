@@ -82,7 +82,13 @@ sequenceDiagram
 
 * **[Must Have]** `@ai-sdk/provider` パッケージの `LanguageModelV1` インターフェース（またはOpenCode公式Provider API）への完全準拠。
 * **[Must Have]** AI SDKフォーマットからA2Aペイロードへのマッピング（`mapper.ts`）。
-* **[Must Have]** `ofetch`を用いた、ストリーミング通信と自動リトライ（最大3回、60秒タイムアウト）。再試行は「接続確立（初回ヘッダ/レスポンス受信）前」のみ許可対象とする。また、再試行を許すリクエストは必ず `idempotencyKey`（HTTPヘッダー `Idempotency-Key` にマッピング）を要求し、キーがない場合は再試行しないこと。
+* **[Must Have]** `ofetch`を用いた、ストリーミング通信と自動リトライ（最大3回、60秒タイムアウト）。
+    再試行は「接続確立（初回ヘッダ/レスポンス受信）前」のプレレスポンスエラーのみを対象とし、ストリーミングレスポンスの再読み込み（巻き戻し）を試みてはならない。
+    また、再試行を許すリクエストは必ず `idempotencyKey` に基づくHTTPヘッダー `Idempotency-Key` を要求する。
+    `idempotencyKey` の生成責任と振る舞いは以下の仕様に従う：
+    1. OpenCode（呼び出し元）がキーを提供した場合は、それを `Idempotency-Key` ヘッダにマッピングして使用する。
+    2. 提供されなかった場合、プラグイン側でUUID等を自動生成して使用するか、あるいはキー無しリクエストとして続行する代わりに再試行を無効化（`retry: 0`）する。
+    なお、特定のエンドポイントで明示的に許可されている場合を除き、キーをリクエストボディに埋め込んではならない。
 * **[Must Have]** Gemini CLIからのツールコール要求をAI SDKのツールコール形式へマッピングし、OpenCodeへ返却。
 * **[Should Have]** `zod`を用いたA2Aレスポンス（Chunk）のパースとスキーマ検証。
 * **[Won't Have]** 中間プロキシサーバー（Express/Hono等）の立ち上げ（直接プロバイダークラスとして動作させるため）。
@@ -163,6 +169,7 @@ export type A2AResponseChunk = z.infer<typeof A2AResponseChunkSchema>;
 * **Headers**:
     * `Content-Type: application/json`
     * `Authorization: Bearer {token}` (tokenが存在する場合のみ)
+    * `Idempotency-Key: {idempotencyKey}` （再試行可能なリクエストで必須。`idempotencyKey`パラメータからマッピング。特定のエンドポイントが指定しない限り、ボディには埋め込まないこと）
 * **Timeout**: `60000` (60秒)
 * **Retry Options**:
     ```json
@@ -172,7 +179,7 @@ export type A2AResponseChunk = z.infer<typeof A2AResponseChunkSchema>;
       "retryStatusCodes": [408, 429, 500, 502, 503, 504]
     }
     ```
-    > **Note:** `a2a-client.ts` における通信ラッパー実装では、上記グローバル設定のみに依存せず、リクエスト送信前に必ずペイロード内の `idempotencyKey` の有無を確認すること。万が一 `idempotencyKey` が存在しない場合は、その呼び出し時に `ofetch` へ渡す `retry` オプションを強制的に `0` に動的設定するか、リトライを行わず即座に例外をスローすることで、「idempotencyKey がない場合は再試行しない」条件を担保すること。
+    > **Note:** `a2a-client.ts` における通信ラッパー実装では、上記グローバル設定のみに依存せず、リクエスト送信前に必ずリクエスト元の `idempotencyKey` の有無を確認すること。万が一キーが存在しない場合は、その呼び出し時に `ofetch` へ渡す `retry` オプションを強制的に `0` に動的設定し、「idempotencyKey がない場合は再試行しない」という単一のルールに従うこと（例外をスローしない）。また、再試行ロジックはストリーミングレスポンスの再読み込み・巻き戻しを試みてはならない（再試行はレスポンス前のエラーのみに限定する）。これらの振る舞いは `a2a-client.ts` のラッパー内に明記すること。
 
 ## 7. LLM Guidelines (For AI Developer)
 
@@ -180,4 +187,6 @@ export type A2AResponseChunk = z.infer<typeof A2AResponseChunkSchema>;
 
 * **実装の最初のステップ**: まず `@opencode-ai/plugin` および `@ai-sdk/provider` を参照し、それらが提供する型インターフェース定義を調査してください。OpenCodeがカスタムプロバイダーとして要求する仕様（例: Vercel AI SDK の公式定義に準拠した `LanguageModelV1` インターフェースの `doGenerate` と `doStream` メソッドの実装）を特定することが最優先事項です。
 * **アンチパターン**: 調査の結果、OpenCodeのAPIが不明瞭だったとしても、「ローカルにExpressサーバーを立てて `@ai-sdk/openai-compatible` を使うアプローチ」に逃げないでください。本プロジェクトの目的は、A2Aプロトコルをネイティブに喋るカスタムプロバイダークラス（TSプラグイン）を作ることです。
-* **エラーハンドリング**: Gemini CLI（ローカルサーバー）は起動していない可能性があります。`ofetch`の接続エラー時には、OpenCode（AI SDK）が想定するエラークラスをスローするか、わかりやすいエラーメッセージを伝播させてください。
+* **エラーハンドリング**: Gemini CLI（ローカルサーバー）は起動していない可能性があります。`a2a-client.ts` における `ofetch` 呼び出し箇所、および初期化部分において、発生したエラーに応じて以下のように具体的なエラー型を明示して伝播させてください：
+    * ネットワークエラー、タイムアウト、接続拒否などの `ofetch` 接続エラー時は、OpenCode が提供する `APICallError` などをスローし、内部に原始エラーメッセージ、HTTPステータス、URLを保持させること。
+    * レスポンスの構造が想定外の場合（Zodスキーマ検証エラー等）は、`InvalidResponseDataError` などをスローし、レスポンスボディの抜粋など詳細な情報を含めること。
