@@ -53,13 +53,13 @@ sequenceDiagram
     OpenCode->>Plugin: 生成リクエスト (OpenCode Format)  
       
     rect rgb(240, 248, 255)  
-        Note over Plugin: 1. Config Resolve (Env > JSONC)<br/>2. Payload Mapping<br/>3. Zod Validation  
+        Note over Plugin: 1. Config Resolve (Env > JSONC > Defaults)<br/>2. Payload Mapping<br/>3. Zod Validation  
     end  
       
     Plugin->>GeminiCLI: HTTP POST /v1/a2a/chat (with ofetch)  
       
     rect rgb(255, 240, 245)  
-        Note over Plugin, GeminiCLI: Resilience Layer<br/>Timeout: 60s, Retry: Max 3 (Expo Backoff)  
+        Note over Plugin, GeminiCLI: Resilience Layer<br/>Timeout: 60s, Retry: Max 3 (Fixed delay: retryDelay: 500)  
     end  
       
     GeminiCLI-->>Plugin: Stream Response (A2A Format)  
@@ -78,7 +78,7 @@ sequenceDiagram
 
 * **[Must Have]** 環境変数および設定ファイルからの接続情報ロード（環境変数を優先）。
 * **[Must Have]** OpenCodeのメッセージ履歴からA2Aペイロードへのマッピング。
-* **[Must Have]** ofetchを用いた、ストリーミング通信と自動リトライ（最大3回、60秒タイムアウト）。
+* **[Must Have]** ofetchを用いた、ストリーミング通信と自動リトライ（最大3回、固定遅延: retryDelay: 500、60秒タイムアウト）。
 * **[Must Have]** Gemini CLIからのツールコール要求をOpenCode標準のフォーマットへ渡し、実行を委譲。
 * **[Should Have]** zodを用いたA2Aレスポンス（Chunk）のパースとスキーマ検証。
 * **[Won't Have]** プラグイン独自でのコンテキスト刈り込み（プルーニング）機能。
@@ -88,8 +88,8 @@ sequenceDiagram
 
 設定値は以下の優先順位で解決すること（1が最優先）。
 
-1. **環境変数**: GEMINI_A2A_PORT, GEMINI_A2A_HOST, GEMINI_A2A_TOKEN
-2. **OpenCode設定**: opencode.jsonc 内の a2aProvider オブジェクト
+1. **環境変数**: GEMINI_A2A_PORT (環境変数からは文字列として取得されるため、スキーマで z.coerce.number() により数値に変換), GEMINI_A2A_HOST (文字列として維持), GEMINI_A2A_TOKEN (文字列/オプショナルとして維持)
+2. **OpenCode設定**: opencode.jsonc 内の a2aProvider オブジェクト (ポートフィールドには同様に z.coerce.number() を使用)
 3. **デフォルト値**: Host: 127.0.0.1, Port: 41242, Token: undefined
 
 ## 5. Data Structure & Schemas (Zod / TypeScript)
@@ -102,7 +102,7 @@ import { z } from 'zod';
 // 1. Configuration Schema  
 export const ConfigSchema = z.object({  
   host: z.string().default('127.0.0.1'),  
-  port: z.number().int().default(41242),  
+  port: z.coerce.number().int().default(41242),  
   token: z.string().optional(),  
 });  
 export type A2AConfig = z.infer<typeof ConfigSchema>;
@@ -114,7 +114,7 @@ export const A2ARequestSchema = z.object({
     role: z.enum(['user', 'assistant', 'system']),  
     content: z.string(),  
   })),  
-  tools: z.array(z.any()).optional(), // OpenCode側のツール定義をパススルー  
+  tools: z.array(z.object({}).passthrough()).optional(), // OpenCode側のツール定義をパススルー  
   stream: z.literal(true),  
 });  
 export type A2ARequest = z.infer<typeof A2ARequestSchema>;
@@ -125,7 +125,7 @@ export const A2AResponseChunkSchema = z.object({
   choices: z.array(z.object({  
     delta: z.object({  
       content: z.string().optional(),  
-      tool_calls: z.array(z.any()).optional(),  
+      tool_calls: z.array(z.object({}).passthrough()).optional(),  
     }),  
     finish_reason: z.string().nullable(),  
   })),  
