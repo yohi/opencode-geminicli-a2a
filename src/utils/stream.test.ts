@@ -68,4 +68,27 @@ describe('parseA2AStream', () => {
         expect(results.length).toBe(1);
         expect(results[0].choices[0].delta.content).toBe('frag');
     });
+
+    it('throws error on malformed JSON chunk', async () => {
+        const stream = createStream(['data: {invalid json}\n\n']);
+        await expect(async () => {
+            for await (const _ of parseA2AStream(stream)) { }
+        }).rejects.toThrowError(/Failed to parse JSON chunk/);
+    });
+
+    it('throws error on validation failure', async () => {
+        const stream = createStream(['data: {"id": "1", "missing_choices": true}\n\n']);
+        await expect(async () => {
+            for await (const _ of parseA2AStream(stream)) { }
+        }).rejects.toThrowError(/Chunk validation failed/);
+    });
+
+    it('produces no outputs for empty lines/newlines', async () => {
+        const stream = createStream(['\n', '\n\n', '   \n']);
+        const results = [];
+        for await (const chunk of parseA2AStream(stream)) {
+            results.push(chunk);
+        }
+        expect(results.length).toBe(0);
+    });
 });
