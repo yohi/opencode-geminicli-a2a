@@ -1,70 +1,80 @@
 import { z } from 'zod';
 
-// 1. Configuration Schema
+// 1. Configuration Schema (Stable)
 export const ConfigSchema = z.object({
     host: z.string().default('127.0.0.1'),
     port: z.number().int().default(41242),
     token: z.string().optional(),
-    protocol: z.enum(['http', 'https']).optional(),
+    protocol: z.enum(['http', 'https']).default('http'),
 });
 
 export type A2AConfig = z.infer<typeof ConfigSchema>;
 
-// 2. A2A Request Schema (to Gemini CLI)
-export const A2ARequestSchema = z.object({
-    model: z.string(),
-    messages: z.array(
-        z.object({
-            role: z.enum(['user', 'assistant', 'system']),
-            content: z.string(),
-        })
-    ),
-    tools: z
-        .array(
-            z.object({
-                type: z.string(),
-                function: z
-                    .object({
-                        name: z.string(),
-                        description: z.string().optional(),
-                        parameters: z.unknown().optional(),
-                    })
-                    .passthrough()
-                    .optional(),
-            }).passthrough()
-        )
-        .optional(),
-    stream: z.literal(true),
+// 2. A2A JSON-RPC Request Schema
+export const A2AJsonRpcRequestSchema = z.object({
+    jsonrpc: z.literal('2.0'),
+    id: z.union([z.string(), z.number()]),
+    method: z.literal('message/stream'),
+    params: z.object({
+        message: z.object({
+            messageId: z.string(),
+            role: z.enum(['user', 'assistant']),
+            parts: z.array(z.object({
+                kind: z.literal('text'),
+                text: z.string()
+            }))
+        }),
+        configuration: z.object({
+            blocking: z.boolean().default(false)
+        }).optional()
+    })
 });
 
-export type A2ARequest = z.infer<typeof A2ARequestSchema>;
+export type A2AJsonRpcRequest = z.infer<typeof A2AJsonRpcRequestSchema>;
 
-// 3. A2A Response Chunk Schema (from Gemini CLI)
-export const A2AResponseChunkSchema = z.object({
-    id: z.string(),
-    choices: z.array(
-        z.object({
-            delta: z.object({
-                content: z.string().optional(),
-                tool_calls: z
-                    .array(
-                        z.object({
-                            id: z.string().optional(),
-                            type: z.string().optional(),
-                            function: z
-                                .object({
-                                    name: z.string().optional(),
-                                    arguments: z.string().optional(),
-                                })
-                                .passthrough()
-                                .optional(),
-                        }).passthrough()
-                    )
-                    .optional(),
-            }),
-            finish_reason: z.string().nullable(),
-        })
-    ),
+// 3. A2A JSON-RPC Response Result Schema
+export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
+    z.object({
+        kind: z.literal('task'),
+        id: z.string(),
+        contextId: z.string(),
+        status: z.object({ state: z.string() }),
+        history: z.array(z.any()).optional(),
+        metadata: z.record(z.any()).optional(),
+        artifacts: z.array(z.any()).optional(),
+    }),
+    z.object({
+        kind: z.literal('status-update'),
+        taskId: z.string(),
+        contextId: z.string().optional(),
+        status: z.object({
+            state: z.string(),
+            message: z.object({
+                parts: z.array(z.object({
+                    kind: z.string(),
+                    text: z.string().optional(),
+                    data: z.unknown().optional()
+                }))
+            }).optional(),
+            timestamp: z.string().optional()
+        }),
+        final: z.boolean().optional(),
+        metadata: z.record(z.any()).optional(),
+    })
+]);
+
+export type A2AResponseResult = z.infer<typeof A2AResponseResultSchema>;
+
+// 4. A2A JSON-RPC Response Wrapper
+export const A2AJsonRpcResponseSchema = z.object({
+    jsonrpc: z.literal('2.0'),
+    id: z.union([z.string(), z.number()]).nullable(),
+    result: A2AResponseResultSchema.optional(),
+    error: z.object({
+        code: z.number(),
+        message: z.string(),
+        data: z.unknown().optional()
+    }).optional()
 });
 
-export type A2AResponseChunk = z.infer<typeof A2AResponseChunkSchema>;
+export type A2AJsonRpcResponse = z.infer<typeof A2AJsonRpcResponseSchema>;

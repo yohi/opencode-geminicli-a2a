@@ -7,14 +7,14 @@ import type {
 } from '@ai-sdk/provider';
 import { resolveConfig, type OpenCodeProviderOptions } from './config';
 import { A2AClient } from './a2a-client';
-import { mapPromptToA2AMessages, mapTools, mapA2AChunkToStreamParts } from './utils/mapper';
+import { mapPromptToA2AJsonRpcRequest, mapA2AResponseToStreamParts } from './utils/mapper';
 import { parseA2AStream } from './utils/stream';
-import type { A2ARequest } from './schemas';
+import type { A2AJsonRpcRequest } from './schemas';
 
 export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
     readonly specificationVersion = 'v1';
     readonly provider = 'opencode-geminicli-a2a';
-    readonly defaultObjectGenerationMode = undefined; // Let SDK infer best mode, A2A relies on tools
+    readonly defaultObjectGenerationMode = undefined;
     readonly modelId: string;
 
     private client: A2AClient;
@@ -25,16 +25,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         this.client = new A2AClient(config);
     }
 
-    private createA2ARequest(options: LanguageModelV1CallOptions): A2ARequest {
-        const messages = mapPromptToA2AMessages(options.prompt);
-        const tools = mapTools(options);
-
-        return {
-            model: this.modelId,
-            messages,
-            ...(tools && tools.length > 0 ? { tools } : {}),
-            stream: true,
-        };
+    private createA2ARequest(options: LanguageModelV1CallOptions): A2AJsonRpcRequest {
+        return mapPromptToA2AJsonRpcRequest(options.prompt);
     }
 
     async doStream(options: LanguageModelV1CallOptions) {
@@ -53,9 +45,14 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
             async start(controller) {
                 try {
                     for await (const chunk of chunkGenerator) {
-                        const parts = mapA2AChunkToStreamParts(chunk);
-                        for (const part of parts) {
-                            controller.enqueue(part);
+                        if (chunk.result) {
+                            const parts = mapA2AResponseToStreamParts(chunk.result);
+                            for (const part of parts) {
+                                controller.enqueue(part);
+                            }
+                        } else if (chunk.error) {
+                            // JSON-RPC エラーのハンドリング
+                            throw new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`);
                         }
                     }
                     controller.close();
@@ -68,8 +65,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         return {
             stream,
             rawCall: {
-                rawPrompt: request.messages,
-                rawSettings: {},
+                rawPrompt: request.params.message,
+                rawSettings: request.params.configuration || {},
             },
             rawResponse: {
                 headers,
@@ -82,8 +79,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
     }
 
     async doGenerate(options: LanguageModelV1CallOptions) {
-        // A2A natively streams, so we consume the stream internally for generate.
-        // NOTE: If A2A later supports stream: false, we can branch here, but SPEC says A2A is stream: true only by convention here to align with AI SDK UI streaming priorities.
         const { stream: sdkStream, rawCall, rawResponse, request, warnings } = await this.doStream(options);
 
         const reader = sdkStream.getReader();
@@ -92,7 +87,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         let finishReason: LanguageModelV1FinishReason = 'unknown';
         const usage = { promptTokens: 0, completionTokens: 0 };
 
-        // To reconstruct tool arguments that arrive in deltas:
         const activeToolCalls = new Map<string, { name: string; args: string }>();
 
         try {
