@@ -1,0 +1,40 @@
+import { z } from 'zod';
+import { ConfigSchema, type A2AConfig } from './schemas';
+
+export interface OpenCodeProviderOptions {
+    host?: string;
+    port?: number;
+    token?: string;
+}
+
+export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig {
+    // 1. 環境変数の取得（文字列として取得される）
+    const envHost = process.env.GEMINI_A2A_HOST;
+    const envPortStr = process.env.GEMINI_A2A_PORT;
+    const envToken = process.env.GEMINI_A2A_TOKEN;
+
+    // 2. 引数によるオプションの取得
+    const optHost = options?.host;
+    const optPortStr = options?.port; // 文字列・数値の可能性を考慮
+    const optToken = options?.token;
+
+    // 3. 優先順位（環境変数 > オプション）でマージ
+    const mergedConfig = {
+        host: envHost ?? optHost,
+        port: envPortStr ?? optPortStr,
+        token: envToken ?? optToken,
+    };
+
+    // 4. Zod スキーマでパース（デフォルト値の適用と型変換）
+    // coerce を使って port の文字列を数値に変換する一時的なスキーマを作成
+    const parseSchema = z.object({
+        host: z.string().optional(),
+        port: z.coerce.number().int().optional(),
+        token: z.string().optional()
+    });
+
+    const parsedData = parseSchema.parse(mergedConfig);
+
+    // 最終的な ConfigSchema で検証とデフォルト値適用
+    return ConfigSchema.parse(parsedData);
+}
