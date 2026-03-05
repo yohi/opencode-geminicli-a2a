@@ -23,6 +23,7 @@ npm install opencode-geminicli-a2a-provider
 
 - `GEMINI_A2A_PORT`: Gemini CLI A2A サーバーのポート (デフォルト: `41242`)
 - `GEMINI_A2A_HOST`: Gemini CLI A2A サーバーのホスト (デフォルト: `127.0.0.1`)
+- `GEMINI_A2A_PROTOCOL`: 接続プロトコル (`http` または `https`、デフォルト: `http`)
 - `GEMINI_A2A_TOKEN`: 認証用トークン（任意）
 
 ### OpenCode での設定例
@@ -34,6 +35,7 @@ npm install opencode-geminicli-a2a-provider
   "a2aProvider": {
     "host": "127.0.0.1",
     "port": 41242,
+    "protocol": "http",
     "token": "your-token-here"
   }
 }
@@ -46,7 +48,8 @@ import { createGeminiA2AProvider } from 'opencode-geminicli-a2a-provider';
 import { generateText } from 'ai';
 
 const geminiA2A = createGeminiA2AProvider({
-  port: 41242
+  port: 41242,
+  protocol: 'http'
 });
 
 const model = geminiA2A('gemini-2.5-pro');
