@@ -19,6 +19,7 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig {
     const envHost = getNormalizedEnv('GEMINI_A2A_HOST');
     const envPortStr = getNormalizedEnv('GEMINI_A2A_PORT');
     const envToken = getNormalizedEnv('GEMINI_A2A_TOKEN');
+    const envProtocol = getNormalizedEnv('GEMINI_A2A_PROTOCOL');
 
     // 2. 引数によるオプションの取得
     const optHost = options?.host;
@@ -31,14 +32,14 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig {
         host: envHost ?? optHost,
         port: envPortStr ?? optPortStr,
         token: envToken ?? optToken,
-        protocol: optProtocol,
+        protocol: (envProtocol as 'http' | 'https' | undefined) ?? optProtocol,
     };
 
     // 4. Zod スキーマでパース（デフォルト値の適用と型変換）
     // coerce を使って port の文字列を数値に変換する一時的なスキーマを作成
     const parseSchema = z.object({
         host: z.string().optional(),
-        port: z.coerce.number().int().optional(),
+        port: z.coerce.number().int().refine(n => Number.isFinite(n) && n > 0 && n <= 65535, 'invalid port').optional(),
         token: z.string().optional(),
         protocol: z.enum(['http', 'https']).optional(),
     });

@@ -39,7 +39,8 @@ export class A2AClient {
 
         if (this.config.token) {
             const isSecure = this.endpoint.startsWith('https://');
-            const isLocalhost = this.config.host === '127.0.0.1' || this.config.host === 'localhost' || this.config.host === '[::1]';
+            const normalizedHost = this.config.host.replace(/^\[|\]$/g, '');
+            const isLocalhost = normalizedHost === '127.0.0.1' || normalizedHost === 'localhost' || normalizedHost === '::1';
             if (isSecure || isLocalhost) {
                 headers['Authorization'] = `Bearer ${this.config.token}`;
             } else {
@@ -96,6 +97,7 @@ export class A2AClient {
                 try {
                     responseBody = await error.response?.text();
                 } catch (e) {
+                    console.error(`A2AClient: Failed to read response body for ${error.response?.url ?? this.endpoint} (status: ${statusCode}):`, e);
                     responseBody = undefined;
                 }
             }
