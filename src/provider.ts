@@ -57,10 +57,9 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                             controller.enqueue(part);
                         }
                     }
+                    controller.close();
                 } catch (error) {
                     controller.error(error);
-                } finally {
-                    controller.close();
                 }
             },
         });
@@ -108,11 +107,13 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                         activeToolCalls.set(value.toolCallId, { name: value.toolName, args: value.args });
                         break;
                     case 'tool-call-delta':
-                        if (activeToolCalls.has(value.toolCallId)) {
-                            const current = activeToolCalls.get(value.toolCallId)!;
-                            current.args += value.argsTextDelta;
-                        } else {
-                            activeToolCalls.set(value.toolCallId, { name: value.toolName, args: value.argsTextDelta });
+                        if (value.toolCallId) {
+                            if (activeToolCalls.has(value.toolCallId)) {
+                                const current = activeToolCalls.get(value.toolCallId)!;
+                                current.args += value.argsTextDelta;
+                            } else {
+                                activeToolCalls.set(value.toolCallId, { name: value.toolName, args: value.argsTextDelta });
+                            }
                         }
                         break;
                     case 'finish':

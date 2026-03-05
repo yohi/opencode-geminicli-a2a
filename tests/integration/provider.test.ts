@@ -5,7 +5,7 @@ import type { LanguageModelV1Prompt } from '@ai-sdk/provider';
 
 describe('Integration: Gemini CLI A2A Provider', () => {
     let server: http.Server;
-    const port = 45000; // Distinct port for testing
+    let port: number; // dynamically assigned port
 
     beforeAll(async () => {
         server = http.createServer((req, res) => {
@@ -49,12 +49,18 @@ describe('Integration: Gemini CLI A2A Provider', () => {
         });
 
         await new Promise<void>((resolve) => {
-            server.listen(port, '127.0.0.1', resolve);
+            server.listen(0, '127.0.0.1', () => {
+                const address = server.address();
+                if (address && typeof address === 'object') {
+                    port = address.port;
+                }
+                resolve();
+            });
         });
     });
 
-    afterAll(() => {
-        server.close();
+    afterAll(async () => {
+        await new Promise(resolve => server.close(resolve));
     });
 
     it('should complete a full streaming request to the mock server', async () => {
