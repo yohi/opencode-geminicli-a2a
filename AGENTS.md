@@ -22,5 +22,5 @@ You are working on `opencode-geminicli-a2a-provider`. This is a plugin designed 
 <instructions>
 - When adding features, prioritize maintaining the direct A2A mapping.
 - If OpenCode API definitions are unclear, investigate `@ai-sdk/provider` interfaces first.
-- Conform strictly to `dotfiles-guidelines` persona definitions when responding or architecting.
+- Refer to [SPEC.md](./SPEC.md) for project-specific architecture and the [dotfiles-guidelines persona definitions](file:///home/y_ohi/dotfiles/components/dotfiles-ai/agent-skills/dotfiles-guidelines/SKILL.md) for expert role guidance (e.g., @architect, @developer).
 </instructions>
