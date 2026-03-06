@@ -10,15 +10,15 @@ import { createGeminiA2AProvider } from '../src/index';
  * gemini-cli --a2a --port 41242
  */
 async function main() {
-    const modelId = process.argv[2] || 'gemini-2.0-flash';
+    const promptText = process.argv[2] || 'こんにちは！自己紹介をお願いします。';
+    const modelId = process.argv[3] || 'gemini-2.0-flash';
 
-    // プロバイダー設定 
-    // 環境変数 (GEMINI_A2A_PORT, GEMINI_A2A_HOST, GEMINI_A2A_TOKEN 等)
-    // があれば、それが自動的に優先されます。
     const a2a = createGeminiA2AProvider();
     const model = a2a(modelId);
 
-    console.log(`Connecting to A2A server for model: ${modelId}...`);
+    console.log(`Connecting to A2A server...`);
+    console.log(`Model: ${modelId}`);
+    console.log(`Prompt: "${promptText}"`);
     console.log(`Host: ${process.env.GEMINI_A2A_HOST || '127.0.0.1'}`);
     console.log(`Port: ${process.env.GEMINI_A2A_PORT || '41242'}\n`);
 
@@ -27,7 +27,7 @@ async function main() {
             inputFormat: 'prompt',
             mode: { type: 'regular' },
             prompt: [
-                { role: 'user', content: [{ type: 'text', text: 'こんにちは！A2A通信のテストです。接続が確認できたら、現在時刻を教えてください。' }] }
+                { role: 'user', content: [{ type: 'text', text: promptText }] }
             ],
             providerMetadata: {
                 opencode: { idempotencyKey: `test-${Date.now()}` }

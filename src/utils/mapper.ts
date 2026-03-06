@@ -104,18 +104,28 @@ export function mapA2AResponseToStreamParts(result: A2AResponseResult): Language
                         type: 'text-delta',
                         textDelta: p.text,
                     });
+                } else if (p.kind === 'data' && (p.data as any)?.request) {
+                    const req = (p.data as any).request;
+                    parts.push({
+                        type: 'tool-call',
+                        toolCallType: 'function',
+                        toolCallId: req.callId || crypto.randomUUID(),
+                        toolName: req.name,
+                        args: JSON.stringify(req.args || {}),
+                    });
                 }
-                // 'thought' などは必要に応じてメタデータとして出すか、無視する
             }
         }
 
         if (result.final) {
             let finishReason: LanguageModelV1FinishReason = 'stop';
             // A2A state に応じてマッピング
-            // 将来的な追加状態（cancelled等）が出た場合にここを拡張する
             switch (result.status.state) {
                 case 'error':
                     finishReason = 'error';
+                    break;
+                case 'input-required':
+                    finishReason = 'tool-calls';
                     break;
                 case 'cancelled':
                 case 'timeout':
@@ -137,7 +147,6 @@ export function mapA2AResponseToStreamParts(result: A2AResponseResult): Language
                     finishReason = 'stop';
                     break;
                 default:
-                    // 未知の状態は 'other' にフォールバックし、正常停止と誤分類しない
                     finishReason = 'other';
                     break;
             }
