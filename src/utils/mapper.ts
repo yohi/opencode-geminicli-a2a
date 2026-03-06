@@ -83,91 +83,172 @@ export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt, tool
 }
 
 /**
- * A2A のレスポンス（各チャンク）を AI SDK のストリームパーツに変換する。
+ * A2A レスポンスストリームを AI SDK ストリームパーツに変換するステートフルマッパー。
+ *
+ * スナップショット対応:
+ *   A2A サーバーがテキストを差分ではなく累計（スナップショット）で返す場合、
+ *   前方一致ベースの重複排除により差分のみを text-delta として出力する。
+ *
+ * 思考プロセス対応:
+ *   kind: "data" 内の思考プロセス（subject/description）を
+ *   AI SDK の reasoning ストリームパーツとして出力する。
  */
-export function mapA2AResponseToStreamParts(result: A2AResponseResult): LanguageModelV1StreamPart[] {
-    const parts: LanguageModelV1StreamPart[] = [];
+export class A2AStreamMapper {
+    /** 出力済みテキストの累計。スナップショット重複排除に使用 */
+    private emittedText = '';
+    /** 出力済みツールコール ID の Set。重複排除に使用 */
+    private emittedToolCallIds = new Set<string>();
 
-    if (result.kind === 'task') {
-        // TODO: Explicitly handle task response parts or metadata if needed.
-        // Currently intentionally ignoring 'task' since actual text generation
-        // comes from 'status-update' events.
+    /**
+     * A2A のレスポンス（各チャンク）を AI SDK のストリームパーツに変換する。
+     */
+    mapResult(result: A2AResponseResult): LanguageModelV1StreamPart[] {
+        const parts: LanguageModelV1StreamPart[] = [];
+
+        if (result.kind === 'task') {
+            return parts;
+        }
+
+        if (result.kind === 'status-update') {
+            const msg = result.status.message;
+            const metadata = result.metadata as Record<string, any> | undefined;
+            const coderAgentKind = metadata?.coderAgent?.kind as string | undefined;
+
+            const shouldProcessParts = result.status.state === 'working' || result.status.state === 'input-required' || result.status.state === 'tool_calls';
+            if (shouldProcessParts && msg && msg.parts) {
+                for (const p of msg.parts) {
+                    if (p.kind === 'text' && p.text && result.status.state === 'working') {
+                        // スナップショット重複排除:
+                        // 新しいテキストが前回出力済みテキストで始まっている場合は差分のみ emit
+                        const delta = this.extractTextDelta(p.text);
+                        if (delta) {
+                            parts.push({
+                                type: 'text-delta',
+                                textDelta: delta,
+                            });
+                        }
+                    } else if (p.kind === 'data' && (p.data as any)?.request) {
+                        // ツール実行要求のマッピング
+                        const req = (p.data as any).request;
+                        const toolName = req.name;
+                        if (!toolName) continue;
+
+                        const toolCallId = req.callId || crypto.randomUUID();
+                        // ツールコール ID ベースの重複排除
+                        if (this.emittedToolCallIds.has(toolCallId)) continue;
+                        this.emittedToolCallIds.add(toolCallId);
+
+                        parts.push({
+                            type: 'tool-call',
+                            toolCallType: 'function',
+                            toolCallId,
+                            toolName,
+                            args: JSON.stringify(req.args ?? {}),
+                        });
+                    } else if (p.kind === 'data' && (p.data as any)?.subject) {
+                        // 思考プロセスのマッピング → AI SDK reasoning パーツ
+                        const thought = p.data as { subject: string; description?: string };
+                        const reasoningText = thought.description
+                            ? `[${thought.subject}] ${thought.description}`
+                            : `[${thought.subject}]`;
+                        parts.push({
+                            type: 'reasoning',
+                            textDelta: reasoningText,
+                        });
+                    }
+                }
+            }
+
+            // coderAgent.kind === 'thought' かつメッセージが直接テキストでない場合でも
+            // metadata だけで思考を検出（parts が空の場合のフォールバック）
+            if (coderAgentKind === 'thought' && parts.length === 0 && msg?.parts) {
+                for (const p of msg.parts) {
+                    if (p.kind === 'data' && (p.data as any)?.description) {
+                        const thought = p.data as { subject?: string; description: string };
+                        const reasoningText = thought.subject
+                            ? `[${thought.subject}] ${thought.description}`
+                            : thought.description;
+                        parts.push({
+                            type: 'reasoning',
+                            textDelta: reasoningText,
+                        });
+                    }
+                }
+            }
+
+            if (result.final) {
+                let finishReason: LanguageModelV1FinishReason = 'stop';
+                switch (result.status.state) {
+                    case 'error':
+                        finishReason = 'error';
+                        break;
+                    case 'input-required':
+                        finishReason = 'tool-calls';
+                        break;
+                    case 'cancelled':
+                    case 'timeout':
+                    case 'aborted':
+                        finishReason = 'other';
+                        break;
+                    case 'length':
+                    case 'max_tokens':
+                        finishReason = 'length';
+                        break;
+                    case 'content_filter':
+                    case 'blocked':
+                        finishReason = 'content-filter';
+                        break;
+                    case 'tool_calls':
+                        finishReason = 'tool-calls';
+                        break;
+                    case 'stop':
+                        finishReason = 'stop';
+                        break;
+                    default:
+                        finishReason = 'other';
+                        break;
+                }
+
+                const usage = {
+                    promptTokens: result.usage?.promptTokens ?? Number.NaN,
+                    completionTokens: result.usage?.completionTokens ?? Number.NaN,
+                };
+
+                parts.push({
+                    type: 'finish',
+                    finishReason,
+                    usage,
+                });
+            }
+        }
+
         return parts;
     }
 
-    if (result.kind === 'status-update') {
-        const msg = result.status.message;
-        const shouldProcessParts = result.status.state === 'working' || result.status.state === 'input-required' || result.status.state === 'tool_calls';
-        if (shouldProcessParts && msg && msg.parts) {
-            for (const p of msg.parts) {
-                if (p.kind === 'text' && p.text && result.status.state === 'working') {
-                    parts.push({
-                        type: 'text-delta',
-                        textDelta: p.text,
-                    });
-                } else if (p.kind === 'data' && (p.data as any)?.request) {
-                    const req = (p.data as any).request;
-                    const toolName = req.name;
-                    if (!toolName) continue;
-                    parts.push({
-                        type: 'tool-call',
-                        toolCallType: 'function',
-                        toolCallId: req.callId || crypto.randomUUID(),
-                        toolName,
-                        args: JSON.stringify(req.args ?? {}),
-                    });
-                }
-            }
-        }
-
-        if (result.final) {
-            let finishReason: LanguageModelV1FinishReason = 'stop';
-            // A2A state に応じてマッピング
-            switch (result.status.state) {
-                case 'error':
-                    finishReason = 'error';
-                    break;
-                case 'input-required':
-                    finishReason = 'tool-calls';
-                    break;
-                case 'cancelled':
-                case 'timeout':
-                case 'aborted':
-                    finishReason = 'other';
-                    break;
-                case 'length':
-                case 'max_tokens':
-                    finishReason = 'length';
-                    break;
-                case 'content_filter':
-                case 'blocked':
-                    finishReason = 'content-filter';
-                    break;
-                case 'tool_calls':
-                    finishReason = 'tool-calls';
-                    break;
-                case 'stop':
-                    finishReason = 'stop';
-                    break;
-                default:
-                    finishReason = 'other';
-                    break;
-            }
-
-            // TODO: Populate token usage from the A2A protocol once token info is exposed in the response object.
-            // Falls back to Number.NaN representing an "unknown" value if not provided.
-            const usage = {
-                promptTokens: result.usage?.promptTokens ?? Number.NaN,
-                completionTokens: result.usage?.completionTokens ?? Number.NaN,
-            };
-
-            parts.push({
-                type: 'finish',
-                finishReason,
-                usage,
-            });
+    /**
+     * スナップショット形式のテキストから差分を抽出する。
+     * 新しいテキストが前回出力済みテキストで始まっている場合、差分のみを返す。
+     * それ以外の場合（別メッセージ等）は全テキストを返し、累計をリセットする。
+     */
+    private extractTextDelta(newText: string): string {
+        if (newText.startsWith(this.emittedText)) {
+            // スナップショット: 前回の累計テキストで始まっている → 差分を抽出
+            const delta = newText.slice(this.emittedText.length);
+            this.emittedText = newText;
+            return delta;
+        } else {
+            // 新しいメッセージまたは差分形式 → 全テキストを emit
+            this.emittedText = newText;
+            return newText;
         }
     }
+}
 
-    return parts;
+/**
+ * 後方互換のためのステートレスラッパー関数。
+ * 既存テストとの互換性を維持する。
+ */
+export function mapA2AResponseToStreamParts(result: A2AResponseResult): LanguageModelV1StreamPart[] {
+    const mapper = new A2AStreamMapper();
+    return mapper.mapResult(result);
 }
