@@ -37,12 +37,27 @@ async function main() {
         const reader = stream.getReader();
         process.stdout.write('Assistant: ');
 
+        let isReasoning = false;
+        let lastOutput = '';
+
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
             if (value.type === 'text-delta') {
+                if (isReasoning) {
+                    process.stdout.write(lastOutput.endsWith('\n') ? '\nAssistant: ' : '\n\nAssistant: ');
+                    isReasoning = false;
+                }
                 process.stdout.write(value.textDelta);
+                if (value.textDelta) lastOutput = value.textDelta;
+            } else if (value.type === 'reasoning') {
+                if (!isReasoning) {
+                    process.stdout.write('\n💭 Thinking:\n');
+                    isReasoning = true;
+                }
+                process.stdout.write(value.textDelta);
+                if (value.textDelta) lastOutput = value.textDelta;
             } else if (value.type === 'tool-call') {
                 console.log(`\n[Tool Call Requested] ${value.toolName}(${value.args})`);
             } else if (value.type === 'finish') {

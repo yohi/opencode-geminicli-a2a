@@ -40,7 +40,8 @@ opencode-geminicli-a2a-provider/
 │   ├── a2a-client.ts      # ofetchを用いたGemini CLIとの通信クライアント
 │   ├── schemas.ts         # Zodによる型定義・バリデーションスキーマ
 │   └── utils/
-│       └── mapper.ts      # AI SDK形式 ↔ A2A形式の双方向データマッパー
+│       ├── mapper.ts      # AI SDK形式 ↔ A2A形式の双方向データマッパー
+│       └── stream.ts      # SSEストリームのJSON-RPCペイロード解析ユーティリティ
 ```
 
 ### 3.2 Data Flow (Mermaid)
@@ -105,20 +106,22 @@ import { z } from 'zod';
 // 1. Configuration Schema (Stable)
 export const ConfigSchema = z.object({
   host: z.string().default('127.0.0.1'),
-  port: z.number().int().default(41242),
+  port: z.number().int().min(1).max(65535).default(41242),
   token: z.string().optional(),
   protocol: z.enum(['http', 'https']).default('http'),
 });
 
 // 2. A2A JSON-RPC Request Schema
+export const ToolSchema = z.object({}).passthrough();
+
 export const A2AJsonRpcRequestSchema = z.object({
   jsonrpc: z.literal('2.0'),
-  id: z.union([z.string(), z.number()]),
+  id: z.union([z.string(), z.number(), z.null()]),
   method: z.literal('message/stream'),
   params: z.object({
     message: z.object({
       messageId: z.string(),
-      role: z.enum(['user', 'assistant']), // 注: 'system' ロールは変換時に 'user' のメッセージ内容へ統合される（例: role: 'system' -> contentをuser同等として送信）
+      role: z.enum(['user', 'assistant']), // 注: 'system' は変換時に 'user' へ統合される
       parts: z.array(z.object({
         kind: z.literal('text'),
         text: z.string()
@@ -126,50 +129,70 @@ export const A2AJsonRpcRequestSchema = z.object({
     }),
     configuration: z.object({
       blocking: z.boolean().default(false),
-      tools: z.array(z.unknown()).optional()
+      tools: z.array(ToolSchema).optional()
     }).optional()
   })
 });
 
-// 3. A2A JSON-RPC Response (SSE data: ...)
+// 3. A2A JSON-RPC Response Result Schema
 export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('task'),
     id: z.string(),
     contextId: z.string(),
-    status: z.object({ state: z.enum(['working', 'stop', 'error']) })
+    status: z.object({ state: z.enum(['working', 'stop', 'error', 'input-required', 'completed', 'failed', 'tool_calls', 'cancelled', 'timeout', 'aborted', 'length', 'max_tokens', 'content_filter', 'blocked']) }),
+    history: z.array(z.any()).optional(),
+    metadata: z.object({
+      coderAgent: z.object({
+        kind: z.string()
+      }).optional()
+    }).passthrough().optional(),
+    artifacts: z.array(z.any()).optional(),
   }),
   z.object({
     kind: z.literal('status-update'),
     taskId: z.string(),
+    contextId: z.string().optional(),
     status: z.object({
-      state: z.enum(['working', 'stop', 'error']),
+      state: z.enum(['working', 'stop', 'error', 'input-required', 'completed', 'failed', 'tool_calls', 'cancelled', 'timeout', 'aborted', 'length', 'max_tokens', 'content_filter', 'blocked']),
       message: z.object({
         parts: z.array(z.object({
           kind: z.string(),
           text: z.string().optional(),
           data: z.unknown().optional()
         }))
-      }).optional()
+      }).optional(),
+      timestamp: z.string().optional()
     }),
-    final: z.boolean().optional()
+    final: z.boolean().optional(),
+    metadata: z.object({
+      coderAgent: z.object({
+        kind: z.string()
+      }).optional()
+    }).passthrough().optional(),
+    usage: z.object({
+      promptTokens: z.number().optional(),
+      completionTokens: z.number().optional()
+    }).optional(),
   })
 ]);
 
+// 4. A2A JSON-RPC Response Wrapper
 export const ResultResponseSchema = z.object({
   jsonrpc: z.literal('2.0'),
-  id: z.union([z.string(), z.number()]),
+  id: z.union([z.string(), z.number(), z.null()]),
   result: A2AResponseResultSchema,
-});
+}).passthrough();
 
 export const ErrorResponseSchema = z.object({
   jsonrpc: z.literal('2.0'),
   id: z.union([z.string(), z.number()]).nullable(),
   error: z.object({
     code: z.number(),
-    message: z.string()
+    message: z.string(),
+    data: z.unknown().optional()
   })
-});
+}).passthrough();
 
 export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResponseSchema]);
 ```
@@ -180,7 +203,48 @@ export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResp
 * **Protocol**: JSON-RPC 2.0 over HTTP/S (Streaming via SSE)
 * **Status Handling**:
     * `status.state === 'working'` かつ `status.message.parts` 内の `text` を `text-delta` として扱う。
-    * `final === true` をストリームの終了トリガーとして扱う。
+    * A2A サーバーはテキストを累計（スナップショット）で返す場合があるため、前方一致による**重複排除ロジック**を用いて差分のみを `text-delta` として抽出・出力する。
+    * `kind: "data"` 内に存在する思考プロセス（subject や description、`metadata.coderAgent.kind === 'thought'` 等）は抽出され、AI SDK の `reasoning` ストリームパーツとして出力する。
+      **例:**
+      **入力 (A2A JSON-RPC):**
+      ```json
+      {
+        "kind": "status-update",
+        "status": {
+          "message": {
+            "parts": [
+              {
+                "kind": "data",
+                "data": {
+                  "subject": "Evaluating options",
+                  "description": "Considering approach A and B."
+                }
+              }
+            ]
+          }
+        },
+        "metadata": {
+          "coderAgent": { "kind": "thought" }
+        }
+      }
+      ```
+      **出力 (AI SDK Stream Part):**
+      ```json
+      {
+        "type": "reasoning",
+        "textDelta": "[Evaluating options] Considering approach A and B."
+      }
+      ```
+    * `final === true` をストリームの終了トリガーとして扱い、`status.state` の値に応じて AI SDK 互換の `finishReason` へ変換する。
+
+| `status.state` | AI SDK `finishReason` |
+|---|---|
+| `completed`, `stop` | `stop` |
+| `input-required`, `tool_calls` | `tool-calls` |
+| `failed`, `error` | `error` |
+| `length`, `max_tokens` | `length` |
+| `content_filter`, `blocked` | `content-filter` |
+| その他 (cancelled等) | `other` |
 
 ## 7. LLM Guidelines (For AI Developer)
 
