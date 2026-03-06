@@ -121,5 +121,55 @@ describe('mapper', () => {
                 expect(parts[0].finishReason).toBe('error');
             }
         });
+
+        it('should NOT emit text-delta when state is not working', () => {
+            const resultStop: A2AResponseResult = {
+                kind: 'status-update',
+                taskId: 't1',
+                status: {
+                    state: 'stop',
+                    message: {
+                        parts: [{ kind: 'text', text: 'ignored text' }]
+                    }
+                }
+            };
+            const partsStop = mapA2AResponseToStreamParts(resultStop);
+            expect(partsStop.filter(p => p.type === 'text-delta').length).toBe(0);
+
+            const resultError: A2AResponseResult = {
+                kind: 'status-update',
+                taskId: 't1',
+                status: {
+                    state: 'error',
+                    message: {
+                        parts: [{ kind: 'text', text: 'ignored error text' }]
+                    }
+                }
+            };
+            const partsError = mapA2AResponseToStreamParts(resultError);
+            expect(partsError.filter(p => p.type === 'text-delta').length).toBe(0);
+        });
+
+        it('should map token usage correctly', () => {
+            const result: any = {
+                kind: 'status-update',
+                taskId: 't1',
+                final: true,
+                status: {
+                    state: 'stop',
+                },
+                usage: {
+                    promptTokens: 10,
+                    completionTokens: 20
+                }
+            };
+            const parts = mapA2AResponseToStreamParts(result);
+            const finishPart = parts.find(p => p.type === 'finish');
+            expect(finishPart).toBeDefined();
+            if (finishPart && finishPart.type === 'finish') {
+                expect(finishPart.usage?.promptTokens).toBe(10);
+                expect(finishPart.usage?.completionTokens).toBe(20);
+            }
+        });
     });
 });
