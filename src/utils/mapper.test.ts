@@ -389,6 +389,32 @@ describe('mapper', () => {
                 const parts2 = mapper.mapResult(makeUpdate());
                 expect(parts2.filter(p => p.type === 'tool-call').length).toBe(0);
             });
+
+            it('should deduplicate tool calls when callId is absent but name and args are identical', () => {
+                const mapper = new A2AStreamMapper();
+
+                const makeUpdate = (): A2AResponseResult => ({
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'data',
+                                data: {
+                                    request: { name: 'getWeather', args: { location: 'Tokyo' } }
+                                }
+                            }]
+                        }
+                    }
+                });
+
+                const parts1 = mapper.mapResult(makeUpdate());
+                expect(parts1.filter(p => p.type === 'tool-call').length).toBe(1);
+
+                const parts2 = mapper.mapResult(makeUpdate());
+                expect(parts2.filter(p => p.type === 'tool-call').length).toBe(0);
+            });
         });
 
         describe('thoughts (reasoning)', () => {
