@@ -71,6 +71,8 @@ describe('A2AClient', () => {
                     'Idempotency-Key': 'test-key',
                 },
                 retry: 3,
+                retryDelay: 1000,
+                timeout: 120000,
             })
         );
     });
@@ -88,6 +90,8 @@ describe('A2AClient', () => {
                     'Content-Type': 'application/json',
                 },
                 retry: 0,
+                retryDelay: 1000,
+                timeout: 120000,
             })
         );
     });

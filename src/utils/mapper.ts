@@ -248,25 +248,22 @@ export class A2AStreamMapper {
                             args: JSON.stringify(req.args ?? {}),
                         });
                     } else if (coderAgentKind === 'thought' && p.kind === 'data' && isThoughtData(p.data)) {
+                        let textDelta = '';
                         if (p.data.subject && p.data.description) {
-                            parts.push({
-                                type: 'reasoning',
-                                textDelta: `[${p.data.subject}] ${p.data.description}`,
-                            });
-                            continue;
+                            textDelta = `[${p.data.subject}] ${p.data.description}\n`;
                         } else if (p.data.subject) {
-                            parts.push({
-                                type: 'reasoning',
-                                textDelta: `[${p.data.subject}]`,
-                            });
-                            continue;
+                            textDelta = `[${p.data.subject}]\n`;
                         } else if (p.data.description) {
+                            textDelta = `${p.data.description}\n`;
+                        }
+
+                        if (textDelta) {
                             parts.push({
                                 type: 'reasoning',
-                                textDelta: p.data.description,
+                                textDelta,
                             });
-                            continue;
                         }
+                        continue;
                     }
                 }
             }

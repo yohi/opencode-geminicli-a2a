@@ -134,6 +134,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
 
         const reader = sdkStream.getReader();
         let text = '';
+        let reasoning = '';
         const toolCalls: LanguageModelV1FunctionToolCall[] = [];
         let finishReason: LanguageModelV1FinishReason = 'unknown';
         const usage = { promptTokens: 0, completionTokens: 0 };
@@ -148,6 +149,9 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                 switch (value.type) {
                     case 'text-delta':
                         text += value.textDelta;
+                        break;
+                    case 'reasoning':
+                        reasoning += value.textDelta;
                         break;
                     case 'tool-call':
                         activeToolCalls.set(value.toolCallId, { name: value.toolName, args: value.args });
@@ -187,6 +191,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
 
         return {
             text: text.length > 0 ? text : undefined,
+            reasoning: reasoning.length > 0 ? reasoning : undefined,
             toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
             finishReason,
             usage,
