@@ -54,7 +54,7 @@ async function main() {
                     process.stdout.write('\n💭 Thinking:\n');
                     isReasoning = true;
                 }
-                process.stdout.write(`${value.textDelta}\n`);
+                process.stdout.write(value.textDelta);
             } else if (value.type === 'tool-call') {
                 console.log(`\n[Tool Call Requested] ${value.toolName}(${value.args})`);
             } else if (value.type === 'finish') {

@@ -116,7 +116,7 @@ export const ToolSchema = z.object({}).passthrough();
 
 export const A2AJsonRpcRequestSchema = z.object({
   jsonrpc: z.literal('2.0'),
-  id: z.union([z.string(), z.number(), z.null()]).optional(),
+  id: z.union([z.string(), z.number(), z.null()]),
   method: z.literal('message/stream'),
   params: z.object({
     message: z.object({
@@ -140,9 +140,13 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
     kind: z.literal('task'),
     id: z.string(),
     contextId: z.string(),
-    status: z.object({ state: z.string() }),
+    status: z.object({ state: z.enum(['working', 'stop', 'error', 'input-required', 'completed', 'failed', 'tool_calls', 'cancelled', 'timeout', 'aborted', 'length', 'max_tokens', 'content_filter', 'blocked']) }),
     history: z.array(z.any()).optional(),
-    metadata: z.record(z.any()).optional(),
+    metadata: z.object({
+      coderAgent: z.object({
+        kind: z.string()
+      }).optional()
+    }).passthrough().optional(),
     artifacts: z.array(z.any()).optional(),
   }),
   z.object({
@@ -150,7 +154,7 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
     taskId: z.string(),
     contextId: z.string().optional(),
     status: z.object({
-      state: z.string(),
+      state: z.enum(['working', 'stop', 'error', 'input-required', 'completed', 'failed', 'tool_calls', 'cancelled', 'timeout', 'aborted', 'length', 'max_tokens', 'content_filter', 'blocked']),
       message: z.object({
         parts: z.array(z.object({
           kind: z.string(),
@@ -161,7 +165,11 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
       timestamp: z.string().optional()
     }),
     final: z.boolean().optional(),
-    metadata: z.record(z.any()).optional(),
+    metadata: z.object({
+      coderAgent: z.object({
+        kind: z.string()
+      }).optional()
+    }).passthrough().optional(),
     usage: z.object({
       promptTokens: z.number().optional(),
       completionTokens: z.number().optional()
@@ -174,7 +182,7 @@ export const ResultResponseSchema = z.object({
   jsonrpc: z.literal('2.0'),
   id: z.union([z.string(), z.number(), z.null()]),
   result: A2AResponseResultSchema,
-}).strict();
+}).passthrough();
 
 export const ErrorResponseSchema = z.object({
   jsonrpc: z.literal('2.0'),
@@ -184,7 +192,7 @@ export const ErrorResponseSchema = z.object({
     message: z.string(),
     data: z.unknown().optional()
   })
-}).strict();
+}).passthrough();
 
 export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResponseSchema]);
 ```
@@ -197,7 +205,46 @@ export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResp
     * `status.state === 'working'` かつ `status.message.parts` 内の `text` を `text-delta` として扱う。
     * A2A サーバーはテキストを累計（スナップショット）で返す場合があるため、前方一致による**重複排除ロジック**を用いて差分のみを `text-delta` として抽出・出力する。
     * `kind: "data"` 内に存在する思考プロセス（subject や description、`metadata.coderAgent.kind === 'thought'` 等）は抽出され、AI SDK の `reasoning` ストリームパーツとして出力する。
-    * `final === true` をストリームの終了トリガーとして扱い、`status.state` の値に応じて AI SDK 互換の `finishReason` へ変換する（例: `input-required` -> `tool-calls`）。
+      **例:**
+      **入力 (A2A JSON-RPC):**
+      ```json
+      {
+        "kind": "status-update",
+        "status": {
+          "message": {
+            "parts": [
+              {
+                "kind": "data",
+                "data": {
+                  "subject": "Evaluating options",
+                  "description": "Considering approach A and B."
+                }
+              }
+            ]
+          }
+        },
+        "metadata": {
+          "coderAgent": { "kind": "thought" }
+        }
+      }
+      ```
+      **出力 (AI SDK Stream Part):**
+      ```json
+      {
+        "type": "reasoning",
+        "textDelta": "[Evaluating options] Considering approach A and B."
+      }
+      ```
+    * `final === true` をストリームの終了トリガーとして扱い、`status.state` の値に応じて AI SDK 互換の `finishReason` へ変換する。
+
+| `status.state` | AI SDK `finishReason` |
+|---|---|
+| `completed`, `stop` | `stop` |
+| `input-required`, `tool_calls` | `tool-calls` |
+| `failed`, `error` | `error` |
+| `length`, `max_tokens` | `length` |
+| `content_filter`, `blocked` | `content-filter` |
+| その他 (cancelled等) | `other` |
 
 ## 7. LLM Guidelines (For AI Developer)
 
