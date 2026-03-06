@@ -26,8 +26,6 @@ export const A2AJsonRpcRequestSchema = z.object({
                 kind: z.literal('text'),
                 text: z.string()
             })),
-            // multi-turn: 既存タスクの継続時に使用
-            taskId: z.string().optional(),
         }),
         configuration: z.object({
             blocking: z.boolean().default(false),
@@ -35,6 +33,8 @@ export const A2AJsonRpcRequestSchema = z.object({
         }).optional(),
         // multi-turn: コンテキスト継続時に使用
         contextId: z.string().optional(),
+        // multi-turn: 既存タスクの継続時に使用
+        taskId: z.string().optional(),
     })
 });
 
