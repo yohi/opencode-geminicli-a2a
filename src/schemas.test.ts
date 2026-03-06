@@ -31,24 +31,45 @@ describe('ConfigSchema', () => {
         const result = ConfigSchema.safeParse({ port: '8080' });
         expect(result.success).toBe(false);
     });
+
+    it('should reject port below valid range', () => {
+        const result = ConfigSchema.safeParse({ port: 0 });
+        expect(result.success).toBe(false);
+    });
+
+    it('should reject port above valid range', () => {
+        const result = ConfigSchema.safeParse({ port: 65536 });
+        expect(result.success).toBe(false);
+    });
+
+    it('should accept port at minimum boundary', () => {
+        const result = ConfigSchema.safeParse({ port: 1 });
+        expect(result.success).toBe(true);
+    });
+
+    it('should accept port at maximum boundary', () => {
+        const result = ConfigSchema.safeParse({ port: 65535 });
+        expect(result.success).toBe(true);
+    });
 });
 
 describe('A2AJsonRpcRequestSchema', () => {
+    const baseRequest = {
+        jsonrpc: '2.0',
+        id: '123',
+        method: 'message/stream',
+        params: {
+            message: {
+                messageId: 'msg-1',
+                role: 'user',
+                parts: [{ kind: 'text', text: 'hello' }]
+            },
+            configuration: { blocking: false }
+        }
+    };
+
     it('should parse valid request without tools', () => {
-        const request = {
-            jsonrpc: '2.0',
-            id: '123',
-            method: 'message/stream',
-            params: {
-                message: {
-                    messageId: 'msg-1',
-                    role: 'user',
-                    parts: [{ kind: 'text', text: 'hello' }]
-                },
-                configuration: { blocking: false }
-            }
-        };
-        const result = A2AJsonRpcRequestSchema.safeParse(request);
+        const result = A2AJsonRpcRequestSchema.safeParse(baseRequest);
         expect(result.success).toBe(true);
     });
 
@@ -80,9 +101,7 @@ describe('A2AJsonRpcRequestSchema', () => {
 
     it('should reject invalid role', () => {
         const request = {
-            jsonrpc: '2.0',
-            id: '123',
-            method: 'message/stream',
+            ...baseRequest,
             params: {
                 message: {
                     messageId: 'msg-1',
@@ -93,6 +112,21 @@ describe('A2AJsonRpcRequestSchema', () => {
         };
         const result = A2AJsonRpcRequestSchema.safeParse(request);
         expect(result.success).toBe(false);
+    });
+
+    it('should accept id: null (JSON-RPC 2.0 compliance for parse errors)', () => {
+        // JSON-RPC 2.0 specifies that error responses to invalid requests may use null id.
+        // The request schema allows null to be consistent with the response schema.
+        const request = { ...baseRequest, id: null };
+        const result = A2AJsonRpcRequestSchema.safeParse(request);
+        expect(result.success).toBe(true);
+    });
+
+    it('should accept omitted id (notification)', () => {
+        // JSON-RPC 2.0 notifications omit the id field entirely.
+        const { id: _id, ...notificationRequest } = baseRequest;
+        const result = A2AJsonRpcRequestSchema.safeParse(notificationRequest);
+        expect(result.success).toBe(true);
     });
 });
 

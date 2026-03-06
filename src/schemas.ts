@@ -3,7 +3,7 @@ import { z } from 'zod';
 // 1. Configuration Schema (Stable)
 export const ConfigSchema = z.object({
     host: z.string().default('127.0.0.1'),
-    port: z.number().int().default(41242),
+    port: z.number().int().min(1).max(65535).default(41242),
     token: z.string().optional(),
     protocol: z.enum(['http', 'https']).default('http'),
 });
@@ -16,7 +16,7 @@ export type Tool = z.infer<typeof ToolSchema>;
 
 export const A2AJsonRpcRequestSchema = z.object({
     jsonrpc: z.literal('2.0'),
-    id: z.union([z.string(), z.number()]),
+    id: z.union([z.string(), z.number(), z.null()]).optional(),
     method: z.literal('message/stream'),
     params: z.object({
         message: z.object({
@@ -76,7 +76,7 @@ export type A2AResponseResult = z.infer<typeof A2AResponseResultSchema>;
 // 4. A2A JSON-RPC Response Wrapper
 export const ResultResponseSchema = z.object({
     jsonrpc: z.literal('2.0'),
-    id: z.union([z.string(), z.number()]),
+    id: z.union([z.string(), z.number(), z.null()]),
     result: A2AResponseResultSchema,
 }).strict();
 
