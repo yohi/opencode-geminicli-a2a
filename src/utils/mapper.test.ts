@@ -95,6 +95,21 @@ describe('mapper', () => {
                 expect(parts[0].finishReason).toBe('stop');
             }
         });
+        it('should map finish reason as error when state is error', () => {
+            const result: A2AResponseResult = {
+                kind: 'status-update',
+                taskId: 't1',
+                final: true,
+                status: {
+                    state: 'error',
+                }
+            };
+            const parts = mapA2AResponseToStreamParts(result);
+            expect(parts.length).toBe(1);
+            expect(parts[0].type).toBe('finish');
+            if (parts[0].type === 'finish') {
+                expect(parts[0].finishReason).toBe('error');
+            }
+        });
     });
 });
-

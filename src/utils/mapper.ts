@@ -90,7 +90,7 @@ export function mapA2AResponseToStreamParts(result: A2AResponseResult): Language
 
     if (result.kind === 'status-update') {
         const msg = result.status.message;
-        if (msg && msg.parts) {
+        if (result.status.state === 'working' && msg && msg.parts) {
             for (const p of msg.parts) {
                 if (p.kind === 'text' && p.text) {
                     parts.push({

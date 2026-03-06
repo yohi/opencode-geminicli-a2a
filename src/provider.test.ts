@@ -57,7 +57,8 @@ describe('OpenCodeGeminiA2AProvider', () => {
     it('should implement doStream streaming chat correctly', async () => {
         const sseChunks = [
             'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"Hello "}]}}}}\n\n',
-            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "final":true, "status":{"state":"stop", "message":{"parts":[{"kind":"text", "text":"world"}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"world"}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "final":true, "status":{"state":"stop"}}}\n\n',
         ];
 
         const mockResponse = {
@@ -92,7 +93,8 @@ describe('OpenCodeGeminiA2AProvider', () => {
     it('should implement doGenerate by consuming the stream', async () => {
         const sseChunks = [
             'data: {"jsonrpc":"2.0", "id":"2", "result": {"kind":"status-update", "taskId":"t2", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"Test "}]}}}}\n\n',
-            'data: {"jsonrpc":"2.0", "id":"2", "result": {"kind":"status-update", "taskId":"t2", "final":true, "status":{"state":"stop", "message":{"parts":[{"kind":"text", "text":"generation"}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"2", "result": {"kind":"status-update", "taskId":"t2", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"generation"}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"2", "result": {"kind":"status-update", "taskId":"t2", "final":true, "status":{"state":"stop"}}}\n\n',
         ];
 
         const mockResponse = {
