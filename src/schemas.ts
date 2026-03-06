@@ -78,13 +78,11 @@ export const ResultResponseSchema = z.object({
     jsonrpc: z.literal('2.0'),
     id: z.union([z.string(), z.number()]),
     result: A2AResponseResultSchema,
-    error: z.never().optional(),
 }).strict();
 
 export const ErrorResponseSchema = z.object({
     jsonrpc: z.literal('2.0'),
     id: z.union([z.string(), z.number()]).nullable(),
-    result: z.never().optional(),
     error: z.object({
         code: z.number(),
         message: z.string(),
