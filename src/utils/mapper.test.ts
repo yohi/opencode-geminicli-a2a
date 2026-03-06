@@ -90,7 +90,7 @@ describe('mapper', () => {
                 { role: 'user', content: [{ type: 'text', text: 'Tool result follow up' }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt, { taskId: 'task-456' });
-            expect(req.params.message.taskId).toBe('task-456');
+            expect(req.params.taskId).toBe('task-456');
         });
 
         it('should not include contextId/taskId when not provided', () => {
@@ -99,7 +99,7 @@ describe('mapper', () => {
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
             expect(req.params.contextId).toBeUndefined();
-            expect(req.params.message.taskId).toBeUndefined();
+            expect(req.params.taskId).toBeUndefined();
         });
 
         it('should maintain backward compatibility with tools array as second argument', () => {
