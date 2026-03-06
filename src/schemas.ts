@@ -11,6 +11,9 @@ export const ConfigSchema = z.object({
 export type A2AConfig = z.infer<typeof ConfigSchema>;
 
 // 2. A2A JSON-RPC Request Schema
+export const ToolSchema = z.unknown();
+export type Tool = z.infer<typeof ToolSchema>;
+
 export const A2AJsonRpcRequestSchema = z.object({
     jsonrpc: z.literal('2.0'),
     id: z.union([z.string(), z.number()]),
@@ -26,7 +29,7 @@ export const A2AJsonRpcRequestSchema = z.object({
         }),
         configuration: z.object({
             blocking: z.boolean().default(false),
-            tools: z.array(z.any()).optional()
+            tools: z.array(ToolSchema).optional()
         }).optional()
     })
 });
@@ -61,6 +64,10 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
         }),
         final: z.boolean().optional(),
         metadata: z.record(z.any()).optional(),
+        usage: z.object({
+            promptTokens: z.number().optional(),
+            completionTokens: z.number().optional()
+        }).optional(),
     })
 ]);
 

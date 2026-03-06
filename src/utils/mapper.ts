@@ -3,14 +3,14 @@ import {
     type LanguageModelV1StreamPart,
     type LanguageModelV1FinishReason,
 } from '@ai-sdk/provider';
-import type { A2AJsonRpcRequest, A2AResponseResult } from '../schemas';
+import type { A2AJsonRpcRequest, A2AResponseResult, Tool } from '../schemas';
 import crypto from 'node:crypto';
 
 /**
  * AI SDK のプロンプトを A2A (JSON-RPC) リクエストに変換する。
  * シンプルな実装として、最新のユーザーメッセージを送信対象とする。
  */
-export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt, tools?: any[]): A2AJsonRpcRequest {
+export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt, tools?: Tool[]): A2AJsonRpcRequest {
     if (prompt.length === 0) {
         return {
             jsonrpc: '2.0',
@@ -136,8 +136,8 @@ export function mapA2AResponseToStreamParts(result: A2AResponseResult): Language
             // TODO: Populate token usage from the A2A protocol once token info is exposed in the response object.
             // Falls back to Number.NaN representing an "unknown" value if not provided.
             const usage = {
-                promptTokens: (result as any).usage?.promptTokens ?? Number.NaN,
-                completionTokens: (result as any).usage?.completionTokens ?? Number.NaN,
+                promptTokens: result.usage?.promptTokens ?? Number.NaN,
+                completionTokens: result.usage?.completionTokens ?? Number.NaN,
             };
 
             parts.push({
