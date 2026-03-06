@@ -175,8 +175,8 @@ export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResp
 
 ## 6. API Definition (Resilience Configuration)
 
-* **Endpoint**: `http://{host}:{port}/`
-* **Protocol**: JSON-RPC 2.0 over HTTP (Streaming via SSE)
+* **Endpoint**: `{protocol}://{host}:{port}/` (`{protocol}` は `protocol` 設定に基づき `http` または `https` となる)
+* **Protocol**: JSON-RPC 2.0 over HTTP/S (Streaming via SSE)
 * **Status Handling**:
     * `status.state === 'working'` かつ `status.message.parts` 内の `text` を `text-delta` として扱う。
     * `final === true` をストリームの終了トリガーとして扱う。

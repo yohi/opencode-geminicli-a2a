@@ -26,7 +26,11 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
     }
 
     private createA2ARequest(options: LanguageModelV1CallOptions): A2AJsonRpcRequest {
-        return mapPromptToA2AJsonRpcRequest(options.prompt);
+        let tools: any[] | undefined;
+        if (options.mode && 'tools' in options.mode && options.mode.tools?.length) {
+            tools = options.mode.tools;
+        }
+        return mapPromptToA2AJsonRpcRequest(options.prompt, tools);
     }
 
     async doStream(options: LanguageModelV1CallOptions) {

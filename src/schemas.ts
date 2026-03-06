@@ -25,7 +25,8 @@ export const A2AJsonRpcRequestSchema = z.object({
             }))
         }),
         configuration: z.object({
-            blocking: z.boolean().default(false)
+            blocking: z.boolean().default(false),
+            tools: z.array(z.any()).optional()
         }).optional()
     })
 });

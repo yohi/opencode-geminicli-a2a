@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { A2AClient } from './a2a-client';
 import { ofetch } from 'ofetch';
 import { APICallError } from '@ai-sdk/provider';
-import type { A2ARequest } from './schemas';
+import type { A2AJsonRpcRequest } from './schemas';
 
 // Mock ofetch
 vi.mock('ofetch', () => {
@@ -21,12 +21,19 @@ vi.mock('ofetch', () => {
 });
 
 describe('A2AClient', () => {
-    const mockConfig = { host: '127.0.0.1', port: 8080 };
+    const mockConfig: any = { host: '127.0.0.1', port: 8080, protocol: 'http' };
     let client: A2AClient;
-    const mockRequest: A2ARequest = {
-        model: 'test-model',
-        messages: [{ role: 'user', content: 'test' }],
-        stream: true,
+    const mockRequest: A2AJsonRpcRequest = {
+        jsonrpc: '2.0',
+        id: '123',
+        method: 'message/stream',
+        params: {
+            message: {
+                messageId: 'msg-1',
+                role: 'user',
+                parts: [{ kind: 'text', text: 'hello' }]
+            }
+        }
     };
 
     beforeEach(() => {
@@ -57,7 +64,7 @@ describe('A2AClient', () => {
         await client.chatStream({ request: mockRequest, idempotencyKey: 'test-key' });
 
         expect(ofetch.raw).toHaveBeenCalledWith(
-            'http://127.0.0.1:8080/v1/a2a/chat',
+            'http://127.0.0.1:8080/',
             expect.objectContaining({
                 headers: {
                     'Content-Type': 'application/json',
@@ -75,7 +82,7 @@ describe('A2AClient', () => {
         await client.chatStream({ request: mockRequest });
 
         expect(ofetch.raw).toHaveBeenCalledWith(
-            'http://127.0.0.1:8080/v1/a2a/chat',
+            'http://127.0.0.1:8080/',
             expect.objectContaining({
                 headers: {
                     'Content-Type': 'application/json',

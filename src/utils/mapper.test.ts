@@ -35,6 +35,17 @@ describe('mapper', () => {
             const req = mapPromptToA2AJsonRpcRequest(prompt);
             expect(req.params.message.parts[0].text).toBe('(empty prompt)');
         });
+
+        it('should select nearest user/system when prompt ends with assistant/tool', () => {
+            const prompt: LanguageModelV1Prompt = [
+                { role: 'user', content: [{ type: 'text', text: 'Where is Tokyo?' }] },
+                { role: 'assistant', content: [{ type: 'text', text: 'Tokyo is in Japan.' }] },
+                { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call1', toolName: 'getWeather', result: { weather: 'sunny' } }] }
+            ];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            expect(req.params.message.parts[0].text).toBe('Where is Tokyo?');
+            expect(req.params.message.role).toBe('user');
+        });
     });
 
     describe('mapA2AResponseToStreamParts', () => {
