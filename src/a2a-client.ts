@@ -1,7 +1,6 @@
 import { ofetch, FetchError } from 'ofetch';
 import { APICallError } from '@ai-sdk/provider';
 import type { A2AConfig, A2AJsonRpcRequest } from './schemas';
-import { v4 as uuidv4 } from 'uuid';
 
 const RETRY_STATUS_CODES = [408, 409, 425, 429, 500, 502, 503, 504];
 

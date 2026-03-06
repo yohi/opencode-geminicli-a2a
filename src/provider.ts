@@ -44,16 +44,25 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         const stream = new ReadableStream<LanguageModelV1StreamPart>({
             async start(controller) {
                 try {
+                    let hasFinished = false;
                     for await (const chunk of chunkGenerator) {
-                        if (chunk.result) {
+                        if ('result' in chunk && chunk.result) {
                             const parts = mapA2AResponseToStreamParts(chunk.result);
                             for (const part of parts) {
+                                if (part.type === 'finish') hasFinished = true;
                                 controller.enqueue(part);
                             }
-                        } else if (chunk.error) {
+                        } else if ('error' in chunk && chunk.error) {
                             // JSON-RPC エラーのハンドリング
                             throw new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`);
                         }
+                    }
+                    if (!hasFinished) {
+                        controller.enqueue({
+                            type: 'finish',
+                            finishReason: 'unknown',
+                            usage: { promptTokens: 0, completionTokens: 0 },
+                        });
                     }
                     controller.close();
                 } catch (error) {
