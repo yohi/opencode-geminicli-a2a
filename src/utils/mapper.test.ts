@@ -488,7 +488,7 @@ describe('mapper', () => {
                 expect(parts.length).toBe(1);
                 expect(parts[0].type).toBe('reasoning');
                 if (parts[0].type === 'reasoning') {
-                    expect(parts[0].textDelta).toBe('[Analyzing the code] I\'m reviewing the function implementation.');
+                    expect(parts[0].textDelta).toBe('[Analyzing the code] I\'m reviewing the function implementation.\n');
                 }
             });
 
@@ -514,7 +514,7 @@ describe('mapper', () => {
                 expect(parts.length).toBe(1);
                 expect(parts[0].type).toBe('reasoning');
                 if (parts[0].type === 'reasoning') {
-                    expect(parts[0].textDelta).toBe('[Processing]');
+                    expect(parts[0].textDelta).toBe('[Processing]\n');
                 }
             });
 
@@ -581,7 +581,7 @@ describe('mapper', () => {
                 expect(parts.length).toBe(1);
                 expect(parts[0].type).toBe('reasoning');
                 if (parts[0].type === 'reasoning') {
-                    expect(parts[0].textDelta).toBe('No subject, just description via metadata');
+                    expect(parts[0].textDelta).toBe('No subject, just description via metadata\n');
                 }
             });
         });
