@@ -4,14 +4,14 @@ import { createGeminiA2AProvider } from '../src/index';
  * 疎通確認用スクリプト
  * 
  * 実行方法:
- * npx tsx examples/test-connection.ts [model-id]
+ * npx tsx examples/test-connection.ts [model-id] [prompt]
  * 
  * 事前に Gemini CLI を A2A モードで起動しておく必要があります:
  * gemini-cli --a2a --port 41242
  */
 async function main() {
-    const promptText = process.argv[2] || 'こんにちは！自己紹介をお願いします。';
-    const modelId = process.argv[3] || 'gemini-2.0-flash';
+    const modelId = process.argv[2] || 'gemini-2.0-flash';
+    const promptText = process.argv[3] || 'こんにちは！自己紹介をお願いします。';
 
     const a2a = createGeminiA2AProvider();
     const model = a2a(modelId);
