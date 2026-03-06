@@ -58,22 +58,53 @@ const model = geminiA2A('gemini-2.5-pro');
 
 // AI SDK の streamText を使用してマルチターン対話を実行
 async function runConversation() {
+  console.log('--- 1ターン目 ---');
   // ※1. 同一のプロバイダー (model) インスタンスを使うことで自動的に 
   //     内部で contextId/taskId が保持され、マルチターンが継続します。
-  const { textStream, reasoningStream } = streamText({
+  let { textStream, reasoningStream } = streamText({
     model,
     prompt: 'こんにちは、今日の調子はどうですか？'
   });
 
-  // ※2. 思考プロセス (reasoning) も取得・可視化可能
-  for await (const reasoning of reasoningStream) {
-    process.stdout.write(`💭 ${reasoning}`);
-  }
+  // ※2. reasoningStream と textStream を並行消費して順序問題を回避
+  await Promise.all([
+    (async () => {
+      for await (const reasoning of reasoningStream) {
+        process.stdout.write(`💭 ${reasoning}`);
+      }
+    })(),
+    (async () => {
+      for await (const textDelta of textStream) {
+        process.stdout.write(textDelta);
+      }
+    })(),
+  ]);
+  console.log('\n');
 
-  for await (const textDelta of textStream) {
-    process.stdout.write(textDelta);
-  }
+  console.log('--- 2ターン目 ---');
+  // ※3. 同じプロバイダーインスタンス (model) を再利用して 
+  //     再度 streamText を呼び出すと、前回の会話コンテキストが継続します。
+  ({ textStream, reasoningStream } = streamText({
+    model,
+    prompt: 'なるほど。それでは、今の話題についてもう少し詳しく教えてください。'
+  }));
+
+  await Promise.all([
+    (async () => {
+      for await (const reasoning of reasoningStream) {
+        process.stdout.write(`💭 ${reasoning}`);
+      }
+    })(),
+    (async () => {
+      for await (const textDelta of textStream) {
+        process.stdout.write(textDelta);
+      }
+    })(),
+  ]);
+  console.log('\n');
 }
+
+runConversation().catch(console.error);
 ```
 
 > [!WARNING]
