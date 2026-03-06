@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
  * AI SDK のプロンプトを A2A (JSON-RPC) リクエストに変換する。
  * シンプルな実装として、最新のユーザーメッセージを送信対象とする。
  */
-export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt): A2AJsonRpcRequest {
+export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt, tools?: any[]): A2AJsonRpcRequest {
     if (prompt.length === 0) {
         return {
             jsonrpc: '2.0',
@@ -22,7 +22,10 @@ export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt): A2A
                     role: 'user',
                     parts: [{ kind: 'text', text: '(empty prompt)' }]
                 },
-                configuration: { blocking: false }
+                configuration: {
+                    blocking: false,
+                    ...(tools && tools.length > 0 ? { tools } : {})
+                }
             }
         };
     }
@@ -30,7 +33,7 @@ export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt): A2A
     // TODO: A2Aプロトコルでは本来コンテキスト履歴全体を送るかtaskIdで継続すべき。
     // https://github.com/google/opencode-geminicli-a2a-provider/issues/xxx
     // プロンプトを末尾から走査し、直近の 'user' または 'system' メッセージを取得する
-    let targetMessage;
+    let targetMessage: LanguageModelV1Prompt[number] | undefined;
     for (let i = prompt.length - 1; i >= 0; i--) {
         if (prompt[i].role === 'user' || prompt[i].role === 'system') {
             targetMessage = prompt[i];
@@ -52,9 +55,6 @@ export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt): A2A
         }
     }
 
-    // TODO: options.mode.tools のツール定義が A2A リクエストに含まれていない問題の修正。
-    // params.message.parts が kind: 'data' 等を受け付けるようにするか、configuration に含める必要がある。
-
     return {
         jsonrpc: '2.0',
         id: crypto.randomUUID(),
@@ -68,7 +68,8 @@ export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt): A2A
                 ]
             },
             configuration: {
-                blocking: false
+                blocking: false,
+                ...(tools && tools.length > 0 ? { tools } : {})
             }
         }
     };

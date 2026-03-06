@@ -12,7 +12,7 @@ describe('Integration: Gemini CLI A2A Provider', () => {
             let body = '';
             req.on('data', chunk => { body += chunk; });
             req.on('end', () => {
-                if (req.method !== 'POST' || req.url !== '/v1/a2a/chat') {
+                if (req.method !== 'POST' || req.url !== '/') {
                     res.writeHead(404);
                     res.end();
                     return;
@@ -38,11 +38,11 @@ describe('Integration: Gemini CLI A2A Provider', () => {
                     'Connection': 'keep-alive',
                 });
 
-                // Simulating an SSE stream
-                res.write('data: {"id": "chat-1", "choices": [{"delta": {"content": "Integration "}, "finish_reason": null}]}\n\n');
+                // Simulating an SSE stream JSON-RPC format
+                res.write('data: {"jsonrpc":"2.0","id":"chat-1","result":{"kind":"status-update","taskId":"t1","status":{"state":"working","message":{"parts":[{"kind":"text","text":"Integration "}]}}}}\n\n');
 
                 setTimeout(() => {
-                    res.write('data: {"id": "chat-1", "choices": [{"delta": {"content": "success!"}, "finish_reason": "stop"}]}\n\n');
+                    res.write('data: {"jsonrpc":"2.0","id":"chat-1","result":{"kind":"status-update","taskId":"t1","final":true,"status":{"state":"stop","message":{"parts":[{"kind":"text","text":"success!"}]}}}}\n\n');
                     res.end();
                 }, 50);
             });
