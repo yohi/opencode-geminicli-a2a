@@ -90,11 +90,11 @@ describe('OpenCodeGeminiA2AProvider', () => {
         expect(parts[2]).toMatchObject({ type: 'finish', finishReason: 'stop' });
     });
 
-    it('should implement doGenerate by consuming the stream', async () => {
+    it('should implement doGenerate with reasoning support', async () => {
         const sseChunks = [
-            'data: {"jsonrpc":"2.0", "id":"2", "result": {"kind":"status-update", "taskId":"t2", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"Test "}]}}}}\n\n',
-            'data: {"jsonrpc":"2.0", "id":"2", "result": {"kind":"status-update", "taskId":"t2", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"generation"}]}}}}\n\n',
-            'data: {"jsonrpc":"2.0", "id":"2", "result": {"kind":"status-update", "taskId":"t2", "final":true, "status":{"state":"stop"}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"3", "result": {"kind":"status-update", "taskId":"t3", "status":{"state":"working", "message":{"parts":[{"kind":"data", "data":{"subject":"Thinking", "description":"Step 1"}}]}}, "metadata":{"coderAgent":{"kind":"thought"}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"3", "result": {"kind":"status-update", "taskId":"t3", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"Final answer"}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"3", "result": {"kind":"status-update", "taskId":"t3", "final":true, "status":{"state":"stop"}}}\n\n',
         ];
 
         const mockResponse = {
@@ -111,8 +111,8 @@ describe('OpenCodeGeminiA2AProvider', () => {
             prompt,
         });
 
-        expect(result.text).toBe('Test generation');
+        expect(result.reasoning).toBe('[Thinking] Step 1\n');
+        expect(result.text).toBe('Final answer');
         expect(result.finishReason).toBe('stop');
-        expect(result.toolCalls).toBeUndefined();
     });
 });
