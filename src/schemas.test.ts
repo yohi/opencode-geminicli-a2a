@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ConfigSchema, A2ARequestSchema, A2AResponseChunkSchema } from './schemas';
+import { ConfigSchema, A2AJsonRpcRequestSchema, A2AJsonRpcResponseSchema } from './schemas';
 
 describe('ConfigSchema', () => {
     it('should parse valid configuration', () => {
@@ -7,6 +7,7 @@ describe('ConfigSchema', () => {
             host: 'localhost',
             port: 8080,
             token: 'secret',
+            protocol: 'http'
         };
         const result = ConfigSchema.safeParse(config);
         expect(result.success).toBe(true);
@@ -22,6 +23,7 @@ describe('ConfigSchema', () => {
             expect(result.data.host).toBe('127.0.0.1');
             expect(result.data.port).toBe(41242);
             expect(result.data.token).toBeUndefined();
+            expect(result.data.protocol).toBe('http');
         }
     });
 
@@ -29,84 +31,152 @@ describe('ConfigSchema', () => {
         const result = ConfigSchema.safeParse({ port: '8080' });
         expect(result.success).toBe(false);
     });
+
+    it('should reject port below valid range', () => {
+        const result = ConfigSchema.safeParse({ port: 0 });
+        expect(result.success).toBe(false);
+    });
+
+    it('should reject port above valid range', () => {
+        const result = ConfigSchema.safeParse({ port: 65536 });
+        expect(result.success).toBe(false);
+    });
+
+    it('should accept port at minimum boundary', () => {
+        const result = ConfigSchema.safeParse({ port: 1 });
+        expect(result.success).toBe(true);
+    });
+
+    it('should accept port at maximum boundary', () => {
+        const result = ConfigSchema.safeParse({ port: 65535 });
+        expect(result.success).toBe(true);
+    });
 });
 
-describe('A2ARequestSchema', () => {
+describe('A2AJsonRpcRequestSchema', () => {
+    const baseRequest = {
+        jsonrpc: '2.0',
+        id: '123',
+        method: 'message/stream',
+        params: {
+            message: {
+                messageId: 'msg-1',
+                role: 'user',
+                parts: [{ kind: 'text', text: 'hello' }]
+            },
+            configuration: { blocking: false }
+        }
+    };
+
     it('should parse valid request without tools', () => {
-        const request = {
-            model: 'gemini-2.5-pro',
-            messages: [{ role: 'user', content: 'hello' }],
-            stream: true,
-        };
-        const result = A2ARequestSchema.safeParse(request);
+        const result = A2AJsonRpcRequestSchema.safeParse(baseRequest);
         expect(result.success).toBe(true);
     });
 
     it('should parse valid request with tools', () => {
         const request = {
-            model: 'gemini-2.5-pro',
-            messages: [{ role: 'user', content: 'hello' }],
-            tools: [
-                {
-                    type: 'function',
-                    function: {
-                        name: 'getWeather',
-                        description: 'Get the weather',
-                        parameters: { type: 'object', properties: { location: { type: 'string' } } },
-                    },
+            jsonrpc: '2.0',
+            id: '123',
+            method: 'message/stream',
+            params: {
+                message: {
+                    messageId: 'msg-1',
+                    role: 'user',
+                    parts: [{ kind: 'text', text: 'hello' }]
                 },
-            ],
-            stream: true,
+                configuration: {
+                    blocking: false,
+                    tools: [{
+                        type: 'function',
+                        function: {
+                            name: 'getWeather'
+                        }
+                    }]
+                }
+            }
         };
-        const result = A2ARequestSchema.safeParse(request);
+        const result = A2AJsonRpcRequestSchema.safeParse(request);
         expect(result.success).toBe(true);
     });
 
     it('should reject invalid role', () => {
         const request = {
-            model: 'gemini-2.5-pro',
-            messages: [{ role: 'alien', content: 'hello' }],
-            stream: true,
+            ...baseRequest,
+            params: {
+                message: {
+                    messageId: 'msg-1',
+                    role: 'alien',
+                    parts: [{ kind: 'text', text: 'hello' }]
+                }
+            }
         };
-        const result = A2ARequestSchema.safeParse(request);
+        const result = A2AJsonRpcRequestSchema.safeParse(request);
         expect(result.success).toBe(false);
+    });
+
+    it('should accept id: null (JSON-RPC 2.0 compliance for parse errors)', () => {
+        // JSON-RPC 2.0 specifies that error responses to invalid requests may use null id.
+        // The request schema allows null to be consistent with the response schema.
+        const request = { ...baseRequest, id: null };
+        const result = A2AJsonRpcRequestSchema.safeParse(request);
+        expect(result.success).toBe(true);
+    });
+
+    it('should accept omitted id (notification)', () => {
+        // JSON-RPC 2.0 notifications omit the id field entirely.
+        const { id: _id, ...notificationRequest } = baseRequest;
+        const result = A2AJsonRpcRequestSchema.safeParse(notificationRequest);
+        expect(result.success).toBe(true);
     });
 });
 
-describe('A2AResponseChunkSchema', () => {
+describe('A2AJsonRpcResponseSchema', () => {
     it('should parse valid chunk with text delta', () => {
         const chunk = {
-            id: 'chunk-123',
-            choices: [
-                {
-                    delta: { content: 'hello ' },
-                    finish_reason: null,
-                },
-            ],
+            jsonrpc: '2.0',
+            id: '123',
+            result: {
+                kind: 'status-update',
+                taskId: 't1',
+                status: {
+                    state: 'working',
+                    message: {
+                        parts: [{ kind: 'text', text: 'hello' }]
+                    }
+                }
+            }
         };
-        const result = A2AResponseChunkSchema.safeParse(chunk);
+        const result = A2AJsonRpcResponseSchema.safeParse(chunk);
         expect(result.success).toBe(true);
     });
 
-    it('should parse valid chunk with tool call delta', () => {
+    it('should parse valid chunk with error', () => {
         const chunk = {
-            id: 'chunk-124',
-            choices: [
-                {
-                    delta: {
-                        tool_calls: [
-                            {
-                                id: 'call-1',
-                                type: 'function',
-                                function: { name: 'getWeather', arguments: '{"location":"Tokyo"}' },
-                            },
-                        ],
-                    },
-                    finish_reason: 'tool_calls',
-                },
-            ],
+            jsonrpc: '2.0',
+            id: '123',
+            error: {
+                code: 500,
+                message: 'Internal Error'
+            }
         };
-        const result = A2AResponseChunkSchema.safeParse(chunk);
+        const result = A2AJsonRpcResponseSchema.safeParse(chunk);
         expect(result.success).toBe(true);
+    });
+    it('should reject chunk with both result and error', () => {
+        const chunk = {
+            jsonrpc: '2.0',
+            id: '123',
+            result: {
+                kind: 'status-update',
+                taskId: 't1',
+                status: { state: 'working' }
+            },
+            error: {
+                code: 500,
+                message: 'Internal Error'
+            }
+        };
+        const result = A2AJsonRpcResponseSchema.safeParse(chunk);
+        expect(result.success).toBe(false);
     });
 });

@@ -56,20 +56,20 @@ sequenceDiagram
     OpenCode->>Plugin: doStream() 呼び出し (AI SDK Format)
     
     rect rgb(240, 248, 255)
-        Note over Plugin: 1. AI SDK Prompt -> A2A Payload Mapping
+        Note over Plugin: 1. AI SDK Prompt -> A2A (JSON-RPC) Mapping
         Note over Plugin: 2. Zod Validation
     end
     
-    Plugin->>GeminiCLI: HTTP POST /v1/a2a/chat (with ofetch)
+    Plugin->>GeminiCLI: HTTP POST / (JSON-RPC 2.0: message/stream)
     
     rect rgb(255, 240, 245)
         Note over Plugin, GeminiCLI: Resilience Layer<br/>Timeout: 60s, Retry: Max 3 (only before connection established)
     end
     
-    GeminiCLI-->>Plugin: Stream Response (A2A Format)
+    GeminiCLI-->>Plugin: SSE Response (data: {JSON-RPC Result})
     
     rect rgb(240, 255, 240)
-        Note over Plugin: Response Mapping (A2A -> AI SDK Stream Parts)
+        Note over Plugin: Response Mapping (A2A StatusUpdate -> AI SDK Stream Parts)
     end
     
     Plugin-->>OpenCode: Yield text-delta / tool-call
@@ -80,19 +80,12 @@ sequenceDiagram
 
 ### 4.1 優先順位 (MoSCoW)
 
-* **[Must Have]** `@ai-sdk/provider` パッケージの `LanguageModelV1` インターフェース（またはOpenCode公式Provider API）への完全準拠。
-* **[Must Have]** AI SDKフォーマットからA2Aペイロードへのマッピング（`mapper.ts`）。
-* **[Must Have]** `ofetch`を用いた、ストリーミング通信と自動リトライ（最大3回、60秒タイムアウト）。
-    再試行は「接続確立（初回ヘッダ/レスポンス受信）前」のプレレスポンスエラーのみを対象とし、ストリーミングレスポンスの再読み込み（巻き戻し）を試みてはならない。
-    また、再試行を許すリクエストは必ず `idempotencyKey` に基づくHTTPヘッダー `Idempotency-Key` を要求する。
-    `idempotencyKey` の生成責任と振る舞いは以下の仕様に従う：
-    1. OpenCode（呼び出し元）がキーを提供した場合は、それを `Idempotency-Key` ヘッダにマッピングして使用する。
-    2. 提供されなかった場合、UUID等の自動生成は行わず、強制的に再試行を無効化（`retry: 0`）した上で、キー無しのリクエストとして続行する。
-    なお、特定のエンドポイントで明示的に許可されている場合を除き、キーをリクエストボディに埋め込んではならない。
-* **[Must Have]** Gemini CLIからのツールコール要求をAI SDKのツールコール形式へマッピングし、OpenCodeへ返却。
-* **[Should Have]** `zod`を用いたA2Aレスポンス（Chunk）のパースとスキーマ検証。
-* **[Won't Have]** 中間プロキシサーバー（Express/Hono等）の立ち上げ（直接プロバイダークラスとして動作させるため）。
-* **[Won't Have]** プラグイン独自でのツール実行承認UIや自動許可フィルター。
+* **[Must Have]** `@ai-sdk/provider` パッケージの `LanguageModelV1` インターフェースへの完全準拠。
+* **[Must Have]** AI SDKフォーマットから A2A (JSON-RPC 2.0) ペイロードへのマッピング (`mapper.ts`)。
+* **[Must Have]** `ofetch` を用いた、SSE形式のストリーミング通信。
+* **[Must Have]** Gemini CLI からの `status-update` イベント内の `message.parts` を解析し、AI SDK のストリーム形式へ変換。
+* **[Should Have]** `zod` を用いた A2A JSON-RPC レスポンスのバリデーション。
+* **[Won't Have]** OpenAI 互換 API エンドポイントの実装。
 
 ### 4.2 Configuration Resolution
 
@@ -104,81 +97,90 @@ sequenceDiagram
 
 ## 5. Data Structure & Schemas (Zod / TypeScript)
 
-通信境界を保護するため、`src/schemas.ts` にて以下のZodスキーマを定義する。
+`src/schemas.ts` にて以下の JSON-RPC 準拠スキーマを定義する。
 
 ```typescript
 import { z } from 'zod';
 
-// 1. Configuration Schema
+// 1. Configuration Schema (Stable)
 export const ConfigSchema = z.object({
   host: z.string().default('127.0.0.1'),
   port: z.number().int().default(41242),
   token: z.string().optional(),
+  protocol: z.enum(['http', 'https']).default('http'),
 });
 
-export type A2AConfig = z.infer<typeof ConfigSchema>;
-
-// 2. A2A Request Schema (to Gemini CLI)
-export const A2ARequestSchema = z.object({
-  model: z.string(),
-  messages: z.array(z.object({
-    role: z.enum(['user', 'assistant', 'system']),
-    content: z.string(),
-  })),
-  tools: z.array(z.object({
-    type: z.string(),
-    function: z.object({
-      name: z.string(),
-      description: z.string().optional(),
-      parameters: z.unknown().optional(),
-    }).passthrough().optional(),
-  }).passthrough()).optional(),
-  stream: z.literal(true),
-});
-
-export type A2ARequest = z.infer<typeof A2ARequestSchema>;
-
-// 3. A2A Response Chunk Schema (from Gemini CLI)
-export const A2AResponseChunkSchema = z.object({
-  id: z.string(),
-  choices: z.array(z.object({
-    delta: z.object({
-      content: z.string().optional(),
-      tool_calls: z.array(z.object({
-        id: z.string().optional(),
-        type: z.string().optional(),
-        function: z.object({
-          name: z.string().optional(),
-          arguments: z.string().optional(),
-        }).passthrough().optional(),
-      }).passthrough()).optional(),
+// 2. A2A JSON-RPC Request Schema
+export const A2AJsonRpcRequestSchema = z.object({
+  jsonrpc: z.literal('2.0'),
+  id: z.union([z.string(), z.number()]),
+  method: z.literal('message/stream'),
+  params: z.object({
+    message: z.object({
+      messageId: z.string(),
+      role: z.enum(['user', 'assistant']), // 注: 'system' ロールは変換時に 'user' のメッセージ内容へ統合される（例: role: 'system' -> contentをuser同等として送信）
+      parts: z.array(z.object({
+        kind: z.literal('text'),
+        text: z.string()
+      }))
     }),
-    finish_reason: z.string().nullable(),
-  })),
+    configuration: z.object({
+      blocking: z.boolean().default(false),
+      tools: z.array(z.unknown()).optional()
+    }).optional()
+  })
 });
 
-export type A2AResponseChunk = z.infer<typeof A2AResponseChunkSchema>;
+// 3. A2A JSON-RPC Response (SSE data: ...)
+export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('task'),
+    id: z.string(),
+    contextId: z.string(),
+    status: z.object({ state: z.enum(['working', 'stop', 'error']) })
+  }),
+  z.object({
+    kind: z.literal('status-update'),
+    taskId: z.string(),
+    status: z.object({
+      state: z.enum(['working', 'stop', 'error']),
+      message: z.object({
+        parts: z.array(z.object({
+          kind: z.string(),
+          text: z.string().optional(),
+          data: z.unknown().optional()
+        }))
+      }).optional()
+    }),
+    final: z.boolean().optional()
+  })
+]);
+
+export const ResultResponseSchema = z.object({
+  jsonrpc: z.literal('2.0'),
+  id: z.union([z.string(), z.number()]),
+  result: A2AResponseResultSchema,
+});
+
+export const ErrorResponseSchema = z.object({
+  jsonrpc: z.literal('2.0'),
+  id: z.union([z.string(), z.number()]).nullable(),
+  error: z.object({
+    code: z.number(),
+    message: z.string()
+  })
+});
+
+export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResponseSchema]);
 ```
 
 ## 6. API Definition (Resilience Configuration)
 
-`ofetch`のインスタンス生成時に、以下の設定を必ず適用すること。
-
-* **Endpoint**: `http://{host}:{port}/v1/a2a/chat`
-* **Headers**:
-    * `Content-Type: application/json`
-    * `Authorization: Bearer {token}` (tokenが存在する場合のみ)
-    * `Idempotency-Key: {idempotencyKey}` （再試行可能なリクエストで必須。`idempotencyKey`パラメータからマッピング。特定のエンドポイントが指定しない限り、ボディには埋め込まないこと）
-* **Timeout**: `60000` (60秒)
-* **Retry Options**:
-    ```json
-    {
-      "retry": 3,
-      "retryDelay": 500,
-      "retryStatusCodes": [408, 429, 500, 502, 503, 504]
-    }
-    ```
-    > **Note:** `a2a-client.ts` における通信ラッパー実装では、上記グローバル設定のみに依存せず、リクエスト送信前に必ずリクエスト元の `idempotencyKey` の有無を確認すること。万が一キーが存在しない場合は、その呼び出し時に `ofetch` へ渡す `retry` オプションを強制的に `0` に動的設定し、「idempotencyKey がない場合は再試行しない」という単一のルールに従うこと（例外をスローしない）。また、再試行ロジックはストリーミングレスポンスの再読み込み・巻き戻しを試みてはならない（再試行はレスポンス前のエラーのみに限定する）。これらの振る舞いは `a2a-client.ts` のラッパー内に明記すること。
+* **Endpoint**: `{protocol}://{host}:{port}/` (`{protocol}` は `protocol` 設定に基づき `http` または `https` となる)
+* **Protocol**: JSON-RPC 2.0 over HTTP/S (Streaming via SSE)
+* **Status Handling**:
+    * `status.state === 'working'` かつ `status.message.parts` 内の `text` を `text-delta` として扱う。
+    * `final === true` をストリームの終了トリガーとして扱う。
 
 ## 7. LLM Guidelines (For AI Developer)
 

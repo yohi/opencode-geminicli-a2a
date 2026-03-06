@@ -1,13 +1,17 @@
 import { InvalidResponseDataError } from '@ai-sdk/provider';
-import { A2AResponseChunkSchema, type A2AResponseChunk } from '../schemas';
+import { A2AJsonRpcResponseSchema, type A2AJsonRpcResponse } from '../schemas';
 
-function parseChunkLine(chunkDataSync: string): A2AResponseChunk | null {
+function parseChunkLine(chunkDataSync: string): A2AJsonRpcResponse | null {
     if (!chunkDataSync) return null;
 
+    // SSE data: prefix handling
     if (chunkDataSync.startsWith('data: ')) {
         chunkDataSync = chunkDataSync.slice(6).trim();
     } else if (chunkDataSync.startsWith('data:')) {
         chunkDataSync = chunkDataSync.slice(5).trim();
+    } else {
+        // SSE のコメント行や空行は無視
+        return null;
     }
 
     if (chunkDataSync === '[DONE]') {
@@ -28,7 +32,7 @@ function parseChunkLine(chunkDataSync: string): A2AResponseChunk | null {
         });
     }
 
-    const validation = A2AResponseChunkSchema.safeParse(parsedJson);
+    const validation = A2AJsonRpcResponseSchema.safeParse(parsedJson);
     if (!validation.success) {
         throw new InvalidResponseDataError({
             data: parsedJson,
@@ -40,12 +44,12 @@ function parseChunkLine(chunkDataSync: string): A2AResponseChunk | null {
 }
 
 /**
- * Parses an SSE or NDJSON stream from the fetch Response body and yields valid A2AResponseChunk objects.
+ * Parses an SSE stream from the fetch Response body and yields valid A2AJsonRpcResponse objects.
  * Throws InvalidResponseDataError if parsing or validation fails.
  */
 export async function* parseA2AStream(
     stream: ReadableStream<Uint8Array>
-): AsyncGenerator<A2AResponseChunk, void, unknown> {
+): AsyncGenerator<A2AJsonRpcResponse, void, unknown> {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -62,8 +66,11 @@ export async function* parseA2AStream(
             buffer = lines.pop() ?? '';
 
             for (const line of lines) {
-                const parsed = parseChunkLine(line.trim());
-                if (parsed) yield parsed;
+                const trimmed = line.trim();
+                if (trimmed) {
+                    const parsed = parseChunkLine(trimmed);
+                    if (parsed) yield parsed;
+                }
             }
         }
 

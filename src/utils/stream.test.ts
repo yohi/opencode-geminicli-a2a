@@ -15,10 +15,10 @@ describe('parseA2AStream', () => {
         });
     }
 
-    it('parses SSE format streams correctly', async () => {
+    it('parses JSON-RPC SSE format streams correctly', async () => {
         const sseData = [
-            'data: {"id": "1", "choices": [{"delta": {"content": "hello "}, "finish_reason": null}]}\n\n',
-            'data: {"id": "1", "choices": [{"delta": {"content": "world"}, "finish_reason": null}]}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"hello "}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"world"}]}}}}\n\n',
             'data: [DONE]\n\n',
         ];
 
@@ -30,32 +30,14 @@ describe('parseA2AStream', () => {
         }
 
         expect(results.length).toBe(2);
-        expect(results[0].choices[0].delta.content).toBe('hello ');
-        expect(results[1].choices[0].delta.content).toBe('world');
-    });
-
-    it('parses NDJSON format streams correctly', async () => {
-        const ndjsonData = [
-            '{"id": "2", "choices": [{"delta": {"content": "foo "}, "finish_reason": null}]}\n',
-            '{"id": "2", "choices": [{"delta": {"content": "bar"}, "finish_reason": "stop"}]}\n',
-        ];
-
-        const stream = createStream(ndjsonData);
-        const results = [];
-
-        for await (const chunk of parseA2AStream(stream)) {
-            results.push(chunk);
-        }
-
-        expect(results.length).toBe(2);
-        expect(results[0].choices[0].delta.content).toBe('foo ');
-        expect(results[1].choices[0].finish_reason).toBe('stop');
+        expect((results[0] as any).result.status.message.parts[0].text).toBe('hello ');
+        expect((results[1] as any).result.status.message.parts[0].text).toBe('world');
     });
 
     it('handles fragmented chunks', async () => {
         const fragmentedData = [
-            'data: {"id": "3", "cho',
-            'ices": [{"delta": {"content": "frag"}, "finish_reason": null}]}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"3", "r',
+            'esult": {"kind":"status-update", "taskId":"t2", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"frag"}]}}}}\n\n',
         ];
 
         const stream = createStream(fragmentedData);
@@ -66,7 +48,7 @@ describe('parseA2AStream', () => {
         }
 
         expect(results.length).toBe(1);
-        expect(results[0].choices[0].delta.content).toBe('frag');
+        expect((results[0] as any).result.status.message.parts[0].text).toBe('frag');
     });
 
     it('throws error on malformed JSON chunk', async () => {
@@ -77,7 +59,7 @@ describe('parseA2AStream', () => {
     });
 
     it('throws error on validation failure', async () => {
-        const stream = createStream(['data: {"id": "1", "missing_choices": true}\n\n']);
+        const stream = createStream(['data: {"id": "1", "result": {"missing_kind": true}}\n\n']);
         await expect(async () => {
             for await (const _ of parseA2AStream(stream)) { }
         }).rejects.toThrowError(/Chunk validation failed/);
@@ -92,3 +74,4 @@ describe('parseA2AStream', () => {
         expect(results.length).toBe(0);
     });
 });
+
