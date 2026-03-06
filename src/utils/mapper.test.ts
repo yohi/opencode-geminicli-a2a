@@ -215,5 +215,155 @@ describe('mapper', () => {
                 expect(Number.isNaN(finishPart.usage?.completionTokens)).toBe(true);
             }
         });
+
+        it('should map data parts to tool-call stream parts when state is working', () => {
+            const result: A2AResponseResult = {
+                kind: 'status-update',
+                taskId: 't1',
+                status: {
+                    state: 'working',
+                    message: {
+                        parts: [{
+                            kind: 'data',
+                            data: {
+                                request: {
+                                    callId: 'call-123',
+                                    name: 'getWeather',
+                                    args: { location: 'Tokyo' }
+                                }
+                            }
+                        }]
+                    }
+                }
+            };
+            const parts = mapA2AResponseToStreamParts(result);
+            expect(parts.length).toBe(1);
+            expect(parts[0].type).toBe('tool-call');
+            if (parts[0].type === 'tool-call') {
+                expect(parts[0].toolCallId).toBe('call-123');
+                expect(parts[0].toolName).toBe('getWeather');
+                expect(parts[0].args).toBe(JSON.stringify({ location: 'Tokyo' }));
+            }
+        });
+
+        it('should extract tool-calls and finish reason when state is input-required and final is true', () => {
+            const result: A2AResponseResult = {
+                kind: 'status-update',
+                taskId: 't1',
+                final: true,
+                status: {
+                    state: 'input-required',
+                    message: {
+                        parts: [{
+                            kind: 'data',
+                            data: {
+                                request: {
+                                    callId: 'call-456',
+                                    name: 'getWeather',
+                                    args: { location: 'Osaka' }
+                                }
+                            }
+                        }]
+                    }
+                }
+            };
+            const parts = mapA2AResponseToStreamParts(result);
+            expect(parts.length).toBe(2);
+            expect(parts[0].type).toBe('tool-call');
+            if (parts[0].type === 'tool-call') {
+                expect(parts[0].toolCallId).toBe('call-456');
+                expect(parts[0].toolName).toBe('getWeather');
+            }
+            expect(parts[1].type).toBe('finish');
+            if (parts[1].type === 'finish') {
+                expect(parts[1].finishReason).toBe('tool-calls');
+            }
+        });
+
+        it('should extract tool-calls and finish reason when state is tool_calls and final is true', () => {
+            const result: A2AResponseResult = {
+                kind: 'status-update',
+                taskId: 't1',
+                final: true,
+                status: {
+                    state: 'tool_calls',
+                    message: {
+                        parts: [{
+                            kind: 'data',
+                            data: {
+                                request: {
+                                    callId: 'call-101',
+                                    name: 'getTime',
+                                    args: { timezone: 'Asia/Tokyo' }
+                                }
+                            }
+                        }]
+                    }
+                }
+            };
+            const parts = mapA2AResponseToStreamParts(result);
+            expect(parts.length).toBe(2);
+            expect(parts[0].type).toBe('tool-call');
+            if (parts[0].type === 'tool-call') {
+                expect(parts[0].toolCallId).toBe('call-101');
+                expect(parts[0].toolName).toBe('getTime');
+            }
+            expect(parts[1].type).toBe('finish');
+            if (parts[1].type === 'finish') {
+                expect(parts[1].finishReason).toBe('tool-calls');
+            }
+        });
+
+        it('should generate a UUID for toolCallId if callId is not provided', () => {
+            const result: A2AResponseResult = {
+                kind: 'status-update',
+                taskId: 't1',
+                status: {
+                    state: 'working',
+                    message: {
+                        parts: [{
+                            kind: 'data',
+                            data: {
+                                request: {
+                                    name: 'getWeather',
+                                    args: {}
+                                }
+                            }
+                        }]
+                    }
+                }
+            };
+            const parts = mapA2AResponseToStreamParts(result);
+            expect(parts.length).toBe(1);
+            expect(parts[0].type).toBe('tool-call');
+            if (parts[0].type === 'tool-call') {
+                expect(parts[0].toolCallId).toBeDefined();
+                expect(parts[0].toolCallId.length).toBeGreaterThan(0);
+                expect(parts[0].toolName).toBe('getWeather');
+            }
+        });
+
+        it('should ignore data part if toolName is undefined', () => {
+            const result: A2AResponseResult = {
+                kind: 'status-update',
+                taskId: 't1',
+                status: {
+                    state: 'working',
+                    message: {
+                        parts: [{
+                            kind: 'data',
+                            data: {
+                                request: {
+                                    callId: 'call-789',
+                                    args: {}
+                                }
+                            }
+                        }]
+                    }
+                }
+            };
+            const parts = mapA2AResponseToStreamParts(result);
+            expect(parts.length).toBe(0); // Ignore tool-call
+        });
     });
 });
