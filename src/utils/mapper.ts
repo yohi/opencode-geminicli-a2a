@@ -133,7 +133,7 @@ export class A2AStreamMapper {
                         const toolName = req.name;
                         if (!toolName) continue;
 
-                        const toolCallId = req.callId || crypto.randomUUID();
+                        const toolCallId = req.callId || `call_${crypto.createHash('sha256').update(toolName + JSON.stringify(req.args ?? {})).digest('hex').substring(0, 16)}`;
                         // ツールコール ID ベースの重複排除
                         if (this.emittedToolCallIds.has(toolCallId)) continue;
                         this.emittedToolCallIds.add(toolCallId);
