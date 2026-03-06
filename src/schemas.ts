@@ -41,7 +41,7 @@ export const A2AJsonRpcRequestSchema = z.object({
 export type A2AJsonRpcRequest = z.infer<typeof A2AJsonRpcRequestSchema>;
 
 // 3. A2A JSON-RPC Response Result Schema
-export const STATUS_STATES = ['working', 'stop', 'error', 'input-required', 'completed', 'failed', 'tool_calls', 'cancelled', 'timeout', 'aborted', 'length', 'max_tokens', 'content_filter', 'blocked'] as const;
+export const STATUS_STATES = ['submitted', 'queued', 'working', 'stop', 'error', 'input-required', 'completed', 'failed', 'tool_calls', 'cancelled', 'timeout', 'aborted', 'length', 'max_tokens', 'content_filter', 'blocked'] as const;
 
 export const metadataSchema = z.object({
     coderAgent: z.object({
