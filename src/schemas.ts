@@ -11,7 +11,7 @@ export const ConfigSchema = z.object({
 export type A2AConfig = z.infer<typeof ConfigSchema>;
 
 // 2. A2A JSON-RPC Request Schema
-export const ToolSchema = z.unknown();
+export const ToolSchema = z.object({}).passthrough();
 export type Tool = z.infer<typeof ToolSchema>;
 
 export const A2AJsonRpcRequestSchema = z.object({

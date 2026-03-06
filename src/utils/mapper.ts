@@ -55,6 +55,13 @@ export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt, tool
         }
     }
 
+    if (targetMessage?.role === 'user' && content === '') {
+        throw new Error(
+            'Unsupported user message: contains no text parts (only image/file parts). ' +
+            'The A2A provider currently supports text-only user messages.'
+        );
+    }
+
     return {
         jsonrpc: '2.0',
         id: crypto.randomUUID(),
@@ -127,9 +134,11 @@ export function mapA2AResponseToStreamParts(result: A2AResponseResult): Language
                     finishReason = 'tool-calls';
                     break;
                 case 'stop':
-                default:
-                    // デフォルトは 'stop' を維持
                     finishReason = 'stop';
+                    break;
+                default:
+                    // 未知の状態は 'other' にフォールバックし、正常停止と誤分類しない
+                    finishReason = 'other';
                     break;
             }
 
