@@ -29,22 +29,27 @@ export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt): A2A
 
     // TODO: A2Aプロトコルでは本来コンテキスト履歴全体を送るかtaskIdで継続すべき。
     // https://github.com/google/opencode-geminicli-a2a-provider/issues/xxx
-    // 最新のメッセージを取得
-    const lastMessage = prompt[prompt.length - 1];
+    // プロンプトを末尾から走査し、直近の 'user' または 'system' メッセージを取得する
+    let targetMessage;
+    for (let i = prompt.length - 1; i >= 0; i--) {
+        if (prompt[i].role === 'user' || prompt[i].role === 'system') {
+            targetMessage = prompt[i];
+            break;
+        }
+    }
+
     let content = '';
 
-    if (lastMessage.role === 'user') {
-        for (const part of lastMessage.content) {
-            if (part.type === 'text') {
-                content += part.text;
+    if (targetMessage) {
+        if (targetMessage.role === 'user') {
+            for (const part of targetMessage.content) {
+                if (part.type === 'text') {
+                    content += part.text;
+                }
             }
+        } else if (targetMessage.role === 'system') {
+            content = targetMessage.content;
         }
-    } else if (lastMessage.role === 'system') {
-        content = lastMessage.content;
-    } else {
-        // TODO: assistant/tool ロールのサポートは未実装
-        // tool ロールは tool result を含む場合があるため、エラーとして扱う
-        throw new Error(`Unsupported last message role for A2A mapping: ${(lastMessage as any).role}`);
     }
 
     // TODO: options.mode.tools のツール定義が A2A リクエストに含まれていない問題の修正。

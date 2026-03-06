@@ -28,11 +28,12 @@ describe('mapper', () => {
             expect(req.params.message.parts[0].text).toBe('You are a helpful assistant.');
         });
 
-        it('should throw on unsupported role', () => {
+        it('should fallback to empty prompt if no user or system message is found', () => {
             const prompt: LanguageModelV1Prompt = [
                 { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call1', toolName: 'getWeather', result: { weather: 'sunny' } }] }
             ];
-            expect(() => mapPromptToA2AJsonRpcRequest(prompt)).toThrowError(/Unsupported last message role for A2A mapping/);
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            expect(req.params.message.parts[0].text).toBe('(empty prompt)');
         });
     });
 
