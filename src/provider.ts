@@ -7,7 +7,7 @@ import type {
 } from '@ai-sdk/provider';
 import { resolveConfig, type OpenCodeProviderOptions } from './config';
 import { A2AClient } from './a2a-client';
-import { mapPromptToA2AJsonRpcRequest, mapA2AResponseToStreamParts } from './utils/mapper';
+import { mapPromptToA2AJsonRpcRequest, A2AStreamMapper } from './utils/mapper';
 import { parseA2AStream } from './utils/stream';
 import type { A2AJsonRpcRequest } from './schemas';
 
@@ -44,6 +44,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         });
 
         const chunkGenerator = parseA2AStream(responseStream);
+        const mapper = new A2AStreamMapper();
 
         const stream = new ReadableStream<LanguageModelV1StreamPart>({
             async start(controller) {
@@ -51,7 +52,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                     let hasFinished = false;
                     for await (const chunk of chunkGenerator) {
                         if ('result' in chunk && chunk.result) {
-                            const parts = mapA2AResponseToStreamParts(chunk.result);
+                            const parts = mapper.mapResult(chunk.result);
                             for (const part of parts) {
                                 if (part.type === 'finish') hasFinished = true;
                                 controller.enqueue(part);

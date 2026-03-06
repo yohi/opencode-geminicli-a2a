@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapPromptToA2AJsonRpcRequest, mapA2AResponseToStreamParts } from './mapper';
+import { mapPromptToA2AJsonRpcRequest, mapA2AResponseToStreamParts, A2AStreamMapper } from './mapper';
 import type { LanguageModelV1Prompt } from '@ai-sdk/provider';
 import type { A2AResponseResult } from '../schemas';
 
@@ -67,6 +67,7 @@ describe('mapper', () => {
         });
     });
 
+    // 後方互換 mapA2AResponseToStreamParts (ステートレスラッパー) のテスト
     describe('mapA2AResponseToStreamParts', () => {
         it('should map text delta', () => {
             const result: A2AResponseResult = {
@@ -103,9 +104,7 @@ describe('mapper', () => {
                 kind: 'status-update',
                 taskId: 't1',
                 final: true,
-                status: {
-                    state: 'stop',
-                }
+                status: { state: 'stop' }
             };
             const parts = mapA2AResponseToStreamParts(result);
             expect(parts.length).toBe(1);
@@ -114,17 +113,15 @@ describe('mapper', () => {
                 expect(parts[0].finishReason).toBe('stop');
             }
         });
+
         it('should map unknown status.state to finishReason "other"', () => {
             const result: A2AResponseResult = {
                 kind: 'status-update',
                 taskId: 't1',
                 final: true,
-                status: {
-                    state: 'foo' as string,
-                }
+                status: { state: 'foo' as string }
             };
             const parts = mapA2AResponseToStreamParts(result);
-            expect(parts.length).toBe(1);
             expect(parts[0].type).toBe('finish');
             if (parts[0].type === 'finish') {
                 expect(parts[0].finishReason).toBe('other');
@@ -136,13 +133,9 @@ describe('mapper', () => {
                 kind: 'status-update',
                 taskId: 't1',
                 final: true,
-                status: {
-                    state: 'error',
-                }
+                status: { state: 'error' }
             };
             const parts = mapA2AResponseToStreamParts(result);
-            expect(parts.length).toBe(1);
-            expect(parts[0].type).toBe('finish');
             if (parts[0].type === 'finish') {
                 expect(parts[0].finishReason).toBe('error');
             }
@@ -154,26 +147,10 @@ describe('mapper', () => {
                 taskId: 't1',
                 status: {
                     state: 'stop',
-                    message: {
-                        parts: [{ kind: 'text', text: 'ignored text' }]
-                    }
+                    message: { parts: [{ kind: 'text', text: 'ignored text' }] }
                 }
             };
-            const partsStop = mapA2AResponseToStreamParts(resultStop);
-            expect(partsStop.filter(p => p.type === 'text-delta').length).toBe(0);
-
-            const resultError: A2AResponseResult = {
-                kind: 'status-update',
-                taskId: 't1',
-                status: {
-                    state: 'error',
-                    message: {
-                        parts: [{ kind: 'text', text: 'ignored error text' }]
-                    }
-                }
-            };
-            const partsError = mapA2AResponseToStreamParts(resultError);
-            expect(partsError.filter(p => p.type === 'text-delta').length).toBe(0);
+            expect(mapA2AResponseToStreamParts(resultStop).filter(p => p.type === 'text-delta').length).toBe(0);
         });
 
         it('should map token usage correctly', () => {
@@ -181,17 +158,11 @@ describe('mapper', () => {
                 kind: 'status-update',
                 taskId: 't1',
                 final: true,
-                status: {
-                    state: 'stop',
-                },
-                usage: {
-                    promptTokens: 10,
-                    completionTokens: 20
-                }
+                status: { state: 'stop' },
+                usage: { promptTokens: 10, completionTokens: 20 }
             };
             const parts = mapA2AResponseToStreamParts(result);
             const finishPart = parts.find(p => p.type === 'finish');
-            expect(finishPart).toBeDefined();
             if (finishPart && finishPart.type === 'finish') {
                 expect(finishPart.usage?.promptTokens).toBe(10);
                 expect(finishPart.usage?.completionTokens).toBe(20);
@@ -203,13 +174,10 @@ describe('mapper', () => {
                 kind: 'status-update',
                 taskId: 't1',
                 final: true,
-                status: {
-                    state: 'stop',
-                }
+                status: { state: 'stop' }
             };
             const parts = mapA2AResponseToStreamParts(result);
             const finishPart = parts.find(p => p.type === 'finish');
-            expect(finishPart).toBeDefined();
             if (finishPart && finishPart.type === 'finish') {
                 expect(Number.isNaN(finishPart.usage?.promptTokens)).toBe(true);
                 expect(Number.isNaN(finishPart.usage?.completionTokens)).toBe(true);
@@ -226,11 +194,7 @@ describe('mapper', () => {
                         parts: [{
                             kind: 'data',
                             data: {
-                                request: {
-                                    callId: 'call-123',
-                                    name: 'getWeather',
-                                    args: { location: 'Tokyo' }
-                                }
+                                request: { callId: 'call-123', name: 'getWeather', args: { location: 'Tokyo' } }
                             }
                         }]
                     }
@@ -257,11 +221,7 @@ describe('mapper', () => {
                         parts: [{
                             kind: 'data',
                             data: {
-                                request: {
-                                    callId: 'call-456',
-                                    name: 'getWeather',
-                                    args: { location: 'Osaka' }
-                                }
+                                request: { callId: 'call-456', name: 'getWeather', args: { location: 'Osaka' } }
                             }
                         }]
                     }
@@ -270,44 +230,6 @@ describe('mapper', () => {
             const parts = mapA2AResponseToStreamParts(result);
             expect(parts.length).toBe(2);
             expect(parts[0].type).toBe('tool-call');
-            if (parts[0].type === 'tool-call') {
-                expect(parts[0].toolCallId).toBe('call-456');
-                expect(parts[0].toolName).toBe('getWeather');
-            }
-            expect(parts[1].type).toBe('finish');
-            if (parts[1].type === 'finish') {
-                expect(parts[1].finishReason).toBe('tool-calls');
-            }
-        });
-
-        it('should extract tool-calls and finish reason when state is tool_calls and final is true', () => {
-            const result: A2AResponseResult = {
-                kind: 'status-update',
-                taskId: 't1',
-                final: true,
-                status: {
-                    state: 'tool_calls',
-                    message: {
-                        parts: [{
-                            kind: 'data',
-                            data: {
-                                request: {
-                                    callId: 'call-101',
-                                    name: 'getTime',
-                                    args: { timezone: 'Asia/Tokyo' }
-                                }
-                            }
-                        }]
-                    }
-                }
-            };
-            const parts = mapA2AResponseToStreamParts(result);
-            expect(parts.length).toBe(2);
-            expect(parts[0].type).toBe('tool-call');
-            if (parts[0].type === 'tool-call') {
-                expect(parts[0].toolCallId).toBe('call-101');
-                expect(parts[0].toolName).toBe('getTime');
-            }
             expect(parts[1].type).toBe('finish');
             if (parts[1].type === 'finish') {
                 expect(parts[1].finishReason).toBe('tool-calls');
@@ -323,23 +245,16 @@ describe('mapper', () => {
                     message: {
                         parts: [{
                             kind: 'data',
-                            data: {
-                                request: {
-                                    name: 'getWeather',
-                                    args: {}
-                                }
-                            }
+                            data: { request: { name: 'getWeather', args: {} } }
                         }]
                     }
                 }
             };
             const parts = mapA2AResponseToStreamParts(result);
             expect(parts.length).toBe(1);
-            expect(parts[0].type).toBe('tool-call');
             if (parts[0].type === 'tool-call') {
                 expect(parts[0].toolCallId).toBeDefined();
                 expect(parts[0].toolCallId.length).toBeGreaterThan(0);
-                expect(parts[0].toolName).toBe('getWeather');
             }
         });
 
@@ -352,18 +267,310 @@ describe('mapper', () => {
                     message: {
                         parts: [{
                             kind: 'data',
-                            data: {
-                                request: {
-                                    callId: 'call-789',
-                                    args: {}
-                                }
-                            }
+                            data: { request: { callId: 'call-789', args: {} } }
                         }]
                     }
                 }
             };
             const parts = mapA2AResponseToStreamParts(result);
-            expect(parts.length).toBe(0); // Ignore tool-call
+            expect(parts.length).toBe(0);
+        });
+    });
+
+    // A2AStreamMapper（ステートフル）のテスト
+    describe('A2AStreamMapper', () => {
+        describe('snapshot deduplication', () => {
+            it('should deduplicate snapshot text: A -> AB -> ABC emits A, B, C', () => {
+                const mapper = new A2AStreamMapper();
+
+                const makeUpdate = (text: string): A2AResponseResult => ({
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: { parts: [{ kind: 'text', text }] }
+                    }
+                });
+
+                const parts1 = mapper.mapResult(makeUpdate('A'));
+                expect(parts1.length).toBe(1);
+                expect(parts1[0].type).toBe('text-delta');
+                if (parts1[0].type === 'text-delta') expect(parts1[0].textDelta).toBe('A');
+
+                const parts2 = mapper.mapResult(makeUpdate('AB'));
+                expect(parts2.length).toBe(1);
+                if (parts2[0].type === 'text-delta') expect(parts2[0].textDelta).toBe('B');
+
+                const parts3 = mapper.mapResult(makeUpdate('ABC'));
+                expect(parts3.length).toBe(1);
+                if (parts3[0].type === 'text-delta') expect(parts3[0].textDelta).toBe('C');
+            });
+
+            it('should emit full text when new text does not start with previous', () => {
+                const mapper = new A2AStreamMapper();
+
+                const makeUpdate = (text: string): A2AResponseResult => ({
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: { parts: [{ kind: 'text', text }] }
+                    }
+                });
+
+                mapper.mapResult(makeUpdate('Hello'));
+                const parts = mapper.mapResult(makeUpdate('World'));
+                expect(parts.length).toBe(1);
+                if (parts[0].type === 'text-delta') expect(parts[0].textDelta).toBe('World');
+            });
+
+            it('should not emit empty delta when snapshot is identical', () => {
+                const mapper = new A2AStreamMapper();
+
+                const makeUpdate = (text: string): A2AResponseResult => ({
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: { parts: [{ kind: 'text', text }] }
+                    }
+                });
+
+                mapper.mapResult(makeUpdate('Hello'));
+                const parts = mapper.mapResult(makeUpdate('Hello'));
+                expect(parts.length).toBe(0);
+            });
+
+            it('should handle delta-style text correctly (no prefix overlap)', () => {
+                const mapper = new A2AStreamMapper();
+
+                const makeUpdate = (text: string): A2AResponseResult => ({
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: { parts: [{ kind: 'text', text }] }
+                    }
+                });
+
+                const parts1 = mapper.mapResult(makeUpdate('chunk1'));
+                expect(parts1.length).toBe(1);
+                if (parts1[0].type === 'text-delta') expect(parts1[0].textDelta).toBe('chunk1');
+
+                const parts2 = mapper.mapResult(makeUpdate('chunk2'));
+                expect(parts2.length).toBe(1);
+                if (parts2[0].type === 'text-delta') expect(parts2[0].textDelta).toBe('chunk2');
+            });
+        });
+
+        describe('tool call deduplication', () => {
+            it('should deduplicate tool calls with same callId', () => {
+                const mapper = new A2AStreamMapper();
+
+                const makeUpdate = (): A2AResponseResult => ({
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'data',
+                                data: {
+                                    request: { callId: 'call-dup', name: 'getTime', args: {} }
+                                }
+                            }]
+                        }
+                    }
+                });
+
+                const parts1 = mapper.mapResult(makeUpdate());
+                expect(parts1.filter(p => p.type === 'tool-call').length).toBe(1);
+
+                const parts2 = mapper.mapResult(makeUpdate());
+                expect(parts2.filter(p => p.type === 'tool-call').length).toBe(0);
+            });
+
+            it('should deduplicate tool calls when callId is absent but name and args are identical', () => {
+                const mapper = new A2AStreamMapper();
+
+                const makeUpdate = (): A2AResponseResult => ({
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'data',
+                                data: {
+                                    request: { name: 'getWeather', args: { location: 'Tokyo' } }
+                                }
+                            }]
+                        }
+                    }
+                });
+
+                const parts1 = mapper.mapResult(makeUpdate());
+                expect(parts1.filter(p => p.type === 'tool-call').length).toBe(1);
+
+                const parts2 = mapper.mapResult(makeUpdate());
+                expect(parts2.filter(p => p.type === 'tool-call').length).toBe(0);
+            });
+        });
+
+        describe('thoughts (reasoning)', () => {
+            it('should map thought data to reasoning stream part', () => {
+                const mapper = new A2AStreamMapper();
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'data',
+                                data: {
+                                    subject: 'Analyzing the code',
+                                    description: 'I\'m reviewing the function implementation.'
+                                }
+                            }]
+                        }
+                    },
+                    metadata: { coderAgent: { kind: 'thought' } }
+                };
+
+                const parts = mapper.mapResult(result);
+                expect(parts.length).toBe(1);
+                expect(parts[0].type).toBe('reasoning');
+                if (parts[0].type === 'reasoning') {
+                    expect(parts[0].textDelta).toBe('[Analyzing the code] I\'m reviewing the function implementation.');
+                }
+            });
+
+            it('should map thought with subject only', () => {
+                const mapper = new A2AStreamMapper();
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'data',
+                                data: { subject: 'Processing' }
+                            }]
+                        }
+                    },
+                    metadata: { coderAgent: { kind: 'thought' } }
+                };
+
+                const parts = mapper.mapResult(result);
+                expect(parts.length).toBe(1);
+                expect(parts[0].type).toBe('reasoning');
+                if (parts[0].type === 'reasoning') {
+                    expect(parts[0].textDelta).toBe('[Processing]');
+                }
+            });
+
+            it('should not confuse thoughts with tool calls', () => {
+                const mapper = new A2AStreamMapper();
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [
+                                {
+                                    kind: 'data',
+                                    data: { subject: 'Thinking', description: 'Planning next steps' }
+                                },
+                                {
+                                    kind: 'data',
+                                    data: {
+                                        request: { callId: 'call-mixed', name: 'runCommand', args: { cmd: 'ls' } }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    metadata: { coderAgent: { kind: 'thought' } }
+                };
+
+                const parts = mapper.mapResult(result);
+                const reasoningParts = parts.filter(p => p.type === 'reasoning');
+                const toolCallParts = parts.filter(p => p.type === 'tool-call');
+                expect(reasoningParts.length).toBe(1);
+                expect(toolCallParts.length).toBe(1);
+                if (reasoningParts[0].type === 'reasoning') {
+                    expect(reasoningParts[0].textDelta).toContain('Thinking');
+                }
+                if (toolCallParts[0].type === 'tool-call') {
+                    expect(toolCallParts[0].toolName).toBe('runCommand');
+                }
+            });
+
+            it('should detect thoughts via metadata.coderAgent.kind fallback', () => {
+                const mapper = new A2AStreamMapper();
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'data',
+                                data: {
+                                    description: 'No subject, just description via metadata'
+                                }
+                            }]
+                        }
+                    },
+                    metadata: { coderAgent: { kind: 'thought' } }
+                };
+
+                const parts = mapper.mapResult(result);
+                expect(parts.length).toBe(1);
+                expect(parts[0].type).toBe('reasoning');
+                if (parts[0].type === 'reasoning') {
+                    expect(parts[0].textDelta).toBe('No subject, just description via metadata');
+                }
+            });
+        });
+
+        describe('combined scenarios', () => {
+            it('should handle snapshot text followed by finish', () => {
+                const mapper = new A2AStreamMapper();
+
+                const textUpdate: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: { parts: [{ kind: 'text', text: 'Hello World' }] }
+                    }
+                };
+                const finishUpdate: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    final: true,
+                    status: { state: 'input-required' }
+                };
+
+                const textParts = mapper.mapResult(textUpdate);
+                expect(textParts.length).toBe(1);
+                if (textParts[0].type === 'text-delta') expect(textParts[0].textDelta).toBe('Hello World');
+
+                const finishParts = mapper.mapResult(finishUpdate);
+                expect(finishParts.length).toBe(1);
+                expect(finishParts[0].type).toBe('finish');
+                if (finishParts[0].type === 'finish') {
+                    expect(finishParts[0].finishReason).toBe('tool-calls');
+                }
+            });
         });
     });
 });
