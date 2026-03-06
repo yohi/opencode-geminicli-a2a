@@ -40,7 +40,8 @@ opencode-geminicli-a2a-provider/
 │   ├── a2a-client.ts      # ofetchを用いたGemini CLIとの通信クライアント
 │   ├── schemas.ts         # Zodによる型定義・バリデーションスキーマ
 │   └── utils/
-│       └── mapper.ts      # AI SDK形式 ↔ A2A形式の双方向データマッパー
+│       ├── mapper.ts      # AI SDK形式 ↔ A2A形式の双方向データマッパー
+│       └── stream.ts      # SSEストリームのJSON-RPCペイロード解析ユーティリティ
 ```
 
 ### 3.2 Data Flow (Mermaid)
