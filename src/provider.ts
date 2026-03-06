@@ -53,6 +53,10 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         return mapPromptToA2AJsonRpcRequest(options.prompt, mapOptions);
     }
 
+    /**
+     * @note 同一インスタンスで doStream を並行して呼び出すと、lastContextIdなどのマルチターン状態が競合する可能性があります。
+     * 並行でリクエストを送信する場合は、個別のプロバイダーインスタンスを作成することを推奨します。
+     */
     async doStream(options: LanguageModelV1CallOptions) {
         const request = this.createA2ARequest(options);
         const idempotencyKey = (options.providerMetadata?.opencode?.idempotencyKey as string) || undefined;
@@ -65,10 +69,9 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
 
         const chunkGenerator = parseA2AStream(responseStream);
         const mapper = new A2AStreamMapper();
-        const self = this;
 
         const stream = new ReadableStream<LanguageModelV1StreamPart>({
-            async start(controller) {
+            start: async (controller) => {
                 try {
                     let hasFinished = false;
                     for await (const chunk of chunkGenerator) {
@@ -90,9 +93,9 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                     }
 
                     // マルチターン: mapper から contextId / taskId / finishReason を抽出して保存
-                    if (mapper.contextId) self.lastContextId = mapper.contextId;
-                    if (mapper.taskId) self.lastTaskId = mapper.taskId;
-                    if (mapper.lastFinishReason) self.lastFinishReason = mapper.lastFinishReason;
+                    this.lastContextId = mapper.contextId ?? this.lastContextId;
+                    this.lastTaskId = mapper.taskId ?? this.lastTaskId;
+                    this.lastFinishReason = mapper.lastFinishReason;
 
                     if (!hasFinished) {
                         controller.enqueue({
@@ -103,6 +106,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                     }
                     controller.close();
                 } catch (error) {
+                    // エラー時は lastFinishReason をリセットして、次回の taskId 送信を防ぐ
+                    this.lastFinishReason = undefined;
                     controller.error(error);
                 }
             },
