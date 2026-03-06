@@ -125,12 +125,16 @@ export const A2AJsonRpcRequestSchema = z.object({
       parts: z.array(z.object({
         kind: z.literal('text'),
         text: z.string()
-      }))
+      })),
+      // multi-turn: タスク継続時に使用
+      taskId: z.string().optional()
     }),
     configuration: z.object({
       blocking: z.boolean().default(false),
       tools: z.array(ToolSchema).optional()
-    }).optional()
+    }).optional(),
+    // multi-turn: コンテキスト継続時に使用
+    contextId: z.string().optional()
   })
 });
 
@@ -201,6 +205,13 @@ export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResp
 
 * **Endpoint**: `{protocol}://{host}:{port}/` (`{protocol}` は `protocol` 設定に基づき `http` または `https` となる)
 * **Protocol**: JSON-RPC 2.0 over HTTP/S (Streaming via SSE)
+* **Multi-Turn 対話サポート**:
+    * **コンテキストの保持**: A2A サーバーはレスポンスに `contextId` と `taskId` を含みます。プロバイダーインスタンスはストリームの終了時にこの `contextId` / `taskId` を記録します（ステートフル）。
+    * **コンテキスト継続**: 2回目以降のリクエストでは、保持している `contextId` を自動的に `params.contextId` に付与してサーバーへ送信し、サーバー側でコンテキストを維持します。
+    * **タスクの継続**: 前回のタスクがツールコールの完了（`finishReason === 'tool-calls'`）で終了した場合、保持している `taskId` をメッセージに含めることで A2A サーバーにおける `input-required` 状態のタスクを再開させます。
+    * **ツール結果の送信 (AI SDK → A2A)**: AI SDK が渡してくる `prompt` 履歴の末尾が `role: "tool"` (ツール結果) の場合、A2A サーバーが理解可能な形式（`[Tool Result: {toolName} ({toolCallId})]\n\n{result}`）にテキスト化され、直近のユーザーメッセージに結合されて送信されます。
+    * **警告**: プロバイダー内でマルチターンの状態（`contextId`, `taskId`）を保持している関係上、**同一プロバイダーインスタンスで `doStream` を並行に呼び出した場合、状態競合が発生します**。並行なコンテキストが必要な場合は、新規インスタンスを生成する必要があります。
+
 * **Status Handling**:
     * `status.state === 'working'` かつ `status.message.parts` 内の `text` を `text-delta` として扱う。
     * A2A サーバーはテキストを累計（スナップショット）で返す場合があるため、前方一致による**重複排除ロジック**を用いて差分のみを `text-delta` として抽出・出力する。
