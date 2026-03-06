@@ -177,7 +177,7 @@ describe('mapper', () => {
         });
 
         it('should map token usage correctly', () => {
-            const result: any = {
+            const result: A2AResponseResult = {
                 kind: 'status-update',
                 taskId: 't1',
                 final: true,

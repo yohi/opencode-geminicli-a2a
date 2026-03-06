@@ -128,4 +128,21 @@ describe('A2AJsonRpcResponseSchema', () => {
         const result = A2AJsonRpcResponseSchema.safeParse(chunk);
         expect(result.success).toBe(true);
     });
+    it('should reject chunk with both result and error', () => {
+        const chunk = {
+            jsonrpc: '2.0',
+            id: '123',
+            result: {
+                kind: 'status-update',
+                taskId: 't1',
+                status: { state: 'working' }
+            },
+            error: {
+                code: 500,
+                message: 'Internal Error'
+            }
+        };
+        const result = A2AJsonRpcResponseSchema.safeParse(chunk);
+        expect(result.success).toBe(false);
+    });
 });
