@@ -58,7 +58,13 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                             }
                         } else if ('error' in chunk && chunk.error) {
                             // JSON-RPC エラーのハンドリング
-                            throw new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`);
+                            const rpcError = new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`);
+                            Object.assign(rpcError, {
+                                code: chunk.error.code,
+                                data: (chunk.error as any).data,
+                                id: chunk.id,
+                            });
+                            throw rpcError;
                         }
                     }
                     if (!hasFinished) {
