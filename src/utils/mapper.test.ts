@@ -280,6 +280,40 @@ describe('mapper', () => {
             }
         });
 
+        it('should extract tool-calls and finish reason when state is tool_calls and final is true', () => {
+            const result: A2AResponseResult = {
+                kind: 'status-update',
+                taskId: 't1',
+                final: true,
+                status: {
+                    state: 'tool_calls',
+                    message: {
+                        parts: [{
+                            kind: 'data',
+                            data: {
+                                request: {
+                                    callId: 'call-101',
+                                    name: 'getTime',
+                                    args: { timezone: 'Asia/Tokyo' }
+                                }
+                            }
+                        }]
+                    }
+                }
+            };
+            const parts = mapA2AResponseToStreamParts(result);
+            expect(parts.length).toBe(2);
+            expect(parts[0].type).toBe('tool-call');
+            if (parts[0].type === 'tool-call') {
+                expect(parts[0].toolCallId).toBe('call-101');
+                expect(parts[0].toolName).toBe('getTime');
+            }
+            expect(parts[1].type).toBe('finish');
+            if (parts[1].type === 'finish') {
+                expect(parts[1].finishReason).toBe('tool-calls');
+            }
+        });
+
         it('should generate a UUID for toolCallId if callId is not provided', () => {
             const result: A2AResponseResult = {
                 kind: 'status-update',

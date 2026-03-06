@@ -97,7 +97,7 @@ export function mapA2AResponseToStreamParts(result: A2AResponseResult): Language
 
     if (result.kind === 'status-update') {
         const msg = result.status.message;
-        const shouldProcessParts = result.status.state === 'working' || result.status.state === 'input-required';
+        const shouldProcessParts = result.status.state === 'working' || result.status.state === 'input-required' || result.status.state === 'tool_calls';
         if (shouldProcessParts && msg && msg.parts) {
             for (const p of msg.parts) {
                 if (p.kind === 'text' && p.text && result.status.state === 'working') {
@@ -114,7 +114,7 @@ export function mapA2AResponseToStreamParts(result: A2AResponseResult): Language
                         toolCallType: 'function',
                         toolCallId: req.callId || crypto.randomUUID(),
                         toolName,
-                        args: JSON.stringify(req.args || {}),
+                        args: JSON.stringify(req.args ?? {}),
                     });
                 }
             }
