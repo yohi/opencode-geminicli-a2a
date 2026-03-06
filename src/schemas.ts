@@ -86,7 +86,7 @@ export const ResultResponseSchema = z.object({
     jsonrpc: z.literal('2.0'),
     id: z.union([z.string(), z.number(), z.null()]),
     result: A2AResponseResultSchema,
-}).passthrough();
+}).passthrough().refine((obj) => (obj as any).error === undefined, { message: "result responses must not contain error" });
 
 export const ErrorResponseSchema = z.object({
     jsonrpc: z.literal('2.0'),
@@ -96,9 +96,11 @@ export const ErrorResponseSchema = z.object({
         message: z.string(),
         data: z.unknown().optional()
     })
-}).passthrough();
+}).passthrough().refine((obj) => (obj as any).result === undefined, { message: "error responses must not contain result" });
 
 
-export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResponseSchema]);
+export const RpcResponseSchema = z.union([ResultResponseSchema, ErrorResponseSchema]);
+
+export const A2AJsonRpcResponseSchema = RpcResponseSchema;
 
 export type A2AJsonRpcResponse = z.infer<typeof A2AJsonRpcResponseSchema>;
