@@ -105,8 +105,32 @@ export function mapA2AResponseToStreamParts(result: A2AResponseResult): Language
         if (result.final) {
             let finishReason: LanguageModelV1FinishReason = 'stop';
             // A2A state に応じてマッピング
-            if (result.status.state === 'error') {
-                finishReason = 'error';
+            // 将来的な追加状態（cancelled等）が出た場合にここを拡張する
+            switch (result.status.state) {
+                case 'error':
+                    finishReason = 'error';
+                    break;
+                case 'cancelled':
+                case 'timeout':
+                case 'aborted':
+                    finishReason = 'other';
+                    break;
+                case 'length':
+                case 'max_tokens':
+                    finishReason = 'length';
+                    break;
+                case 'content_filter':
+                case 'blocked':
+                    finishReason = 'content-filter';
+                    break;
+                case 'tool_calls':
+                    finishReason = 'tool-calls';
+                    break;
+                case 'stop':
+                default:
+                    // デフォルトは 'stop' を維持
+                    finishReason = 'stop';
+                    break;
             }
 
             // TODO: Populate token usage from the A2A protocol once token info is exposed in the response object.

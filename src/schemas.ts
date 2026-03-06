@@ -39,7 +39,7 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
         kind: z.literal('task'),
         id: z.string(),
         contextId: z.string(),
-        status: z.object({ state: z.enum(['working', 'stop', 'error']) }),
+        status: z.object({ state: z.string() }),
         history: z.array(z.any()).optional(),
         metadata: z.record(z.any()).optional(),
         artifacts: z.array(z.any()).optional(),
@@ -49,7 +49,7 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
         taskId: z.string(),
         contextId: z.string().optional(),
         status: z.object({
-            state: z.enum(['working', 'stop', 'error']),
+            state: z.string(),
             message: z.object({
                 parts: z.array(z.object({
                     kind: z.string(),
