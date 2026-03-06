@@ -144,7 +144,7 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
     kind: z.literal('task'),
     id: z.string(),
     contextId: z.string(),
-    status: z.object({ state: z.enum(['working', 'stop', 'error', 'input-required', 'completed', 'failed', 'tool_calls', 'cancelled', 'timeout', 'aborted', 'length', 'max_tokens', 'content_filter', 'blocked']) }),
+    status: z.object({ state: z.enum(['submitted', 'queued', 'working', 'stop', 'error', 'input-required', 'completed', 'failed', 'tool_calls', 'cancelled', 'timeout', 'aborted', 'length', 'max_tokens', 'content_filter', 'blocked']) }),
     history: z.array(z.any()).optional(),
     metadata: z.object({
       coderAgent: z.object({
@@ -158,7 +158,7 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
     taskId: z.string(),
     contextId: z.string().optional(),
     status: z.object({
-      state: z.enum(['working', 'stop', 'error', 'input-required', 'completed', 'failed', 'tool_calls', 'cancelled', 'timeout', 'aborted', 'length', 'max_tokens', 'content_filter', 'blocked']),
+      state: z.enum(['submitted', 'queued', 'working', 'stop', 'error', 'input-required', 'completed', 'failed', 'tool_calls', 'cancelled', 'timeout', 'aborted', 'length', 'max_tokens', 'content_filter', 'blocked']),
       message: z.object({
         parts: z.array(z.object({
           kind: z.string(),
