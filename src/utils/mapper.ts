@@ -48,7 +48,7 @@ export interface MapPromptOptions {
  *
  * マルチターン対話:
  *   - contextId が指定されている場合、params.contextId に付与してコンテキストを継続
- *   - taskId が指定されている場合、message.taskId に付与してタスクを継続
+ *   - taskId が指定されている場合、params.taskId に付与してタスクを継続
  *   - prompt 末尾が tool ロールの場合、ツール結果をテキスト化して user メッセージに含める
  */
 export function mapPromptToA2AJsonRpcRequest(
@@ -159,13 +159,13 @@ function buildRequest(
                 messageId: crypto.randomUUID(),
                 role: 'user',
                 parts: [{ kind: 'text', text: content }],
-                ...(taskId ? { taskId } : {}),
             },
             configuration: {
                 blocking: false,
                 ...(tools && tools.length > 0 ? { tools } : {})
             },
             ...(contextId ? { contextId } : {}),
+            ...(taskId ? { taskId } : {}),
         }
     };
 }
