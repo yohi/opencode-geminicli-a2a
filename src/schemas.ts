@@ -38,7 +38,7 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
         kind: z.literal('task'),
         id: z.string(),
         contextId: z.string(),
-        status: z.object({ state: z.string() }),
+        status: z.object({ state: z.enum(['working', 'stop', 'error']) }),
         history: z.array(z.any()).optional(),
         metadata: z.record(z.any()).optional(),
         artifacts: z.array(z.any()).optional(),
@@ -48,7 +48,7 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
         taskId: z.string(),
         contextId: z.string().optional(),
         status: z.object({
-            state: z.string(),
+            state: z.enum(['working', 'stop', 'error']),
             message: z.object({
                 parts: z.array(z.object({
                     kind: z.string(),
@@ -66,15 +66,22 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
 export type A2AResponseResult = z.infer<typeof A2AResponseResultSchema>;
 
 // 4. A2A JSON-RPC Response Wrapper
-export const A2AJsonRpcResponseSchema = z.object({
+export const ResultResponseSchema = z.object({
+    jsonrpc: z.literal('2.0'),
+    id: z.union([z.string(), z.number()]),
+    result: A2AResponseResultSchema,
+});
+
+export const ErrorResponseSchema = z.object({
     jsonrpc: z.literal('2.0'),
     id: z.union([z.string(), z.number()]).nullable(),
-    result: A2AResponseResultSchema.optional(),
     error: z.object({
         code: z.number(),
         message: z.string(),
         data: z.unknown().optional()
-    }).optional()
+    })
 });
+
+export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResponseSchema]);
 
 export type A2AJsonRpcResponse = z.infer<typeof A2AJsonRpcResponseSchema>;

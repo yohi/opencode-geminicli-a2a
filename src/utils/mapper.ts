@@ -4,13 +4,31 @@ import {
     type LanguageModelV1FinishReason,
 } from '@ai-sdk/provider';
 import type { A2AJsonRpcRequest, A2AResponseResult } from '../schemas';
-import { v4 as uuidv4 } from 'uuid';
+import crypto from 'node:crypto';
 
 /**
  * AI SDK のプロンプトを A2A (JSON-RPC) リクエストに変換する。
  * シンプルな実装として、最新のユーザーメッセージを送信対象とする。
  */
 export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt): A2AJsonRpcRequest {
+    if (prompt.length === 0) {
+        return {
+            jsonrpc: '2.0',
+            id: crypto.randomUUID(),
+            method: 'message/stream',
+            params: {
+                message: {
+                    messageId: crypto.randomUUID(),
+                    role: 'user',
+                    parts: [{ kind: 'text', text: '(empty prompt)' }]
+                },
+                configuration: { blocking: false }
+            }
+        };
+    }
+
+    // TODO: A2Aプロトコルでは本来コンテキスト履歴全体を送るかtaskIdで継続すべき。
+    // https://github.com/google/opencode-geminicli-a2a-provider/issues/xxx
     // 最新のメッセージを取得
     const lastMessage = prompt[prompt.length - 1];
     let content = '';
@@ -24,19 +42,21 @@ export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt): A2A
     } else if (lastMessage.role === 'system') {
         content = lastMessage.content;
     } else {
-        // assistant や tool も実情に応じてマッピング
-        // 本来はコンテキスト履歴全体を A2A サーバーに送るか、taskId で継続すべきだが、
-        // 簡易実装として文字列化して送る。
-        content = '[Unsupported message role in A2A mapping]';
+        // TODO: assistant/tool ロールのサポートは未実装
+        // tool ロールは tool result を含む場合があるため、エラーとして扱う
+        throw new Error(`Unsupported last message role for A2A mapping: ${(lastMessage as any).role}`);
     }
+
+    // TODO: options.mode.tools のツール定義が A2A リクエストに含まれていない問題の修正。
+    // params.message.parts が kind: 'data' 等を受け付けるようにするか、configuration に含める必要がある。
 
     return {
         jsonrpc: '2.0',
-        id: uuidv4(),
+        id: crypto.randomUUID(),
         method: 'message/stream',
         params: {
             message: {
-                messageId: uuidv4(),
+                messageId: crypto.randomUUID(),
                 role: 'user', // A2A サーバーへ送る際は基本 'user'
                 parts: [
                     { kind: 'text', text: content || '(empty prompt)' }
@@ -54,6 +74,13 @@ export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt): A2A
  */
 export function mapA2AResponseToStreamParts(result: A2AResponseResult): LanguageModelV1StreamPart[] {
     const parts: LanguageModelV1StreamPart[] = [];
+
+    if (result.kind === 'task') {
+        // TODO: Explicitly handle task response parts or metadata if needed.
+        // Currently intentionally ignoring 'task' since actual text generation
+        // comes from 'status-update' events.
+        return parts;
+    }
 
     if (result.kind === 'status-update') {
         const msg = result.status.message;

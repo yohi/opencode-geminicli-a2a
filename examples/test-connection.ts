@@ -69,4 +69,7 @@ async function main() {
     }
 }
 
-main();
+main().catch((err) => {
+    console.error('Unhandled Rejection:', err);
+    process.exit(1);
+});

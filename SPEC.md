@@ -117,7 +117,7 @@ export const A2AJsonRpcRequestSchema = z.object({
   params: z.object({
     message: z.object({
       messageId: z.string(),
-      role: z.enum(['user', 'assistant']), // 'system' は 'user' にマッピングするか検討
+      role: z.enum(['user', 'assistant']), // 注: 'system' ロールは変換時に 'user' のメッセージ内容へ統合される（例: role: 'system' -> contentをuser同等として送信）
       parts: z.array(z.object({
         kind: z.literal('text'),
         text: z.string()
@@ -135,13 +135,13 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
     kind: z.literal('task'),
     id: z.string(),
     contextId: z.string(),
-    status: z.object({ state: z.string() })
+    status: z.object({ state: z.enum(['working', 'stop', 'error']) })
   }),
   z.object({
     kind: z.literal('status-update'),
     taskId: z.string(),
     status: z.object({
-      state: z.string(),
+      state: z.enum(['working', 'stop', 'error']),
       message: z.object({
         parts: z.array(z.object({
           kind: z.string(),
@@ -154,15 +154,22 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
   })
 ]);
 
-export const A2AJsonRpcResponseSchema = z.object({
+export const ResultResponseSchema = z.object({
+  jsonrpc: z.literal('2.0'),
+  id: z.union([z.string(), z.number()]),
+  result: A2AResponseResultSchema,
+});
+
+export const ErrorResponseSchema = z.object({
   jsonrpc: z.literal('2.0'),
   id: z.union([z.string(), z.number()]).nullable(),
-  result: A2AResponseResultSchema.optional(),
   error: z.object({
     code: z.number(),
     message: z.string()
-  }).optional()
+  })
 });
+
+export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResponseSchema]);
 ```
 
 ## 6. API Definition (Resilience Configuration)
