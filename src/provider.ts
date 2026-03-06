@@ -7,7 +7,7 @@ import type {
 } from '@ai-sdk/provider';
 import { resolveConfig, type OpenCodeProviderOptions } from './config';
 import { A2AClient } from './a2a-client';
-import { mapPromptToA2AJsonRpcRequest, A2AStreamMapper } from './utils/mapper';
+import { mapPromptToA2AJsonRpcRequest, A2AStreamMapper, type MapPromptOptions } from './utils/mapper';
 import { parseA2AStream } from './utils/stream';
 import type { A2AJsonRpcRequest } from './schemas';
 
@@ -18,6 +18,13 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
     readonly modelId: string;
 
     private client: A2AClient;
+
+    /** マルチターン: 前回レスポンスから取得した contextId */
+    private lastContextId?: string;
+    /** マルチターン: 前回レスポンスから取得した taskId */
+    private lastTaskId?: string;
+    /** マルチターン: 前回の finishReason（tool-calls の場合に taskId を再送する判断に使用） */
+    private lastFinishReason?: string;
 
     constructor(modelId: string, options?: OpenCodeProviderOptions) {
         this.modelId = modelId;
@@ -30,9 +37,26 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         if (options.mode && 'tools' in options.mode && options.mode.tools?.length) {
             tools = options.mode.tools;
         }
-        return mapPromptToA2AJsonRpcRequest(options.prompt, tools);
+
+        const mapOptions: MapPromptOptions = { tools };
+
+        // マルチターン: contextId を引き継ぐ
+        if (this.lastContextId) {
+            mapOptions.contextId = this.lastContextId;
+        }
+
+        // マルチターン: 前回が tool-calls で終了した場合、taskId も引き継いでタスク継続
+        if (this.lastFinishReason === 'tool-calls' && this.lastTaskId) {
+            mapOptions.taskId = this.lastTaskId;
+        }
+
+        return mapPromptToA2AJsonRpcRequest(options.prompt, mapOptions);
     }
 
+    /**
+     * @note 同一インスタンスで doStream を並行して呼び出すと、lastContextIdなどのマルチターン状態が競合する可能性があります。
+     * 並行でリクエストを送信する場合は、個別のプロバイダーインスタンスを作成することを推奨します。
+     */
     async doStream(options: LanguageModelV1CallOptions) {
         const request = this.createA2ARequest(options);
         const idempotencyKey = (options.providerMetadata?.opencode?.idempotencyKey as string) || undefined;
@@ -47,7 +71,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         const mapper = new A2AStreamMapper();
 
         const stream = new ReadableStream<LanguageModelV1StreamPart>({
-            async start(controller) {
+            start: async (controller) => {
                 try {
                     let hasFinished = false;
                     for await (const chunk of chunkGenerator) {
@@ -58,7 +82,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                                 controller.enqueue(part);
                             }
                         } else if ('error' in chunk && chunk.error) {
-                            // JSON-RPC エラーのハンドリング
                             const rpcError = new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`);
                             Object.assign(rpcError, {
                                 code: chunk.error.code,
@@ -68,6 +91,12 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                             throw rpcError;
                         }
                     }
+
+                    // マルチターン: mapper から contextId / taskId / finishReason を抽出して保存
+                    this.lastContextId = mapper.contextId ?? this.lastContextId;
+                    this.lastTaskId = mapper.taskId ?? this.lastTaskId;
+                    this.lastFinishReason = mapper.lastFinishReason;
+
                     if (!hasFinished) {
                         controller.enqueue({
                             type: 'finish',
@@ -77,6 +106,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                     }
                     controller.close();
                 } catch (error) {
+                    // エラー時は lastFinishReason をリセットして、次回の taskId 送信を防ぐ
+                    this.lastFinishReason = undefined;
                     controller.error(error);
                 }
             },
