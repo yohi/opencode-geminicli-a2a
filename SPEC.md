@@ -205,6 +205,9 @@ export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResp
 
 * **Endpoint**: `{protocol}://{host}:{port}/` (`{protocol}` は `protocol` 設定に基づき `http` または `https` となる)
 * **Protocol**: JSON-RPC 2.0 over HTTP/S (Streaming via SSE)
+* **Server Setup**:
+    * Gemini CLI A2A サーバーを起動する際は、環境変数 `CODER_AGENT_PORT` を使用してポートを指定してください。
+    * **コマンド例**: `CODER_AGENT_PORT=41242 gemini-cli-a2a-server`
 * **Multi-Turn 対話サポート**:
     * **コンテキストの保持**: A2A サーバーは必要に応じて / 存在する場合にレスポンスに `contextId`（`status-update.contextId` は optional）および `task.id` を含めます。プロバイダーはストリーム終了時に存在する `contextId` / `taskId` を記録します（ステートフル）。
     * **コンテキスト継続**: 2回目以降のリクエストでは、保持している場合に `contextId` を自動的に `params.contextId` に付与してサーバーへ送信し、サーバー側でコンテキストを維持します。

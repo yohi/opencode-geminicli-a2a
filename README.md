@@ -117,8 +117,30 @@ runConversation().catch(console.error);
 ## 開発ガイド
 
 ### 前提条件
-- Node.js (v18 以上)
+- Node.js (v20 以上)
 - npm
+
+### A2A サーバーの起動 (Gemini CLI)
+
+本プロバイダーと通信するための Gemini CLI A2A サーバーを以下の手順で起動します。
+
+1. **パッケージの確認**:
+   `@google/gemini-cli-a2a-server` がインストールされていることを確認します。
+
+2. **サーバーの起動**:
+   環境変数 `CODER_AGENT_PORT` でポートを指定し、認証情報（API キー等）を付与して起動します。
+
+   ```bash
+   # API キーを使用する場合
+   GEMINI_API_KEY=your_api_key CODER_AGENT_PORT=41242 gemini-cli-a2a-server
+
+   # 内部環境 (CCPA) の場合
+   USE_CCPA=true CODER_AGENT_PORT=41242 gemini-cli-a2a-server
+   ```
+
+   > [!NOTE]
+   > コマンドが見つからない場合は、`node` で直接実行ファイルを指定してください:
+   > `CODER_AGENT_PORT=41242 node /path/to/dist/a2a-server.mjs`
 
 ### 開発用コマンド
 - `npm run dev`: ホットリロードを有効にしてビルドを開始します。
