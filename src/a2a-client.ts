@@ -1,11 +1,11 @@
 import { ofetch, FetchError } from 'ofetch';
 import { APICallError } from '@ai-sdk/provider';
-import type { A2AConfig, A2ARequest } from './schemas';
+import type { A2AConfig, A2AJsonRpcRequest } from './schemas';
 
 const RETRY_STATUS_CODES = [408, 409, 425, 429, 500, 502, 503, 504];
 
 export interface ChatStreamOptions {
-    request: A2ARequest;
+    request: A2AJsonRpcRequest;
     idempotencyKey?: string;
     abortSignal?: AbortSignal;
 }
@@ -22,7 +22,9 @@ export class A2AClient {
 
     constructor(config: A2AConfig) {
         this.config = config;
-        this.endpoint = `${config.protocol ?? 'http'}://${config.host}:${config.port}/v1/a2a/chat`;
+        // A2A SDK 通常、ルートまたは特定のベースパスで待機する。
+        // 実情に合わせてルート (/) を指定。
+        this.endpoint = `${config.protocol ?? 'http'}://${config.host}:${config.port}/`;
     }
 
     /**
@@ -54,7 +56,7 @@ export class A2AClient {
             const response = await ofetch.raw(this.endpoint, {
                 method: 'POST',
                 headers,
-                body: request, // ofetch will automatically JSON.stringify if object
+                body: request,
                 retry: retryCount,
                 retryDelay: 500,
                 retryStatusCodes: RETRY_STATUS_CODES,

@@ -18,6 +18,7 @@ describe('resolveConfig', () => {
             host: '127.0.0.1',
             port: 41242,
             token: undefined,
+            protocol: 'http',
         });
     });
 
@@ -31,6 +32,7 @@ describe('resolveConfig', () => {
             host: '192.168.1.10',
             port: 8080,
             token: 'secret-token',
+            protocol: 'http',
         });
     });
 
@@ -49,6 +51,7 @@ describe('resolveConfig', () => {
             host: 'env-host',
             port: 9999,
             token: 'env-token',
+            protocol: 'http',
         });
     });
 
@@ -71,6 +74,7 @@ describe('resolveConfig', () => {
             host: 'opt-host',
             port: 12345,
             token: 'opt-token',
+            protocol: 'http',
         });
     });
 
@@ -89,7 +93,7 @@ describe('resolveConfig', () => {
             host: '127.0.0.1',
             port: 41242,
             token: undefined,
-            protocol: undefined,
+            protocol: 'http',
         });
 
         const configWithOptions = resolveConfig({

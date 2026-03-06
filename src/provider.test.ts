@@ -56,8 +56,9 @@ describe('OpenCodeGeminiA2AProvider', () => {
 
     it('should implement doStream streaming chat correctly', async () => {
         const sseChunks = [
-            'data: {"id": "1", "choices": [{"delta": {"content": "Hello "}, "finish_reason": null}]}\n\n',
-            'data: {"id": "1", "choices": [{"delta": {"content": "world"}, "finish_reason": "stop"}]}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"Hello "}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"world"}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "final":true, "status":{"state":"stop"}}}\n\n',
         ];
 
         const mockResponse = {
@@ -91,8 +92,9 @@ describe('OpenCodeGeminiA2AProvider', () => {
 
     it('should implement doGenerate by consuming the stream', async () => {
         const sseChunks = [
-            'data: {"id": "2", "choices": [{"delta": {"content": "Test "}, "finish_reason": null}]}\n\n',
-            'data: {"id": "2", "choices": [{"delta": {"content": "generation"}, "finish_reason": "stop"}]}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"2", "result": {"kind":"status-update", "taskId":"t2", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"Test "}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"2", "result": {"kind":"status-update", "taskId":"t2", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"generation"}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"2", "result": {"kind":"status-update", "taskId":"t2", "final":true, "status":{"state":"stop"}}}\n\n',
         ];
 
         const mockResponse = {
@@ -112,38 +114,5 @@ describe('OpenCodeGeminiA2AProvider', () => {
         expect(result.text).toBe('Test generation');
         expect(result.finishReason).toBe('stop');
         expect(result.toolCalls).toBeUndefined();
-    });
-
-    it('should implement doGenerate and collect tool calls correctly', async () => {
-        const sseChunks = [
-            'data: {"id": "3", "choices": [{"delta": {"tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "getWeather", "arguments": "{\\"city\\" :"}}]}, "finish_reason": null}]}\n\n',
-            'data: {"id": "3", "choices": [{"delta": {"tool_calls": [{"id": "call-1", "function": {"arguments": "\\"Tokyo\\""}}]}, "finish_reason": null}]}\n\n',
-            'data: {"id": "3", "choices": [{"delta": {"tool_calls": [{"id": "call-1", "function": {"arguments": "}"}}]}, "finish_reason": "tool_calls"}]}\n\n',
-        ];
-
-        const mockResponse = {
-            ok: true,
-            status: 200,
-            headers: new Headers({ 'content-type': 'text/event-stream' }),
-            _data: createMockStream(sseChunks),
-        };
-        vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
-
-        const result = await provider.doGenerate({
-            inputFormat: 'messages',
-            mode: { type: 'regular' },
-            prompt,
-        });
-
-        expect(result.finishReason).toBe('tool-calls');
-        expect(result.text).toBeUndefined();
-        expect(result.toolCalls).toBeDefined();
-        expect(result.toolCalls?.length).toBe(1);
-        expect(result.toolCalls?.[0]).toEqual({
-            toolCallType: 'function',
-            toolCallId: 'call-1',
-            toolName: 'getWeather',
-            args: '{"city" :"Tokyo"}',
-        });
     });
 });

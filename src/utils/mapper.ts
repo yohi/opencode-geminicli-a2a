@@ -1,127 +1,160 @@
 import {
     type LanguageModelV1Prompt,
     type LanguageModelV1StreamPart,
-    type LanguageModelV1CallOptions,
     type LanguageModelV1FinishReason,
 } from '@ai-sdk/provider';
-import type { A2ARequest, A2AResponseChunk } from '../schemas';
+import type { A2AJsonRpcRequest, A2AResponseResult, Tool } from '../schemas';
+import crypto from 'node:crypto';
 
-export function mapPromptToA2AMessages(prompt: LanguageModelV1Prompt): A2ARequest['messages'] {
-    const messages: A2ARequest['messages'] = [];
-
-    for (const part of prompt) {
-        let contentStr = '';
-
-        // Simplistic mapping for now to ensure type safety.
-        // In reality, images/documents need specialized handling if A2A supports them.
-        if (part.role === 'system') {
-            messages.push({ role: 'system', content: part.content });
-        } else if (part.role === 'user') {
-            for (const item of part.content) {
-                if (item.type === 'text') {
-                    contentStr += item.text;
+/**
+ * AI SDK のプロンプトを A2A (JSON-RPC) リクエストに変換する。
+ * シンプルな実装として、最新のユーザーメッセージを送信対象とする。
+ */
+export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt, tools?: Tool[]): A2AJsonRpcRequest {
+    if (prompt.length === 0) {
+        return {
+            jsonrpc: '2.0',
+            id: crypto.randomUUID(),
+            method: 'message/stream',
+            params: {
+                message: {
+                    messageId: crypto.randomUUID(),
+                    role: 'user',
+                    parts: [{ kind: 'text', text: '(empty prompt)' }]
+                },
+                configuration: {
+                    blocking: false,
+                    ...(tools && tools.length > 0 ? { tools } : {})
                 }
             }
-            if (contentStr) {
-                messages.push({ role: 'user', content: contentStr });
-            }
-        } else if (part.role === 'assistant') {
-            for (const item of part.content) {
-                if (item.type === 'text') {
-                    contentStr += item.text;
-                }
-            }
-            if (contentStr) {
-                messages.push({ role: 'assistant', content: contentStr });
-            }
-        } else if (part.role === 'tool') {
-            // For tool responses, map them stringified or as expected by A2A.
-            // Often, provider mapping serializes tool results as user messages or specialized tool msgs.
-            // Assuming naive stringification for A2A specification constraints if not specified.
-            for (const item of part.content) {
-                contentStr += `Tool Result [${item.toolName}]: ${JSON.stringify(item.result)}\n`;
-            }
-            messages.push({ role: 'user', content: contentStr });
+        };
+    }
+
+    // TODO: A2Aプロトコルでは本来コンテキスト履歴全体を送るかtaskIdで継続すべき。
+    // https://github.com/google/opencode-geminicli-a2a-provider/issues/xxx
+    // プロンプトを末尾から走査し、直近の 'user' または 'system' メッセージを取得する
+    let targetMessage: LanguageModelV1Prompt[number] | undefined;
+    for (let i = prompt.length - 1; i >= 0; i--) {
+        if (prompt[i].role === 'user' || prompt[i].role === 'system') {
+            targetMessage = prompt[i];
+            break;
         }
     }
 
-    return messages;
-}
+    let content = '';
 
-export function mapTools(options: LanguageModelV1CallOptions): A2ARequest['tools'] {
-    if (options.mode?.type !== 'regular' || !options.mode.tools?.length) {
-        return undefined;
+    if (targetMessage) {
+        if (targetMessage.role === 'user') {
+            for (const part of targetMessage.content) {
+                if (part.type === 'text') {
+                    content += part.text;
+                }
+            }
+        } else if (targetMessage.role === 'system') {
+            content = targetMessage.content;
+        }
     }
 
-    return options.mode.tools.map(tool => {
-        return {
-            type: 'function',
-            function: {
-                name: tool.name,
-                description: tool.type === 'function' ? tool.description : undefined,
-                parameters: tool.type === 'function' ? tool.parameters : undefined,
+    if (targetMessage?.role === 'user' && content === '') {
+        throw new Error(
+            'Unsupported user message: contains no text parts (only image/file parts). ' +
+            'The A2A provider currently supports text-only user messages.'
+        );
+    }
+
+    return {
+        jsonrpc: '2.0',
+        id: crypto.randomUUID(),
+        method: 'message/stream',
+        params: {
+            message: {
+                messageId: crypto.randomUUID(),
+                role: 'user', // A2A サーバーへ送る際は基本 'user'
+                parts: [
+                    { kind: 'text', text: content || '(empty prompt)' }
+                ]
+            },
+            configuration: {
+                blocking: false,
+                ...(tools && tools.length > 0 ? { tools } : {})
             }
-        };
-    });
+        }
+    };
 }
 
-export function mapA2AChunkToStreamParts(chunk: A2AResponseChunk): LanguageModelV1StreamPart[] {
+/**
+ * A2A のレスポンス（各チャンク）を AI SDK のストリームパーツに変換する。
+ */
+export function mapA2AResponseToStreamParts(result: A2AResponseResult): LanguageModelV1StreamPart[] {
     const parts: LanguageModelV1StreamPart[] = [];
 
-    if (!chunk.choices || chunk.choices.length === 0) {
+    if (result.kind === 'task') {
+        // TODO: Explicitly handle task response parts or metadata if needed.
+        // Currently intentionally ignoring 'task' since actual text generation
+        // comes from 'status-update' events.
         return parts;
     }
 
-    const choice = chunk.choices[0];
-
-    // 1. Text Delta
-    if (choice.delta.content) {
-        parts.push({
-            type: 'text-delta',
-            textDelta: choice.delta.content,
-        });
-    }
-
-    // 2. Tool Calls
-    if (choice.delta.tool_calls && choice.delta.tool_calls.length > 0) {
-        for (const toolCall of choice.delta.tool_calls) {
-            if (toolCall.function?.name) {
-                parts.push({
-                    type: 'tool-call',
-                    toolCallType: 'function',
-                    toolCallId: toolCall.id || crypto.randomUUID(),
-                    toolName: toolCall.function.name,
-                    args: toolCall.function.arguments || '{}'
-                });
-            } else if (toolCall.function?.arguments) {
-                // tool-call-delta (streaming arguments)
-                parts.push({
-                    type: 'tool-call-delta',
-                    toolCallType: 'function',
-                    toolCallId: toolCall.id || '',
-                    toolName: '', // A2A chunk might omit name on subsequent delta
-                    argsTextDelta: toolCall.function.arguments,
-                });
+    if (result.kind === 'status-update') {
+        const msg = result.status.message;
+        if (result.status.state === 'working' && msg && msg.parts) {
+            for (const p of msg.parts) {
+                if (p.kind === 'text' && p.text) {
+                    parts.push({
+                        type: 'text-delta',
+                        textDelta: p.text,
+                    });
+                }
+                // 'thought' などは必要に応じてメタデータとして出すか、無視する
             }
         }
-    }
 
-    // 3. Finish Reason
-    if (choice.finish_reason) {
-        let finishReason: LanguageModelV1FinishReason = 'unknown';
-        switch (choice.finish_reason) {
-            case 'stop': finishReason = 'stop'; break;
-            case 'length': finishReason = 'length'; break;
-            case 'content_filter': finishReason = 'content-filter'; break;
-            case 'tool_calls': finishReason = 'tool-calls'; break;
+        if (result.final) {
+            let finishReason: LanguageModelV1FinishReason = 'stop';
+            // A2A state に応じてマッピング
+            // 将来的な追加状態（cancelled等）が出た場合にここを拡張する
+            switch (result.status.state) {
+                case 'error':
+                    finishReason = 'error';
+                    break;
+                case 'cancelled':
+                case 'timeout':
+                case 'aborted':
+                    finishReason = 'other';
+                    break;
+                case 'length':
+                case 'max_tokens':
+                    finishReason = 'length';
+                    break;
+                case 'content_filter':
+                case 'blocked':
+                    finishReason = 'content-filter';
+                    break;
+                case 'tool_calls':
+                    finishReason = 'tool-calls';
+                    break;
+                case 'stop':
+                    finishReason = 'stop';
+                    break;
+                default:
+                    // 未知の状態は 'other' にフォールバックし、正常停止と誤分類しない
+                    finishReason = 'other';
+                    break;
+            }
+
+            // TODO: Populate token usage from the A2A protocol once token info is exposed in the response object.
+            // Falls back to Number.NaN representing an "unknown" value if not provided.
+            const usage = {
+                promptTokens: result.usage?.promptTokens ?? Number.NaN,
+                completionTokens: result.usage?.completionTokens ?? Number.NaN,
+            };
+
+            parts.push({
+                type: 'finish',
+                finishReason,
+                usage,
+            });
         }
-
-        parts.push({
-            type: 'finish',
-            finishReason,
-            // TODO: map actual usage tokens into usage when A2A responses include them
-            usage: { promptTokens: 0, completionTokens: 0 },
-        });
     }
 
     return parts;
