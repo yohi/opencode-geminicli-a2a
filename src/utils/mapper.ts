@@ -97,20 +97,23 @@ export function mapA2AResponseToStreamParts(result: A2AResponseResult): Language
 
     if (result.kind === 'status-update') {
         const msg = result.status.message;
-        if (result.status.state === 'working' && msg && msg.parts) {
+        const shouldProcessParts = result.status.state === 'working' || result.status.state === 'input-required';
+        if (shouldProcessParts && msg && msg.parts) {
             for (const p of msg.parts) {
-                if (p.kind === 'text' && p.text) {
+                if (p.kind === 'text' && p.text && result.status.state === 'working') {
                     parts.push({
                         type: 'text-delta',
                         textDelta: p.text,
                     });
                 } else if (p.kind === 'data' && (p.data as any)?.request) {
                     const req = (p.data as any).request;
+                    const toolName = req.name;
+                    if (!toolName) continue;
                     parts.push({
                         type: 'tool-call',
                         toolCallType: 'function',
                         toolCallId: req.callId || crypto.randomUUID(),
-                        toolName: req.name,
+                        toolName,
                         args: JSON.stringify(req.args || {}),
                     });
                 }
