@@ -109,10 +109,17 @@ export function mapA2AResponseToStreamParts(result: A2AResponseResult): Language
                 finishReason = 'error';
             }
 
+            // TODO: Populate token usage from the A2A protocol once token info is exposed in the response object.
+            // Falls back to Number.NaN representing an "unknown" value if not provided.
+            const usage = {
+                promptTokens: (result as any).usage?.promptTokens ?? Number.NaN,
+                completionTokens: (result as any).usage?.completionTokens ?? Number.NaN,
+            };
+
             parts.push({
                 type: 'finish',
                 finishReason,
-                usage: { promptTokens: 0, completionTokens: 0 },
+                usage,
             });
         }
     }

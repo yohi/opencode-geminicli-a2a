@@ -46,6 +46,16 @@ describe('mapper', () => {
             expect(req.params.message.parts[0].text).toBe('Where is Tokyo?');
             expect(req.params.message.role).toBe('user');
         });
+
+        it('should select the latest user message when multiple user messages exist', () => {
+            const prompt: LanguageModelV1Prompt = [
+                { role: 'user', content: [{ type: 'text', text: 'First question' }] },
+                { role: 'user', content: [{ type: 'text', text: 'Second question' }] }
+            ];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            expect(req.params.message.parts[0].text).toBe('Second question');
+            expect(req.params.message.role).toBe('user');
+        });
     });
 
     describe('mapA2AResponseToStreamParts', () => {
