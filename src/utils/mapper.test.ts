@@ -461,7 +461,8 @@ describe('mapper', () => {
                                 data: { subject: 'Processing' }
                             }]
                         }
-                    }
+                    },
+                    metadata: { coderAgent: { kind: 'thought' } }
                 };
 
                 const parts = mapper.mapResult(result);
@@ -494,7 +495,8 @@ describe('mapper', () => {
                                 }
                             ]
                         }
-                    }
+                    },
+                    metadata: { coderAgent: { kind: 'thought' } }
                 };
 
                 const parts = mapper.mapResult(result);

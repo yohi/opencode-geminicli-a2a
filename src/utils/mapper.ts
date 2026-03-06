@@ -6,6 +6,31 @@ import {
 import type { A2AJsonRpcRequest, A2AResponseResult, Tool } from '../schemas';
 import crypto from 'node:crypto';
 
+interface ToolRequest {
+    request: {
+        callId?: string;
+        name: string;
+        args?: unknown;
+    };
+}
+
+interface ThoughtData {
+    subject?: string;
+    description?: string;
+}
+
+function isToolRequest(data: unknown): data is ToolRequest {
+    if (!data || typeof data !== 'object') return false;
+    const req = (data as Record<string, unknown>).request;
+    return !!req && typeof req === 'object' && typeof (req as Record<string, unknown>).name === 'string';
+}
+
+function isThoughtData(data: unknown): data is ThoughtData {
+    if (!data || typeof data !== 'object') return false;
+    const obj = data as Record<string, unknown>;
+    return typeof obj.subject === 'string' || typeof obj.description === 'string';
+}
+
 /**
  * AI SDK のプロンプトを A2A (JSON-RPC) リクエストに変換する。
  * シンプルな実装として、最新のユーザーメッセージを送信対象とする。
@@ -127,11 +152,10 @@ export class A2AStreamMapper {
                                 textDelta: delta,
                             });
                         }
-                    } else if (p.kind === 'data' && (p.data as any)?.request) {
+                    } else if (p.kind === 'data' && isToolRequest(p.data)) {
                         // ツール実行要求のマッピング
-                        const req = (p.data as any).request;
+                        const req = p.data.request;
                         const toolName = req.name;
-                        if (!toolName) continue;
 
                         const toolCallId = req.callId || `call_${crypto.createHash('sha256').update(toolName + JSON.stringify(req.args ?? {})).digest('hex').substring(0, 16)}`;
                         // ツールコール ID ベースの重複排除
@@ -145,9 +169,9 @@ export class A2AStreamMapper {
                             toolName,
                             args: JSON.stringify(req.args ?? {}),
                         });
-                    } else if (p.kind === 'data' && (p.data as any)?.subject) {
+                    } else if (coderAgentKind === 'thought' && p.kind === 'data' && isThoughtData(p.data) && p.data.subject) {
                         // 思考プロセスのマッピング → AI SDK reasoning パーツ
-                        const thought = p.data as { subject: string; description?: string };
+                        const thought = p.data;
                         const reasoningText = thought.description
                             ? `[${thought.subject}] ${thought.description}`
                             : `[${thought.subject}]`;
@@ -160,14 +184,12 @@ export class A2AStreamMapper {
             }
 
             // coderAgent.kind === 'thought' かつメッセージが直接テキストでない場合でも
-            // metadata だけで思考を検出（parts が空の場合のフォールバック）
-            if (coderAgentKind === 'thought' && parts.length === 0 && msg?.parts) {
+            // metadata だけで思考を検出（description のみのデータパターンのフォールバック）
+            if (shouldProcessParts && coderAgentKind === 'thought' && msg?.parts) {
                 for (const p of msg.parts) {
-                    if (p.kind === 'data' && (p.data as any)?.description) {
-                        const thought = p.data as { subject?: string; description: string };
-                        const reasoningText = thought.subject
-                            ? `[${thought.subject}] ${thought.description}`
-                            : thought.description;
+                    if (p.kind === 'data' && isThoughtData(p.data) && p.data.description && !p.data.subject) {
+                        const thought = p.data;
+                        const reasoningText = thought.description as string;
                         parts.push({
                             type: 'reasoning',
                             textDelta: reasoningText,
