@@ -169,31 +169,27 @@ export class A2AStreamMapper {
                             toolName,
                             args: JSON.stringify(req.args ?? {}),
                         });
-                    } else if (coderAgentKind === 'thought' && p.kind === 'data' && isThoughtData(p.data) && p.data.subject) {
+                    } else if (coderAgentKind === 'thought' && p.kind === 'data' && isThoughtData(p.data)) {
                         // 思考プロセスのマッピング → AI SDK reasoning パーツ
-                        const thought = p.data;
-                        const reasoningText = thought.description
-                            ? `[${thought.subject}] ${thought.description}`
-                            : `[${thought.subject}]`;
-                        parts.push({
-                            type: 'reasoning',
-                            textDelta: reasoningText,
-                        });
-                    }
-                }
-            }
-
-            // coderAgent.kind === 'thought' かつメッセージが直接テキストでない場合でも
-            // metadata だけで思考を検出（description のみのデータパターンのフォールバック）
-            if (shouldProcessParts && coderAgentKind === 'thought' && msg?.parts) {
-                for (const p of msg.parts) {
-                    if (p.kind === 'data' && isThoughtData(p.data) && p.data.description && !p.data.subject) {
-                        const thought = p.data;
-                        const reasoningText = thought.description as string;
-                        parts.push({
-                            type: 'reasoning',
-                            textDelta: reasoningText,
-                        });
+                        if (p.data.subject && p.data.description) {
+                            parts.push({
+                                type: 'reasoning',
+                                textDelta: `[${p.data.subject}] ${p.data.description}`,
+                            });
+                            continue;
+                        } else if (p.data.subject) {
+                            parts.push({
+                                type: 'reasoning',
+                                textDelta: `[${p.data.subject}]`,
+                            });
+                            continue;
+                        } else if (p.data.description) {
+                            parts.push({
+                                type: 'reasoning',
+                                textDelta: p.data.description,
+                            });
+                            continue;
+                        }
                     }
                 }
             }
