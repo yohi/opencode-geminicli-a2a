@@ -209,8 +209,11 @@ export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResp
     * **コンテキストの保持**: A2A サーバーはレスポンスに `contextId` と `taskId` を含みます。プロバイダーインスタンスはストリームの終了時にこの `contextId` / `taskId` を記録します（ステートフル）。
     * **コンテキスト継続**: 2回目以降のリクエストでは、保持している `contextId` を自動的に `params.contextId` に付与してサーバーへ送信し、サーバー側でコンテキストを維持します。
     * **タスクの継続**: 前回のタスクがツールコールの完了（`finishReason === 'tool-calls'`）で終了した場合、保持している `taskId` をメッセージに含めることで A2A サーバーにおける `input-required` 状態のタスクを再開させます。
-    * **ツール結果の送信 (AI SDK → A2A)**: AI SDK が渡してくる `prompt` 履歴の末尾が `role: "tool"` (ツール結果) の場合、A2A サーバーが理解可能な形式（`[Tool Result: {toolName} ({toolCallId})]\n\n{result}`）にテキスト化され、直近のユーザーメッセージに結合されて送信されます。
-    * **警告**: プロバイダー内でマルチターンの状態（`contextId`, `taskId`）を保持している関係上、**同一プロバイダーインスタンスで `doStream` を並行に呼び出した場合、状態競合が発生します**。並行なコンテキストが必要な場合は、新規インスタンスを生成する必要があります。
+    * **ツール結果の送信 (AI SDK → A2A)**: AI SDK が渡してくる `prompt` 履歴の末尾が `role: "tool"` (ツール結果) の場合、A2A サーバーが理解可能な形式（`[Tool Result: {toolName} ({toolCallId})]\n{result}`）にテキスト化され、直近のユーザーメッセージに結合されて送信されます。
+    * **⚠️ 警告: 状態の競合について**: 
+      プロバイダーインスタンスが `contextId` や `taskId` といったステートフルなプロパティを内部で保持する設計上、**同一のプロバイダーインスタンスに対して `doStream` を並行して呼び出すと激しい状態競合（Race condition）が発生します**。
+      並行して別々の会話セッションを進行させる必要がある場合は、並行セッションごとに別々のプロバイダーインスタンスを生成してください（例: リクエストごとに `createGeminiA2AProvider` を呼び出して新規インスタンスを作る）。
+      *今後の拡張へのメモ*: 状態（`contextId`, `taskId`）をプロバイダーインスタンスではなく、外部のセッションオブジェクトとして分離する設計パターンに変更することで、この並行処理の制約を解消できる可能性があります。
 
 * **Status Handling**:
     * `status.state === 'working'` かつ `status.message.parts` 内の `text` を `text-delta` として扱う。
