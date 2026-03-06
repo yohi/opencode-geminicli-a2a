@@ -122,11 +122,11 @@ describe('A2AJsonRpcRequestSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    it('should accept omitted id (notification)', () => {
-        // JSON-RPC 2.0 notifications omit the id field entirely.
+    it('should reject omitted id for message/stream', () => {
+        // JSON-RPC 2.0 notifications omit the id field entirely, but message/stream expects a response.
         const { id: _id, ...notificationRequest } = baseRequest;
         const result = A2AJsonRpcRequestSchema.safeParse(notificationRequest);
-        expect(result.success).toBe(true);
+        expect(result.success).toBe(false);
     });
 });
 
@@ -162,21 +162,24 @@ describe('A2AJsonRpcResponseSchema', () => {
         const result = A2AJsonRpcResponseSchema.safeParse(chunk);
         expect(result.success).toBe(true);
     });
-    it('should reject chunk with both result and error', () => {
+
+    it('should parse valid chunk with extra fields without failing (passthrough)', () => {
         const chunk = {
             jsonrpc: '2.0',
             id: '123',
             result: {
                 kind: 'status-update',
                 taskId: 't1',
-                status: { state: 'working' }
+                status: {
+                    state: 'working',
+                    message: {
+                        parts: [{ kind: 'text', text: 'hello' }]
+                    }
+                }
             },
-            error: {
-                code: 500,
-                message: 'Internal Error'
-            }
+            unknownExtraField: 'should be permitted'
         };
         const result = A2AJsonRpcResponseSchema.safeParse(chunk);
-        expect(result.success).toBe(false);
+        expect(result.success).toBe(true);
     });
 });

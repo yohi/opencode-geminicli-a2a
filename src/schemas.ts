@@ -16,7 +16,7 @@ export type Tool = z.infer<typeof ToolSchema>;
 
 export const A2AJsonRpcRequestSchema = z.object({
     jsonrpc: z.literal('2.0'),
-    id: z.union([z.string(), z.number(), z.null()]).optional(),
+    id: z.union([z.string(), z.number(), z.null()]),
     method: z.literal('message/stream'),
     params: z.object({
         message: z.object({
@@ -42,9 +42,13 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
         kind: z.literal('task'),
         id: z.string(),
         contextId: z.string(),
-        status: z.object({ state: z.string() }),
+        status: z.object({ state: z.enum(['working', 'stop', 'error', 'input-required', 'completed', 'failed', 'tool_calls', 'cancelled', 'timeout', 'aborted', 'length', 'max_tokens', 'content_filter', 'blocked']) }),
         history: z.array(z.any()).optional(),
-        metadata: z.record(z.any()).optional(),
+        metadata: z.object({
+            coderAgent: z.object({
+                kind: z.string()
+            }).optional()
+        }).passthrough().optional(),
         artifacts: z.array(z.any()).optional(),
     }),
     z.object({
@@ -52,7 +56,7 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
         taskId: z.string(),
         contextId: z.string().optional(),
         status: z.object({
-            state: z.string(),
+            state: z.enum(['working', 'stop', 'error', 'input-required', 'completed', 'failed', 'tool_calls', 'cancelled', 'timeout', 'aborted', 'length', 'max_tokens', 'content_filter', 'blocked']),
             message: z.object({
                 parts: z.array(z.object({
                     kind: z.string(),
@@ -63,7 +67,11 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
             timestamp: z.string().optional()
         }),
         final: z.boolean().optional(),
-        metadata: z.record(z.any()).optional(),
+        metadata: z.object({
+            coderAgent: z.object({
+                kind: z.string()
+            }).optional()
+        }).passthrough().optional(),
         usage: z.object({
             promptTokens: z.number().optional(),
             completionTokens: z.number().optional()
@@ -78,7 +86,7 @@ export const ResultResponseSchema = z.object({
     jsonrpc: z.literal('2.0'),
     id: z.union([z.string(), z.number(), z.null()]),
     result: A2AResponseResultSchema,
-}).strict();
+}).passthrough();
 
 export const ErrorResponseSchema = z.object({
     jsonrpc: z.literal('2.0'),
@@ -88,7 +96,7 @@ export const ErrorResponseSchema = z.object({
         message: z.string(),
         data: z.unknown().optional()
     })
-}).strict();
+}).passthrough();
 
 
 export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResponseSchema]);
