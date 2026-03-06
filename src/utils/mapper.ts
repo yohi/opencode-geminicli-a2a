@@ -32,32 +32,59 @@ function isThoughtData(data: unknown): data is ThoughtData {
 }
 
 /**
- * AI SDK のプロンプトを A2A (JSON-RPC) リクエストに変換する。
- * シンプルな実装として、最新のユーザーメッセージを送信対象とする。
+ * mapPromptToA2AJsonRpcRequest のオプション。
+ * マルチターン対話で contextId / taskId を引き継ぐ際に使用。
  */
-export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt, tools?: Tool[]): A2AJsonRpcRequest {
+export interface MapPromptOptions {
+    tools?: Tool[];
+    /** 前回レスポンスから取得した contextId。コンテキスト継続に使用 */
+    contextId?: string;
+    /** 前回レスポンスから取得した taskId。タスク継続（input-required 状態）に使用 */
+    taskId?: string;
+}
+
+/**
+ * AI SDK のプロンプトを A2A (JSON-RPC) リクエストに変換する。
+ *
+ * マルチターン対話:
+ *   - contextId が指定されている場合、params.contextId に付与してコンテキストを継続
+ *   - taskId が指定されている場合、message.taskId に付与してタスクを継続
+ *   - prompt 末尾が tool ロールの場合、ツール結果をテキスト化して user メッセージに含める
+ */
+export function mapPromptToA2AJsonRpcRequest(
+    prompt: LanguageModelV1Prompt,
+    optionsOrTools?: MapPromptOptions | Tool[]
+): A2AJsonRpcRequest {
+    // 後方互換: 第2引数が配列の場合は tools として扱う
+    const options: MapPromptOptions = Array.isArray(optionsOrTools)
+        ? { tools: optionsOrTools }
+        : (optionsOrTools ?? {});
+
+    const { tools, contextId, taskId } = options;
+
     if (prompt.length === 0) {
-        return {
-            jsonrpc: '2.0',
-            id: crypto.randomUUID(),
-            method: 'message/stream',
-            params: {
-                message: {
-                    messageId: crypto.randomUUID(),
-                    role: 'user',
-                    parts: [{ kind: 'text', text: '(empty prompt)' }]
-                },
-                configuration: {
-                    blocking: false,
-                    ...(tools && tools.length > 0 ? { tools } : {})
-                }
-            }
-        };
+        return buildRequest('(empty prompt)', { tools, contextId, taskId });
     }
 
-    // TODO: A2Aプロトコルでは本来コンテキスト履歴全体を送るかtaskIdで継続すべき。
-    // https://github.com/google/opencode-geminicli-a2a-provider/issues/xxx
-    // プロンプトを末尾から走査し、直近の 'user' または 'system' メッセージを取得する
+    // prompt 末尾が tool ロールの場合: ツール結果をテキスト化
+    const lastMessage = prompt[prompt.length - 1];
+    if (lastMessage.role === 'tool') {
+        const toolResultText = formatToolResults(lastMessage.content);
+        // user メッセージも含める（もしあれば）
+        let userText = '';
+        for (let i = prompt.length - 1; i >= 0; i--) {
+            if (prompt[i].role === 'user') {
+                userText = extractUserText(prompt[i]);
+                break;
+            }
+        }
+        const content = userText
+            ? `${userText}\n\n${toolResultText}`
+            : toolResultText;
+        return buildRequest(content, { tools, contextId, taskId });
+    }
+
+    // 通常の処理: 末尾から user/system メッセージを探す
     let targetMessage: LanguageModelV1Prompt[number] | undefined;
     for (let i = prompt.length - 1; i >= 0; i--) {
         if (prompt[i].role === 'user' || prompt[i].role === 'system') {
@@ -70,11 +97,7 @@ export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt, tool
 
     if (targetMessage) {
         if (targetMessage.role === 'user') {
-            for (const part of targetMessage.content) {
-                if (part.type === 'text') {
-                    content += part.text;
-                }
-            }
+            content = extractUserText(targetMessage);
         } else if (targetMessage.role === 'system') {
             content = targetMessage.content;
         }
@@ -87,6 +110,46 @@ export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt, tool
         );
     }
 
+    return buildRequest(content || '(empty prompt)', { tools, contextId, taskId });
+}
+
+/**
+ * ユーザーメッセージからテキスト部分を抽出する。
+ */
+function extractUserText(message: LanguageModelV1Prompt[number]): string {
+    if (message.role !== 'user') return '';
+    let text = '';
+    for (const part of message.content) {
+        if (part.type === 'text') {
+            text += part.text;
+        }
+    }
+    return text;
+}
+
+/**
+ * AI SDK の tool-result パーツをテキスト形式に変換する。
+ * A2A サーバーが理解できるよう、構造化されたテキストとして送信する。
+ */
+function formatToolResults(content: Array<{ type: 'tool-result'; toolCallId: string; toolName: string; result: unknown; isError?: boolean }>): string {
+    return content.map(part => {
+        const resultStr = typeof part.result === 'string'
+            ? part.result
+            : JSON.stringify(part.result);
+        const prefix = part.isError ? '[Tool Error' : '[Tool Result';
+        return `${prefix}: ${part.toolName} (${part.toolCallId})]\n${resultStr}`;
+    }).join('\n\n');
+}
+
+/**
+ * A2A JSON-RPC リクエストを構築するヘルパー。
+ */
+function buildRequest(
+    content: string,
+    options: { tools?: Tool[]; contextId?: string; taskId?: string }
+): A2AJsonRpcRequest {
+    const { tools, contextId, taskId } = options;
+
     return {
         jsonrpc: '2.0',
         id: crypto.randomUUID(),
@@ -94,15 +157,15 @@ export function mapPromptToA2AJsonRpcRequest(prompt: LanguageModelV1Prompt, tool
         params: {
             message: {
                 messageId: crypto.randomUUID(),
-                role: 'user', // A2A サーバーへ送る際は基本 'user'
-                parts: [
-                    { kind: 'text', text: content || '(empty prompt)' }
-                ]
+                role: 'user',
+                parts: [{ kind: 'text', text: content }],
+                ...(taskId ? { taskId } : {}),
             },
             configuration: {
                 blocking: false,
                 ...(tools && tools.length > 0 ? { tools } : {})
-            }
+            },
+            ...(contextId ? { contextId } : {}),
         }
     };
 }
@@ -123,6 +186,19 @@ export class A2AStreamMapper {
     private emittedText = '';
     /** 出力済みツールコール ID の Set。重複排除に使用 */
     private emittedToolCallIds = new Set<string>();
+    /** レスポンスから抽出した contextId */
+    private _contextId?: string;
+    /** レスポンスから抽出した taskId */
+    private _taskId?: string;
+    /** 最後の finishReason */
+    private _lastFinishReason?: string;
+
+    /** レスポンスから抽出した contextId を取得 */
+    get contextId(): string | undefined { return this._contextId; }
+    /** レスポンスから抽出した taskId を取得 */
+    get taskId(): string | undefined { return this._taskId; }
+    /** 最後の finishReason を取得 */
+    get lastFinishReason(): string | undefined { return this._lastFinishReason; }
 
     /**
      * A2A のレスポンス（各チャンク）を AI SDK のストリームパーツに変換する。
@@ -130,11 +206,17 @@ export class A2AStreamMapper {
     mapResult(result: A2AResponseResult): LanguageModelV1StreamPart[] {
         const parts: LanguageModelV1StreamPart[] = [];
 
+        // contextId / taskId の抽出
         if (result.kind === 'task') {
+            this._contextId = result.contextId;
+            this._taskId = result.id;
             return parts;
         }
 
         if (result.kind === 'status-update') {
+            if (result.contextId) this._contextId = result.contextId;
+            this._taskId = result.taskId;
+
             const msg = result.status.message;
             const metadata = result.metadata as Record<string, any> | undefined;
             const coderAgentKind = metadata?.coderAgent?.kind as string | undefined;
@@ -143,8 +225,6 @@ export class A2AStreamMapper {
             if (shouldProcessParts && msg && msg.parts) {
                 for (const p of msg.parts) {
                     if (p.kind === 'text' && p.text && result.status.state === 'working') {
-                        // スナップショット重複排除:
-                        // 新しいテキストが前回出力済みテキストで始まっている場合は差分のみ emit
                         const delta = this.extractTextDelta(p.text);
                         if (delta) {
                             parts.push({
@@ -153,12 +233,10 @@ export class A2AStreamMapper {
                             });
                         }
                     } else if (p.kind === 'data' && isToolRequest(p.data)) {
-                        // ツール実行要求のマッピング
                         const req = p.data.request;
                         const toolName = req.name;
 
                         const toolCallId = req.callId || `call_${crypto.createHash('sha256').update(toolName + JSON.stringify(req.args ?? {})).digest('hex').substring(0, 16)}`;
-                        // ツールコール ID ベースの重複排除
                         if (this.emittedToolCallIds.has(toolCallId)) continue;
                         this.emittedToolCallIds.add(toolCallId);
 
@@ -170,7 +248,6 @@ export class A2AStreamMapper {
                             args: JSON.stringify(req.args ?? {}),
                         });
                     } else if (coderAgentKind === 'thought' && p.kind === 'data' && isThoughtData(p.data)) {
-                        // 思考プロセスのマッピング → AI SDK reasoning パーツ
                         if (p.data.subject && p.data.description) {
                             parts.push({
                                 type: 'reasoning',
@@ -227,6 +304,8 @@ export class A2AStreamMapper {
                         break;
                 }
 
+                this._lastFinishReason = finishReason;
+
                 const usage = {
                     promptTokens: result.usage?.promptTokens ?? Number.NaN,
                     completionTokens: result.usage?.completionTokens ?? Number.NaN,
@@ -250,12 +329,10 @@ export class A2AStreamMapper {
      */
     private extractTextDelta(newText: string): string {
         if (newText.startsWith(this.emittedText)) {
-            // スナップショット: 前回の累計テキストで始まっている → 差分を抽出
             const delta = newText.slice(this.emittedText.length);
             this.emittedText = newText;
             return delta;
         } else {
-            // 新しいメッセージまたは差分形式 → 全テキストを emit
             this.emittedText = newText;
             return newText;
         }

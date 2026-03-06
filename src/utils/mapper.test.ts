@@ -37,23 +37,34 @@ describe('mapper', () => {
             expect(req.params.message.parts[0].text).toBe('You are a helpful assistant.');
         });
 
-        it('should fallback to empty prompt if no user or system message is found', () => {
+        it('should format tool results when prompt ends with tool role', () => {
             const prompt: LanguageModelV1Prompt = [
                 { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call1', toolName: 'getWeather', result: { weather: 'sunny' } }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toBe('(empty prompt)');
+            expect(req.params.message.parts[0].text).toContain('[Tool Result: getWeather (call1)]');
+            expect(req.params.message.parts[0].text).toContain('"weather":"sunny"');
         });
 
-        it('should select nearest user/system when prompt ends with assistant/tool', () => {
+        it('should include user text with tool results when prompt ends with tool', () => {
             const prompt: LanguageModelV1Prompt = [
                 { role: 'user', content: [{ type: 'text', text: 'Where is Tokyo?' }] },
                 { role: 'assistant', content: [{ type: 'text', text: 'Tokyo is in Japan.' }] },
                 { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call1', toolName: 'getWeather', result: { weather: 'sunny' } }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toBe('Where is Tokyo?');
+            const text = req.params.message.parts[0].text;
+            expect(text).toContain('Where is Tokyo?');
+            expect(text).toContain('[Tool Result: getWeather (call1)]');
             expect(req.params.message.role).toBe('user');
+        });
+
+        it('should format tool error results with [Tool Error prefix', () => {
+            const prompt: LanguageModelV1Prompt = [
+                { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call2', toolName: 'failTool', result: 'something went wrong', isError: true }] }
+            ];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            expect(req.params.message.parts[0].text).toContain('[Tool Error: failTool (call2)]');
         });
 
         it('should select the latest user message when multiple user messages exist', () => {
@@ -64,6 +75,40 @@ describe('mapper', () => {
             const req = mapPromptToA2AJsonRpcRequest(prompt);
             expect(req.params.message.parts[0].text).toBe('Second question');
             expect(req.params.message.role).toBe('user');
+        });
+
+        it('should include contextId when provided via options', () => {
+            const prompt: LanguageModelV1Prompt = [
+                { role: 'user', content: [{ type: 'text', text: 'Follow up' }] }
+            ];
+            const req = mapPromptToA2AJsonRpcRequest(prompt, { contextId: 'ctx-123' });
+            expect(req.params.contextId).toBe('ctx-123');
+        });
+
+        it('should include taskId when provided via options', () => {
+            const prompt: LanguageModelV1Prompt = [
+                { role: 'user', content: [{ type: 'text', text: 'Tool result follow up' }] }
+            ];
+            const req = mapPromptToA2AJsonRpcRequest(prompt, { taskId: 'task-456' });
+            expect(req.params.message.taskId).toBe('task-456');
+        });
+
+        it('should not include contextId/taskId when not provided', () => {
+            const prompt: LanguageModelV1Prompt = [
+                { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
+            ];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            expect(req.params.contextId).toBeUndefined();
+            expect(req.params.message.taskId).toBeUndefined();
+        });
+
+        it('should maintain backward compatibility with tools array as second argument', () => {
+            const prompt: LanguageModelV1Prompt = [
+                { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
+            ];
+            const tools = [{ name: 'myTool' }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt, tools);
+            expect(req.params.configuration?.tools).toEqual(tools);
         });
     });
 
