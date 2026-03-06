@@ -182,4 +182,55 @@ describe('A2AJsonRpcResponseSchema', () => {
         const result = A2AJsonRpcResponseSchema.safeParse(chunk);
         expect(result.success).toBe(true);
     });
+
+    it('should parse valid chunk with input-required state', () => {
+        const chunk = {
+            jsonrpc: '2.0',
+            id: '123',
+            result: {
+                kind: 'status-update',
+                taskId: 't1',
+                status: {
+                    state: 'input-required',
+                    message: {
+                        parts: [{ kind: 'text', text: 'Please provide input' }]
+                    }
+                }
+            }
+        };
+        const result = A2AJsonRpcResponseSchema.safeParse(chunk);
+        expect(result.success).toBe(true);
+    });
+
+    it('should parse valid chunk with completed state', () => {
+        const chunk = {
+            jsonrpc: '2.0',
+            id: '123',
+            result: {
+                kind: 'status-update',
+                taskId: 't1',
+                status: {
+                    state: 'completed'
+                }
+            }
+        };
+        const result = A2AJsonRpcResponseSchema.safeParse(chunk);
+        expect(result.success).toBe(true);
+    });
+
+    it('should parse valid chunk with tool_calls state', () => {
+        const chunk = {
+            jsonrpc: '2.0',
+            id: '123',
+            result: {
+                kind: 'status-update',
+                taskId: 't1',
+                status: {
+                    state: 'tool_calls'
+                }
+            }
+        };
+        const result = A2AJsonRpcResponseSchema.safeParse(chunk);
+        expect(result.success).toBe(true);
+    });
 });
