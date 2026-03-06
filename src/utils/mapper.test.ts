@@ -20,6 +20,15 @@ describe('mapper', () => {
             expect(req.params.message.role).toBe('user');
         });
 
+        it('should concatenate multiple text parts for a user message', () => {
+            const prompt: LanguageModelV1Prompt = [
+                { role: 'user', content: [{ type: 'text', text: 'Hello ' }, { type: 'text', text: 'World' }] }
+            ];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            expect(req.params.message.parts[0].text).toBe('Hello World');
+            expect(req.params.message.role).toBe('user');
+        });
+
         it('should handle system message', () => {
             const prompt: LanguageModelV1Prompt = [
                 { role: 'system', content: 'You are a helpful assistant.' }
@@ -169,6 +178,24 @@ describe('mapper', () => {
             if (finishPart && finishPart.type === 'finish') {
                 expect(finishPart.usage?.promptTokens).toBe(10);
                 expect(finishPart.usage?.completionTokens).toBe(20);
+            }
+        });
+
+        it('should return Number.NaN for promptTokens and completionTokens when usage is missing', () => {
+            const result: A2AResponseResult = {
+                kind: 'status-update',
+                taskId: 't1',
+                final: true,
+                status: {
+                    state: 'stop',
+                }
+            };
+            const parts = mapA2AResponseToStreamParts(result);
+            const finishPart = parts.find(p => p.type === 'finish');
+            expect(finishPart).toBeDefined();
+            if (finishPart && finishPart.type === 'finish') {
+                expect(Number.isNaN(finishPart.usage?.promptTokens)).toBe(true);
+                expect(Number.isNaN(finishPart.usage?.completionTokens)).toBe(true);
             }
         });
     });
