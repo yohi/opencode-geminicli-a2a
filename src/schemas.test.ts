@@ -183,6 +183,30 @@ describe('A2AJsonRpcResponseSchema', () => {
         expect(result.success).toBe(true);
     });
 
+    it('should reject chunk containing both result and error (mutual exclusivity)', () => {
+        const chunk = {
+            jsonrpc: '2.0',
+            id: '123',
+            result: {
+                kind: 'status-update',
+                taskId: 't1',
+                status: {
+                    state: 'working',
+                    message: {
+                        parts: [{ kind: 'text', text: 'hello' }]
+                    }
+                }
+            },
+            error: {
+                code: 500,
+                message: 'Internal error'
+            },
+            unknownExtraField: 'should be permitted but reject due to mutual exclusivity'
+        };
+        const result = A2AJsonRpcResponseSchema.safeParse(chunk);
+        expect(result.success).toBe(false);
+    });
+
     it('should parse valid chunk with input-required state', () => {
         const chunk = {
             jsonrpc: '2.0',
