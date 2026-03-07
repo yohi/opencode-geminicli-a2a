@@ -120,6 +120,12 @@ runConversation().catch(console.error);
 - Node.js (v20 以上)
 - npm
 
+リポジトリをクローンした後、まず依存関係をインストールしてください：
+
+```bash
+npm install
+```
+
 ### A2A サーバーの起動 (Gemini CLI)
 
 本プロバイダーと通信するための Gemini CLI A2A サーバーを以下の手順で起動します。
@@ -138,9 +144,14 @@ runConversation().catch(console.error);
    USE_CCPA=true CODER_AGENT_PORT=41242 gemini-cli-a2a-server
    ```
 
-   > [!NOTE]
-   > コマンドが見つからない場合は、`node` で直接実行ファイルを指定してください:
-   > `CODER_AGENT_PORT=41242 node /path/to/dist/a2a-server.mjs`
+   > [!IMPORTANT]
+   > **Node.js v25 以上を使用している場合**:
+   > 拡張子のないコマンド（シンボリックリンク）を実行すると、ESM 判定に失敗して何も表示されずに終了（サイレントエグジット）することがあります。その場合は、以下のように実体の `.mjs` ファイルを `node` で直接実行してください。
+   >
+   > ```bash
+   > # Homebrew 環境の例
+   > USE_CCPA=true CODER_AGENT_PORT=41242 node /home/linuxbrew/.linuxbrew/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs
+   > ```
 
 ### 開発用コマンド
 - `npm run dev`: ホットリロードを有効にしてビルドを開始します。
