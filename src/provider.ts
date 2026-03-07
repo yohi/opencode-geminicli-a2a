@@ -10,6 +10,7 @@ import { A2AClient } from './a2a-client';
 import { mapPromptToA2AJsonRpcRequest, A2AStreamMapper, type MapPromptOptions } from './utils/mapper';
 import { parseA2AStream } from './utils/stream';
 import type { A2AJsonRpcRequest } from './schemas';
+import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
 
 export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
     readonly specificationVersion = 'v1';
@@ -18,21 +19,16 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
     readonly modelId: string;
 
     private client: A2AClient;
-
-    /** マルチターン: 前回レスポンスから取得した contextId */
-    private lastContextId?: string;
-    /** マルチターン: 前回レスポンスから取得した taskId */
-    private lastTaskId?: string;
-    /** マルチターン: 前回の finishReason（tool-calls の場合に taskId を再送する判断に使用） */
-    private lastFinishReason?: string;
+    private sessionStore: SessionStore;
 
     constructor(modelId: string, options?: OpenCodeProviderOptions) {
         this.modelId = modelId;
         const config = resolveConfig(options);
         this.client = new A2AClient(config);
+        this.sessionStore = options?.sessionStore ?? new InMemorySessionStore();
     }
 
-    private createA2ARequest(options: LanguageModelV1CallOptions): A2AJsonRpcRequest {
+    private createA2ARequest(options: LanguageModelV1CallOptions, session: A2ASession): A2AJsonRpcRequest {
         let tools: any[] | undefined;
         if (options.mode && 'tools' in options.mode && options.mode.tools?.length) {
             tools = options.mode.tools;
@@ -41,24 +37,27 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         const mapOptions: MapPromptOptions = { tools };
 
         // マルチターン: contextId を引き継ぐ
-        if (this.lastContextId) {
-            mapOptions.contextId = this.lastContextId;
+        if (session.contextId) {
+            mapOptions.contextId = session.contextId;
         }
 
         // マルチターン: 前回が tool-calls で終了した場合、taskId も引き継いでタスク継続
-        if (this.lastFinishReason === 'tool-calls' && this.lastTaskId) {
-            mapOptions.taskId = this.lastTaskId;
+        if (session.lastFinishReason === 'tool-calls' && session.taskId) {
+            mapOptions.taskId = session.taskId;
         }
 
         return mapPromptToA2AJsonRpcRequest(options.prompt, mapOptions);
     }
 
     /**
-     * @note 同一インスタンスで doStream を並行して呼び出すと、lastContextIdなどのマルチターン状態が競合する可能性があります。
-     * 並行でリクエストを送信する場合は、個別のプロバイダーインスタンスを作成することを推奨します。
+     * @note sessionStore を利用して、並行実行時の状態を分離して管理します。
+     * sessionId は providerMetadata から取得され、ない場合は 'default' が使われます。
      */
     async doStream(options: LanguageModelV1CallOptions) {
-        const request = this.createA2ARequest(options);
+        const sessionId = (options.providerMetadata?.opencode?.sessionId as string) ?? 'default';
+        const session = this.sessionStore.get(sessionId);
+
+        const request = this.createA2ARequest(options, session);
         const idempotencyKey = (options.providerMetadata?.opencode?.idempotencyKey as string) || undefined;
 
         const { stream: responseStream, headers } = await this.client.chatStream({
@@ -93,9 +92,11 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                     }
 
                     // マルチターン: mapper から contextId / taskId / finishReason を抽出して保存
-                    this.lastContextId = mapper.contextId ?? this.lastContextId;
-                    this.lastTaskId = mapper.taskId ?? this.lastTaskId;
-                    this.lastFinishReason = mapper.lastFinishReason;
+                    this.sessionStore.update(sessionId, {
+                        contextId: mapper.contextId ?? session.contextId,
+                        taskId: mapper.taskId ?? session.taskId,
+                        lastFinishReason: mapper.lastFinishReason,
+                    });
 
                     if (!hasFinished) {
                         controller.enqueue({
@@ -107,7 +108,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                     controller.close();
                 } catch (error) {
                     // エラー時は lastFinishReason をリセットして、次回の taskId 送信を防ぐ
-                    this.lastFinishReason = undefined;
+                    this.sessionStore.update(sessionId, { lastFinishReason: undefined });
                     controller.error(error);
                 }
             },
