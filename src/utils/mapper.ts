@@ -153,6 +153,8 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
                 }
             }
 
+            if (!bytes && !uri) return null;
+
             const finalMimeType = part.mimeType || extractedMimeType;
 
             return {
@@ -193,6 +195,8 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
                     fileWithBytes = str;
                 }
             }
+
+            if (!fileWithBytes && !uri) return null;
 
             const finalMimeType = part.mimeType || extractedMimeType;
 
