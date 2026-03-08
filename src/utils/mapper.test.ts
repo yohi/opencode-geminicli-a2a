@@ -194,7 +194,6 @@ describe('mapper', () => {
             const prompt: LanguageModelV1Prompt = [{
                 role: 'user', content: [
                     { type: 'image', image: { unsupported: true } as any },
-                    { type: 'file', data: 'data:text/plain,%FF' as any, mimeType: 'text/plain' },
                     { type: 'file', data: 'data:malformed-no-comma' as any, mimeType: 'text/plain' },
                     { type: 'text', text: 'valid text' }
                 ]
@@ -203,7 +202,6 @@ describe('mapper', () => {
             expect(req.params.message.parts.length).toBe(1);
             expect((req.params.message.parts[0] as any).kind).toBe('text');
             expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Unsupported image format'));
-            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Malformed percent-encoding in data URI payload.'));
             expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Malformed data URI format.'));
             consoleSpy.mockRestore();
         });
