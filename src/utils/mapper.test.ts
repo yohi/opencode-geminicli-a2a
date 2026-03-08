@@ -178,6 +178,17 @@ describe('mapper', () => {
             expect(part.file.mimeType).toBe('text/plain;charset=utf-8');
         });
 
+        it('should correctly map multimodal file parts (percent-encoded non-base64 data URI)', () => {
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'file', data: 'data:text/plain,%E3%81%82%E3%81%84%E3%81%86%E3%81%88%E3%81%8A' as any, mimeType: 'text/plain' }] // URL-encoded "あいうえお"
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('file');
+            expect(part.file.fileWithBytes).toBe(typeof Buffer !== 'undefined' ? Buffer.from('あいうえお').toString('base64') : btoa(Array.from(new TextEncoder().encode('あいうえお'), b => String.fromCharCode(b)).join('')));
+            expect(part.file.mimeType).toBe('text/plain');
+        });
+
         it('should drop malformed or unsupported parts and warn', () => {
             const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
             const prompt: LanguageModelV1Prompt = [{
@@ -563,30 +574,42 @@ describe('mapper', () => {
                 expect(parts2.filter(p => p.type === 'tool-call').length).toBe(0);
             });
 
-            it('should deduplicate tool calls when callId is absent but name and args are identical', () => {
+            it('should deduplicate tool calls over snapshots but preserve multiple same-arg calls in the same snapshot', () => {
                 const mapper = new A2AStreamMapper();
 
-                const makeUpdate = (): A2AResponseResult => ({
+                const makeUpdate = (toolReqs: any[]): A2AResponseResult => ({
                     kind: 'status-update',
                     taskId: 't1',
                     status: {
                         state: 'working',
                         message: {
-                            parts: [{
+                            parts: toolReqs.map(req => ({
                                 kind: 'data',
-                                data: {
-                                    request: { name: 'getWeather', args: { location: 'Tokyo' } }
-                                }
-                            }]
+                                data: { request: req }
+                            }))
                         }
                     }
                 });
 
-                const parts1 = mapper.mapResult(makeUpdate());
+                // First snapshot has one tool call
+                const parts1 = mapper.mapResult(makeUpdate([
+                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                ]));
                 expect(parts1.filter(p => p.type === 'tool-call').length).toBe(1);
 
-                const parts2 = mapper.mapResult(makeUpdate());
-                expect(parts2.filter(p => p.type === 'tool-call').length).toBe(0);
+                // Second snapshot has TWO identical tool calls (the first is identical and should be deduplicated, the second is NEW)
+                const parts2 = mapper.mapResult(makeUpdate([
+                    { name: 'getWeather', args: { location: 'Tokyo' } },
+                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                ]));
+                expect(parts2.filter(p => p.type === 'tool-call').length).toBe(1);
+
+                // Third snapshot is identical to the second snapshot (so 0 new emitted parts)
+                const parts3 = mapper.mapResult(makeUpdate([
+                    { name: 'getWeather', args: { location: 'Tokyo' } },
+                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                ]));
+                expect(parts3.filter(p => p.type === 'tool-call').length).toBe(0);
             });
         });
 
