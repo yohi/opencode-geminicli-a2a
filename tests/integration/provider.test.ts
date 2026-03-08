@@ -151,6 +151,34 @@ describe('Integration: Gemini CLI A2A Provider', () => {
         expect(result.finishReason).toBe('stop');
     });
 
+    it('should correctly override provider options with model settings', async () => {
+        // Create an invalid provider configuration (wrong port)
+        const a2a = createGeminiA2AProvider({
+            host: '127.0.0.1',
+            port: port + 1000, // Invalid port
+            protocol: 'http',
+        });
+
+        // Override with the correct settings
+        const model = a2a.languageModel('gemini-2.5-pro', {
+            port,
+            token: 'test-secret-token'
+        });
+
+        // The request should succeed because the override port/token are used
+        const result = await model.doGenerate({
+            inputFormat: 'messages',
+            mode: { type: 'regular' },
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
+            providerMetadata: {
+                opencode: { idempotencyKey: 'test-key-override' }
+            }
+        });
+
+        expect(result.text).toBe('Integration success!');
+        expect(result.finishReason).toBe('stop');
+    });
+
     it('should fail correctly if token is invalid (401)', async () => {
         const a2a = createGeminiA2AProvider({
             host: '127.0.0.1',
