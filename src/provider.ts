@@ -10,6 +10,7 @@ import { A2AClient } from './a2a-client';
 import { mapPromptToA2AJsonRpcRequest, A2AStreamMapper, type MapPromptOptions } from './utils/mapper';
 import { parseA2AStream } from './utils/stream';
 import type { A2AJsonRpcRequest } from './schemas';
+import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
 
 export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
     readonly specificationVersion = 'v1';
@@ -18,21 +19,22 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
     readonly modelId: string;
 
     private client: A2AClient;
+    private sessionStore: SessionStore;
 
-    /** マルチターン: 前回レスポンスから取得した contextId */
-    private lastContextId?: string;
-    /** マルチターン: 前回レスポンスから取得した taskId */
-    private lastTaskId?: string;
-    /** マルチターン: 前回の finishReason（tool-calls の場合に taskId を再送する判断に使用） */
-    private lastFinishReason?: string;
-
+    /**
+     * @note 複数プロセス・複数インスタンス・サーバーレス環境でのデプロイ時は、
+     * デフォルトの InMemorySessionStore ではなく外部共有ストレージ実装を
+     * OpenCodeProviderOptions.sessionStore に渡す必要があります。
+     * 例: `new OpenCodeGeminiA2AProvider(modelId, { sessionStore: myRedisStore })`
+     */
     constructor(modelId: string, options?: OpenCodeProviderOptions) {
         this.modelId = modelId;
         const config = resolveConfig(options);
         this.client = new A2AClient(config);
+        this.sessionStore = options?.sessionStore ?? new InMemorySessionStore();
     }
 
-    private createA2ARequest(options: LanguageModelV1CallOptions): A2AJsonRpcRequest {
+    private createA2ARequest(options: LanguageModelV1CallOptions, session: A2ASession): A2AJsonRpcRequest {
         let tools: any[] | undefined;
         if (options.mode && 'tools' in options.mode && options.mode.tools?.length) {
             tools = options.mode.tools;
@@ -41,31 +43,65 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         const mapOptions: MapPromptOptions = { tools };
 
         // マルチターン: contextId を引き継ぐ
-        if (this.lastContextId) {
-            mapOptions.contextId = this.lastContextId;
+        if (session.contextId) {
+            mapOptions.contextId = session.contextId;
         }
 
         // マルチターン: 前回が tool-calls で終了した場合、taskId も引き継いでタスク継続
-        if (this.lastFinishReason === 'tool-calls' && this.lastTaskId) {
-            mapOptions.taskId = this.lastTaskId;
+        if (session.lastFinishReason === 'tool-calls' && session.taskId) {
+            mapOptions.taskId = session.taskId;
         }
 
         return mapPromptToA2AJsonRpcRequest(options.prompt, mapOptions);
     }
 
     /**
-     * @note 同一インスタンスで doStream を並行して呼び出すと、lastContextIdなどのマルチターン状態が競合する可能性があります。
-     * 並行でリクエストを送信する場合は、個別のプロバイダーインスタンスを作成することを推奨します。
+     * @note sessionStore を利用して、並行実行時の状態を分離して管理します。
+     * sessionId は providerMetadata から取得されます。
+     * 並行リクエスト時の状態の競合を避けるため、呼び出し元は必ず一意の sessionId を指定してください。
      */
     async doStream(options: LanguageModelV1CallOptions) {
-        const request = this.createA2ARequest(options);
+        let sessionId: string | undefined = undefined;
+        const opencodeMetadata = options.providerMetadata?.opencode;
+
+        if (opencodeMetadata?.sessionId !== undefined) {
+            if (typeof opencodeMetadata.sessionId === 'string') {
+                const trimmed = opencodeMetadata.sessionId.trim();
+                if (trimmed !== '') {
+                    sessionId = trimmed;
+                } else {
+                    console.warn(`[opencode-geminicli-a2a] Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
+                }
+            } else {
+                console.warn(`[opencode-geminicli-a2a] Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
+            }
+        }
+
+        const session = sessionId ? this.sessionStore.get(sessionId) : {};
+
+        const request = this.createA2ARequest(options, session);
         const idempotencyKey = (options.providerMetadata?.opencode?.idempotencyKey as string) || undefined;
 
-        const { stream: responseStream, headers } = await this.client.chatStream({
-            request,
-            idempotencyKey,
-            abortSignal: options.abortSignal,
-        });
+        let responseStream;
+        let headers;
+
+        try {
+            const response = await this.client.chatStream({
+                request,
+                idempotencyKey,
+                abortSignal: options.abortSignal,
+            });
+            responseStream = response.stream;
+            headers = response.headers;
+        } catch (error) {
+            if (sessionId) {
+                const currentSession = this.sessionStore.get(sessionId);
+                if (Object.keys(currentSession).length > 0) {
+                    this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+                }
+            }
+            throw error;
+        }
 
         const chunkGenerator = parseA2AStream(responseStream);
         const mapper = new A2AStreamMapper();
@@ -93,9 +129,17 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                     }
 
                     // マルチターン: mapper から contextId / taskId / finishReason を抽出して保存
-                    this.lastContextId = mapper.contextId ?? this.lastContextId;
-                    this.lastTaskId = mapper.taskId ?? this.lastTaskId;
-                    this.lastFinishReason = mapper.lastFinishReason;
+                    if (sessionId) {
+                        const hasUpdate = mapper.contextId !== undefined || mapper.taskId !== undefined || mapper.lastFinishReason !== undefined;
+                        const hasExisting = Object.keys(this.sessionStore.get(sessionId)).length > 0;
+                        if (hasUpdate || hasExisting) {
+                            this.sessionStore.update(sessionId, {
+                                ...(mapper.contextId !== undefined && { contextId: mapper.contextId }),
+                                ...(mapper.taskId !== undefined && { taskId: mapper.taskId }),
+                                lastFinishReason: mapper.lastFinishReason,
+                            });
+                        }
+                    }
 
                     if (!hasFinished) {
                         controller.enqueue({
@@ -107,7 +151,12 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                     controller.close();
                 } catch (error) {
                     // エラー時は lastFinishReason をリセットして、次回の taskId 送信を防ぐ
-                    this.lastFinishReason = undefined;
+                    if (sessionId) {
+                        const currentSession = this.sessionStore.get(sessionId);
+                        if (Object.keys(currentSession).length > 0) {
+                            this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+                        }
+                    }
                     controller.error(error);
                 }
             },

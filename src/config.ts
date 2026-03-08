@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import { ConfigSchema, type A2AConfig } from './schemas';
+import type { SessionStore } from './session';
 
 export interface OpenCodeProviderOptions {
     host?: string;
     port?: number;
     token?: string;
     protocol?: 'http' | 'https';
+    sessionStore?: SessionStore;
 }
 
 // ユーティリティ: 環境変数を正規化し、空または空白のみの文字列は undefined とする
