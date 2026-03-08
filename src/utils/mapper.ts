@@ -119,12 +119,17 @@ export function mapPromptToA2AJsonRpcRequest(
 function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcRequest['params']['message']['parts'] {
     if (message.role !== 'user') return [];
 
-    return message.content.map(part => {
+    const content = typeof message.content === 'string'
+        ? [{ type: 'text' as const, text: message.content }]
+        : message.content;
+
+    return content.map(part => {
         if (part.type === 'text') {
             return { kind: 'text' as const, text: part.text };
         } else if (part.type === 'image') {
             const isBuffer = typeof Buffer !== 'undefined' && Buffer.isBuffer(part.image);
             const isUint8Array = part.image instanceof Uint8Array;
+            const isArrayBuffer = part.image instanceof ArrayBuffer || (typeof SharedArrayBuffer !== 'undefined' && part.image instanceof SharedArrayBuffer);
             const isUrlObj = part.image instanceof URL;
             const isString = typeof part.image === 'string';
 
@@ -134,6 +139,8 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
 
             if (isBuffer || isUint8Array) {
                 bytes = Buffer.from(part.image as unknown as Uint8Array).toString('base64');
+            } else if (isArrayBuffer) {
+                bytes = Buffer.from(new Uint8Array(part.image as unknown as ArrayBuffer)).toString('base64');
             } else if (isUrlObj) {
                 uri = (part.image as URL).href;
             } else if (isString) {
@@ -168,6 +175,7 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
         } else if (part.type === 'file') {
             const isBuffer = typeof Buffer !== 'undefined' && Buffer.isBuffer(part.data);
             const isUint8Array = part.data instanceof Uint8Array;
+            const isArrayBuffer = part.data instanceof ArrayBuffer || (typeof SharedArrayBuffer !== 'undefined' && part.data instanceof SharedArrayBuffer);
             const isUrlObj = part.data instanceof URL;
             const isString = typeof part.data === 'string';
 
@@ -177,6 +185,8 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
 
             if (isBuffer || isUint8Array) {
                 fileWithBytes = Buffer.from(part.data as unknown as Uint8Array).toString('base64');
+            } else if (isArrayBuffer) {
+                fileWithBytes = Buffer.from(new Uint8Array(part.data as unknown as ArrayBuffer)).toString('base64');
             } else if (isUrlObj) {
                 uri = (part.data as URL).href;
             } else if (isString) {
