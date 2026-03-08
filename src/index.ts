@@ -1,4 +1,4 @@
-import type { ProviderV1 } from '@ai-sdk/provider';
+import type { ProviderV1, EmbeddingModelV1 } from '@ai-sdk/provider';
 import { OpenCodeGeminiA2AProvider } from './provider';
 import type { OpenCodeProviderOptions } from './config';
 
@@ -21,17 +21,19 @@ export interface GeminiA2AProvider extends ProviderV1 {
 }
 
 export function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2AProvider {
+    const createModel = (modelId: string, settings?: Partial<OpenCodeProviderOptions>) => {
+        return new OpenCodeGeminiA2AProvider(modelId, { ...options, ...settings });
+    };
+
     const provider = function geminicliA2A(modelId: string, settings?: Partial<OpenCodeProviderOptions>) {
-        return new OpenCodeGeminiA2AProvider(modelId, { ...options, ...settings });
-    } as GeminiA2AProvider;
-
-    provider.languageModel = (modelId: string, settings?: Partial<OpenCodeProviderOptions>) => {
-        return new OpenCodeGeminiA2AProvider(modelId, { ...options, ...settings });
+        return createModel(modelId, settings);
     };
 
-    provider.textEmbeddingModel = (_modelId: string) => {
-        throw new Error('textEmbeddingModel is not supported by opencode-geminicli-a2a provider');
-    };
-
-    return provider;
+    return Object.assign(provider, {
+        providerId: 'opencode-geminicli-a2a',
+        languageModel: createModel,
+        textEmbeddingModel: (_modelId: string): EmbeddingModelV1<string> => {
+            throw new Error('textEmbeddingModel is not supported by opencode-geminicli-a2a provider');
+        },
+    }) satisfies GeminiA2AProvider;
 }
