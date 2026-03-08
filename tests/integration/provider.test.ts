@@ -76,7 +76,7 @@ describe('Integration: Gemini CLI A2A Provider', () => {
             protocol: 'http',
         });
 
-        const model = a2a('gemini-2.5-pro');
+        const model = a2a.languageModel('gemini-2.5-pro');
 
         const prompt: LanguageModelV1Prompt = [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }];
 
@@ -112,7 +112,7 @@ describe('Integration: Gemini CLI A2A Provider', () => {
             protocol: 'http',
         });
 
-        const model = a2a('gemini-2.5-pro');
+        const model = a2a.languageModel('gemini-2.5-pro');
 
         const result = await model.doGenerate({
             inputFormat: 'messages',
@@ -135,7 +135,7 @@ describe('Integration: Gemini CLI A2A Provider', () => {
             protocol: 'http',
         });
 
-        const model = a2a('gemini-2.5-pro');
+        const model = a2a.languageModel('gemini-2.5-pro');
 
         await expect(model.doGenerate({
             inputFormat: 'messages',
