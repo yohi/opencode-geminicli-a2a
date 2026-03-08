@@ -71,17 +71,23 @@ export function mapPromptToA2AJsonRpcRequest(
     if (lastMessage.role === 'tool') {
         const toolResultText = formatToolResults(lastMessage.content);
         // user メッセージも含める（もしあれば）
-        let userText = '';
+        let userParts: A2AJsonRpcRequest['params']['message']['parts'] = [];
         for (let i = prompt.length - 1; i >= 0; i--) {
             if (prompt[i].role === 'user') {
-                userText = extractUserText(prompt[i]);
+                userParts = extractUserParts(prompt[i]);
                 break;
             }
         }
-        const content = userText
-            ? `${userText}\n\n${toolResultText}`
-            : toolResultText;
-        return buildRequest(content, { tools, contextId, taskId });
+        const textParts = userParts.filter(p => p.kind === 'text') as { kind: 'text', text: string }[];
+        const nonTextParts = userParts.filter(p => p.kind !== 'text');
+
+        const combinedText = textParts.map(p => p.text).join('\n') + (textParts.length > 0 ? '\n\n' : '') + toolResultText;
+        const finalParts: A2AJsonRpcRequest['params']['message']['parts'] = [
+            ...(combinedText ? [{ kind: 'text' as const, text: combinedText }] : []),
+            ...nonTextParts
+        ];
+
+        return buildRequest(finalParts.length > 0 ? finalParts : '(empty prompt)', { tools, contextId, taskId });
     }
 
     // 通常の処理: 末尾から user/system メッセージを探す
@@ -93,38 +99,75 @@ export function mapPromptToA2AJsonRpcRequest(
         }
     }
 
-    let content = '';
+    let parts: A2AJsonRpcRequest['params']['message']['parts'] = [];
 
     if (targetMessage) {
         if (targetMessage.role === 'user') {
-            content = extractUserText(targetMessage);
+            parts = extractUserParts(targetMessage);
         } else if (targetMessage.role === 'system') {
-            content = targetMessage.content;
+            parts = [{ kind: 'text' as const, text: targetMessage.content }];
         }
     }
 
-    if (targetMessage?.role === 'user' && content === '') {
-        throw new Error(
-            'Unsupported user message: contains no text parts (only image/file parts). ' +
-            'The A2A provider currently supports text-only user messages.'
-        );
+    if (parts.length === 0) {
+        parts = [{ kind: 'text' as const, text: '(empty prompt)' }];
     }
 
-    return buildRequest(content || '(empty prompt)', { tools, contextId, taskId });
+    return buildRequest(parts, { tools, contextId, taskId });
 }
 
 /**
- * ユーザーメッセージからテキスト部分を抽出する。
+ * ユーザーメッセージから全パーツを抽出する。
  */
-function extractUserText(message: LanguageModelV1Prompt[number]): string {
-    if (message.role !== 'user') return '';
-    let text = '';
-    for (const part of message.content) {
+function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcRequest['params']['message']['parts'] {
+    if (message.role !== 'user') return [];
+
+    return message.content.map(part => {
         if (part.type === 'text') {
-            text += part.text;
+            return { kind: 'text' as const, text: part.text };
+        } else if (part.type === 'image') {
+            const isBuffer = typeof Buffer !== 'undefined' && Buffer.isBuffer(part.image);
+            const isUint8Array = part.image instanceof Uint8Array;
+            const isUrl = part.image instanceof URL;
+
+            const bytes = (isBuffer || isUint8Array)
+                ? Buffer.from(part.image as unknown as Uint8Array).toString('base64')
+                : (isUrl ? undefined : Buffer.from(part.image as unknown as string, 'base64').toString('base64'));
+
+            const uri = isUrl ? (part.image as URL).href : undefined;
+
+            return {
+                kind: 'image' as const,
+                image: {
+                    mimeType: part.mimeType || 'image/jpeg',
+                    bytes,
+                    uri
+                }
+            };
+        } else if (part.type === 'file') {
+            const isBuffer = typeof Buffer !== 'undefined' && Buffer.isBuffer(part.data);
+            const isUint8Array = part.data instanceof Uint8Array;
+            const isUrl = part.data instanceof URL;
+
+            const fileWithBytes = (isBuffer || isUint8Array)
+                ? Buffer.from(part.data as unknown as Uint8Array).toString('base64')
+                : (isUrl ? undefined : ((part.data as unknown as string).startsWith('data:') ? (part.data as unknown as string).split(',')[1] : part.data as unknown as string));
+
+            const uri = isUrl ? (part.data as URL).href : ((part.data as unknown as string).startsWith('http') ? part.data as unknown as string : undefined);
+
+            return {
+                kind: 'file' as const,
+                file: {
+                    name: 'file',
+                    mimeType: part.mimeType,
+                    fileWithBytes,
+                    uri
+                }
+            };
         }
-    }
-    return text;
+
+        return null;
+    }).filter((p): p is NonNullable<typeof p> => p !== null);
 }
 
 /**
@@ -145,10 +188,13 @@ function formatToolResults(content: Array<{ type: 'tool-result'; toolCallId: str
  * A2A JSON-RPC リクエストを構築するヘルパー。
  */
 function buildRequest(
-    content: string,
+    content: string | A2AJsonRpcRequest['params']['message']['parts'],
     options: { tools?: Tool[]; contextId?: string; taskId?: string }
 ): A2AJsonRpcRequest {
     const { tools, contextId, taskId } = options;
+    const parts = typeof content === 'string'
+        ? [{ kind: 'text' as const, text: content }]
+        : content;
 
     return {
         jsonrpc: '2.0',
@@ -158,7 +204,7 @@ function buildRequest(
             message: {
                 messageId: crypto.randomUUID(),
                 role: 'user',
-                parts: [{ kind: 'text', text: content }],
+                parts,
             },
             configuration: {
                 blocking: false,
