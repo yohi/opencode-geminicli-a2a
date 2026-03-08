@@ -52,9 +52,20 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
     /**
      * @note sessionStore を利用して、並行実行時の状態を分離して管理します。
      * sessionId は providerMetadata から取得され、ない場合は 'default' が使われます。
+     * 並行リクエスト時の状態の競合を避けるため、呼び出し元は必ず一意の sessionId を指定してください。
      */
     async doStream(options: LanguageModelV1CallOptions) {
-        const sessionId = (options.providerMetadata?.opencode?.sessionId as string) ?? 'default';
+        let sessionId = 'default';
+        const opencodeMetadata = options.providerMetadata?.opencode;
+
+        if (opencodeMetadata?.sessionId !== undefined) {
+            if (typeof opencodeMetadata.sessionId === 'string') {
+                sessionId = opencodeMetadata.sessionId;
+            } else {
+                console.warn(`[opencode-geminicli-a2a] Invalid sessionId type (${typeof opencodeMetadata.sessionId}), expected string. Falling back to 'default'.`);
+            }
+        }
+
         const session = this.sessionStore.get(sessionId);
 
         const request = this.createA2ARequest(options, session);
@@ -93,8 +104,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
 
                     // マルチターン: mapper から contextId / taskId / finishReason を抽出して保存
                     this.sessionStore.update(sessionId, {
-                        contextId: mapper.contextId ?? session.contextId,
-                        taskId: mapper.taskId ?? session.taskId,
+                        ...(mapper.contextId !== undefined && { contextId: mapper.contextId }),
+                        ...(mapper.taskId !== undefined && { taskId: mapper.taskId }),
                         lastFinishReason: mapper.lastFinishReason,
                     });
 
