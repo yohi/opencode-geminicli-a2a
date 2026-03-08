@@ -5,6 +5,7 @@ export * from './a2a-client';
 export * from './config';
 export * from './schemas';
 export * from './provider';
+export * from './session';
 
 /**
  * OpenCode Gemini CLI A2A Provider を生成するファクトリ関数
