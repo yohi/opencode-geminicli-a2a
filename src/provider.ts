@@ -21,6 +21,12 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
     private client: A2AClient;
     private sessionStore: SessionStore;
 
+    /**
+     * @note 複数プロセス・複数インスタンス・サーバーレス環境でのデプロイ時は、
+     * デフォルトの InMemorySessionStore ではなく外部共有ストレージ実装を
+     * OpenCodeProviderOptions.sessionStore に渡す必要があります。
+     * 例: `new OpenCodeGeminiA2AProvider(modelId, { sessionStore: myRedisStore })`
+     */
     constructor(modelId: string, options?: OpenCodeProviderOptions) {
         this.modelId = modelId;
         const config = resolveConfig(options);
@@ -124,11 +130,15 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
 
                     // マルチターン: mapper から contextId / taskId / finishReason を抽出して保存
                     if (sessionId) {
-                        this.sessionStore.update(sessionId, {
-                            ...(mapper.contextId !== undefined && { contextId: mapper.contextId }),
-                            ...(mapper.taskId !== undefined && { taskId: mapper.taskId }),
-                            lastFinishReason: mapper.lastFinishReason,
-                        });
+                        const hasUpdate = mapper.contextId !== undefined || mapper.taskId !== undefined || mapper.lastFinishReason !== undefined;
+                        const hasExisting = Object.keys(this.sessionStore.get(sessionId)).length > 0;
+                        if (hasUpdate || hasExisting) {
+                            this.sessionStore.update(sessionId, {
+                                ...(mapper.contextId !== undefined && { contextId: mapper.contextId }),
+                                ...(mapper.taskId !== undefined && { taskId: mapper.taskId }),
+                                lastFinishReason: mapper.lastFinishReason,
+                            });
+                        }
                     }
 
                     if (!hasFinished) {
