@@ -53,7 +53,7 @@ export class InMemorySessionStore implements SessionStore {
             // Re-insert to maintain LRU order
             this.sessions.delete(sessionId);
             this.sessions.set(sessionId, entry);
-            return entry.session;
+            return { ...entry.session };
         }
         return {};
     }
@@ -74,7 +74,7 @@ export class InMemorySessionStore implements SessionStore {
             this.sessions.set(sessionId, entry);
         } else {
             this.sessions.set(sessionId, {
-                session: patch,
+                session: { ...patch },
                 lastAccessedAt: Date.now()
             });
             this.evictIfNeeded();
