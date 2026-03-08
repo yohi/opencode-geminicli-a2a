@@ -78,13 +78,10 @@ export function mapPromptToA2AJsonRpcRequest(
                 break;
             }
         }
-        const textParts = userParts.filter(p => p.kind === 'text') as { kind: 'text', text: string }[];
-        const nonTextParts = userParts.filter(p => p.kind !== 'text');
 
-        const combinedText = textParts.map(p => p.text).join('\n') + (textParts.length > 0 ? '\n\n' : '') + toolResultText;
         const finalParts: A2AJsonRpcRequest['params']['message']['parts'] = [
-            ...(combinedText ? [{ kind: 'text' as const, text: combinedText }] : []),
-            ...nonTextParts
+            ...userParts,
+            ...(toolResultText ? [{ kind: 'text' as const, text: toolResultText }] : [])
         ];
 
         return buildRequest(finalParts.length > 0 ? finalParts : '(empty prompt)', { tools, contextId, taskId });
@@ -128,40 +125,84 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
         } else if (part.type === 'image') {
             const isBuffer = typeof Buffer !== 'undefined' && Buffer.isBuffer(part.image);
             const isUint8Array = part.image instanceof Uint8Array;
-            const isUrl = part.image instanceof URL;
+            const isUrlObj = part.image instanceof URL;
+            const isString = typeof part.image === 'string';
 
-            const bytes = (isBuffer || isUint8Array)
-                ? Buffer.from(part.image as unknown as Uint8Array).toString('base64')
-                : (isUrl ? undefined : Buffer.from(part.image as unknown as string, 'base64').toString('base64'));
+            let bytes: string | undefined = undefined;
+            let uri: string | undefined = undefined;
+            let extractedMimeType: string | undefined = undefined;
 
-            const uri = isUrl ? (part.image as URL).href : undefined;
+            if (isBuffer || isUint8Array) {
+                bytes = Buffer.from(part.image as unknown as Uint8Array).toString('base64');
+            } else if (isUrlObj) {
+                uri = (part.image as URL).href;
+            } else if (isString) {
+                const str = part.image as unknown as string;
+                if (str.startsWith('data:')) {
+                    const match = str.match(/^data:([^;]+);base64,(.+)$/);
+                    if (match) {
+                        extractedMimeType = match[1];
+                        bytes = match[2];
+                    } else {
+                        bytes = str.split(',')[1] || str;
+                    }
+                } else if (str.startsWith('http://') || str.startsWith('https://')) {
+                    uri = str;
+                } else {
+                    bytes = str;
+                }
+            }
+
+            const finalMimeType = part.mimeType || extractedMimeType;
 
             return {
                 kind: 'image' as const,
                 image: {
-                    mimeType: part.mimeType || 'image/jpeg',
-                    bytes,
-                    uri
+                    ...(finalMimeType ? { mimeType: finalMimeType } : {}),
+                    ...(bytes ? { bytes } : {}),
+                    ...(uri ? { uri } : {})
                 }
             };
         } else if (part.type === 'file') {
             const isBuffer = typeof Buffer !== 'undefined' && Buffer.isBuffer(part.data);
             const isUint8Array = part.data instanceof Uint8Array;
-            const isUrl = part.data instanceof URL;
+            const isUrlObj = part.data instanceof URL;
+            const isString = typeof part.data === 'string';
 
-            const fileWithBytes = (isBuffer || isUint8Array)
-                ? Buffer.from(part.data as unknown as Uint8Array).toString('base64')
-                : (isUrl ? undefined : ((part.data as unknown as string).startsWith('data:') ? (part.data as unknown as string).split(',')[1] : part.data as unknown as string));
+            let fileWithBytes: string | undefined = undefined;
+            let uri: string | undefined = undefined;
+            let extractedMimeType: string | undefined = undefined;
 
-            const uri = isUrl ? (part.data as URL).href : ((part.data as unknown as string).startsWith('http') ? part.data as unknown as string : undefined);
+            if (isBuffer || isUint8Array) {
+                fileWithBytes = Buffer.from(part.data as unknown as Uint8Array).toString('base64');
+            } else if (isUrlObj) {
+                uri = (part.data as URL).href;
+            } else if (isString) {
+                const str = part.data as unknown as string;
+                if (str.startsWith('data:')) {
+                    const match = str.match(/^data:([^;]+);base64,(.+)$/);
+                    if (match) {
+                        extractedMimeType = match[1];
+                        fileWithBytes = match[2];
+                    } else {
+                        fileWithBytes = str.split(',')[1] || str;
+                    }
+                } else if (str.startsWith('http://') || str.startsWith('https://')) {
+                    uri = str;
+                } else {
+                    fileWithBytes = str;
+                }
+            }
+
+            const finalMimeType = part.mimeType || extractedMimeType;
 
             return {
                 kind: 'file' as const,
                 file: {
                     name: 'file',
-                    mimeType: part.mimeType,
-                    fileWithBytes,
-                    uri
+                    ...(finalMimeType ? { mimeType: finalMimeType } : {}),
+                    ...(fileWithBytes ? { fileWithBytes } : {}),
+                    ...(uri ? { uri } : {})
                 }
             };
         }
