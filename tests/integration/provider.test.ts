@@ -127,6 +127,30 @@ describe('Integration: Gemini CLI A2A Provider', () => {
         expect(result.finishReason).toBe('stop');
     });
 
+    it('should support direct call syntax as an alias for languageModel()', async () => {
+        const a2a = createGeminiA2AProvider({
+            host: '127.0.0.1',
+            port,
+            token: 'test-secret-token',
+            protocol: 'http',
+        });
+
+        // Use direct call syntax for backward compatibility
+        const model = a2a('gemini-2.5-pro');
+
+        const result = await model.doGenerate({
+            inputFormat: 'messages',
+            mode: { type: 'regular' },
+            prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
+            providerMetadata: {
+                opencode: { idempotencyKey: 'test-key-789' }
+            }
+        });
+
+        expect(result.text).toBe('Integration success!');
+        expect(result.finishReason).toBe('stop');
+    });
+
     it('should fail correctly if token is invalid (401)', async () => {
         const a2a = createGeminiA2AProvider({
             host: '127.0.0.1',
