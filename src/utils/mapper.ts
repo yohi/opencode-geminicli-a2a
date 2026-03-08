@@ -146,12 +146,24 @@ function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extr
     } else if (isString) {
         const str = data as unknown as string;
         if (str.startsWith('data:')) {
-            const match = str.match(/^data:(.*?);base64,(.+)$/);
-            if (match) {
-                extractedMimeType = match[1];
-                bytes = match[2];
+            const matchBase64 = str.match(/^data:(.*?);base64,(.+)$/);
+            if (matchBase64) {
+                extractedMimeType = matchBase64[1];
+                bytes = matchBase64[2];
             } else {
-                bytes = str.split(',')[1] || str;
+                const matchPlain = str.match(/^data:(.*?),(.*)$/);
+                if (matchPlain) {
+                    extractedMimeType = matchPlain[1];
+                    const decoded = decodeURIComponent(matchPlain[2]);
+                    if (typeof Buffer !== 'undefined') {
+                        bytes = Buffer.from(decoded).toString('base64');
+                    } else {
+                        const encodedText = new TextEncoder().encode(decoded);
+                        bytes = btoa(Array.from(encodedText, b => String.fromCharCode(b)).join(''));
+                    }
+                } else {
+                    bytes = str.split(',')[1] || str;
+                }
             }
         } else if (str.startsWith('http://') || str.startsWith('https://')) {
             uri = str;
@@ -318,7 +330,7 @@ export class A2AStreamMapper {
 
             const shouldProcessParts = result.status.state === 'working' || result.status.state === 'input-required' || result.status.state === 'tool_calls';
             if (shouldProcessParts && msg && msg.parts) {
-                for (const p of msg.parts) {
+                for (const [index, p] of msg.parts.entries()) {
                     if (p.kind === 'text' && p.text && result.status.state === 'working') {
                         const delta = this.extractTextDelta(p.text);
                         if (delta) {
@@ -331,7 +343,7 @@ export class A2AStreamMapper {
                         const req = p.data.request;
                         const toolName = req.name;
 
-                        const toolCallId = req.callId || `call_${crypto.createHash('sha256').update(toolName + JSON.stringify(req.args ?? {})).digest('hex').substring(0, 16)}`;
+                        const toolCallId = req.callId || `call_${crypto.createHash('sha256').update(toolName + JSON.stringify(req.args ?? {})).digest('hex').substring(0, 16)}_${index}`;
                         if (this.emittedToolCallIds.has(toolCallId)) continue;
                         this.emittedToolCallIds.add(toolCallId);
 
