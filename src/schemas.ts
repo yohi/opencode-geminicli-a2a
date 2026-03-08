@@ -22,10 +22,30 @@ export const A2AJsonRpcRequestSchema = z.object({
         message: z.object({
             messageId: z.string(),
             role: z.enum(['user', 'assistant']),
-            parts: z.array(z.object({
-                kind: z.literal('text'),
-                text: z.string()
-            })),
+            parts: z.array(z.discriminatedUnion('kind', [
+                z.object({
+                    kind: z.literal('text'),
+                    text: z.string()
+                }),
+                z.object({
+                    kind: z.literal('file'),
+                    file: z.object({
+                        name: z.string().optional(),
+                        mimeType: z.string().optional(),
+                        fileWithBytes: z.string().optional(),
+                        uri: z.string().optional(),
+                        bytes: z.string().optional()
+                    }).passthrough()
+                }),
+                z.object({
+                    kind: z.literal('image'),
+                    image: z.object({
+                        mimeType: z.string().optional(),
+                        bytes: z.string().optional(),
+                        uri: z.string().optional()
+                    }).passthrough()
+                })
+            ])),
         }),
         configuration: z.object({
             blocking: z.boolean().default(false),

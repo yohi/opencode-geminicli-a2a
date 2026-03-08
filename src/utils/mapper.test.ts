@@ -8,7 +8,7 @@ describe('mapper', () => {
         it('should map empty prompt', () => {
             const req = mapPromptToA2AJsonRpcRequest([]);
             expect(req.jsonrpc).toBe('2.0');
-            expect(req.params.message.parts[0].text).toBe('(empty prompt)');
+            expect((req.params.message.parts[0] as any).text).toBe('(empty prompt)');
         });
 
         it('should map user message correctly', () => {
@@ -16,7 +16,7 @@ describe('mapper', () => {
                 { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toBe('Hello');
+            expect((req.params.message.parts[0] as any).text).toBe('Hello');
             expect(req.params.message.role).toBe('user');
         });
 
@@ -25,7 +25,7 @@ describe('mapper', () => {
                 { role: 'user', content: [{ type: 'text', text: 'Hello ' }, { type: 'text', text: 'World' }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toBe('Hello World');
+            expect(req.params.message.parts.length).toBe(2); expect((req.params.message.parts[0] as any).text).toBe('Hello '); expect((req.params.message.parts[1] as any).text).toBe('World');
             expect(req.params.message.role).toBe('user');
         });
 
@@ -34,7 +34,7 @@ describe('mapper', () => {
                 { role: 'system', content: 'You are a helpful assistant.' }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toBe('You are a helpful assistant.');
+            expect((req.params.message.parts[0] as any).text).toBe('You are a helpful assistant.');
         });
 
         it('should format tool results when prompt ends with tool role', () => {
@@ -42,8 +42,8 @@ describe('mapper', () => {
                 { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call1', toolName: 'getWeather', result: { weather: 'sunny' } }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toContain('[Tool Result: getWeather (call1)]');
-            expect(req.params.message.parts[0].text).toContain('"weather":"sunny"');
+            expect((req.params.message.parts[0] as any).text).toContain('[Tool Result: getWeather (call1)]');
+            expect((req.params.message.parts[0] as any).text).toContain('"weather":"sunny"');
         });
 
         it('should include user text with tool results when prompt ends with tool', () => {
@@ -53,7 +53,7 @@ describe('mapper', () => {
                 { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call1', toolName: 'getWeather', result: { weather: 'sunny' } }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const text = req.params.message.parts[0].text;
+            const text = (req.params.message.parts[0] as any).text;
             expect(text).toContain('Where is Tokyo?');
             expect(text).toContain('[Tool Result: getWeather (call1)]');
             expect(req.params.message.role).toBe('user');
@@ -64,7 +64,7 @@ describe('mapper', () => {
                 { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call2', toolName: 'failTool', result: 'something went wrong', isError: true }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toContain('[Tool Error: failTool (call2)]');
+            expect((req.params.message.parts[0] as any).text).toContain('[Tool Error: failTool (call2)]');
         });
 
         it('should select the latest user message when multiple user messages exist', () => {
@@ -73,7 +73,7 @@ describe('mapper', () => {
                 { role: 'user', content: [{ type: 'text', text: 'Second question' }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toBe('Second question');
+            expect((req.params.message.parts[0] as any).text).toBe('Second question');
             expect(req.params.message.role).toBe('user');
         });
 
