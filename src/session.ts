@@ -23,8 +23,26 @@ export class InMemorySessionStore implements SessionStore {
     private maxEntries?: number;
 
     constructor(options?: { ttlMs?: number; maxEntries?: number }) {
-        this.ttlMs = options?.ttlMs;
-        this.maxEntries = options?.maxEntries;
+        const defaultTtlMs = 1000 * 60 * 60; // 1 hour
+        const defaultMaxEntries = 1000;
+
+        if (options?.ttlMs !== undefined) {
+            if (typeof options.ttlMs !== 'number' || !Number.isFinite(options.ttlMs) || options.ttlMs <= 0) {
+                throw new RangeError(`ttlMs must be a finite positive number, but got: ${options.ttlMs}`);
+            }
+            this.ttlMs = options.ttlMs;
+        } else {
+            this.ttlMs = defaultTtlMs;
+        }
+
+        if (options?.maxEntries !== undefined) {
+            if (typeof options.maxEntries !== 'number' || !Number.isFinite(options.maxEntries) || options.maxEntries <= 0 || !Number.isInteger(options.maxEntries)) {
+                throw new RangeError(`maxEntries must be a finite positive integer, but got: ${options.maxEntries}`);
+            }
+            this.maxEntries = options.maxEntries;
+        } else {
+            this.maxEntries = defaultMaxEntries;
+        }
     }
 
     private isExpired(entry: InMemorySessionEntry): boolean {

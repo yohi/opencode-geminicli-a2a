@@ -59,8 +59,13 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         const opencodeMetadata = options.providerMetadata?.opencode;
 
         if (opencodeMetadata?.sessionId !== undefined) {
-            if (typeof opencodeMetadata.sessionId === 'string' && opencodeMetadata.sessionId !== '') {
-                sessionId = opencodeMetadata.sessionId;
+            if (typeof opencodeMetadata.sessionId === 'string') {
+                const trimmed = opencodeMetadata.sessionId.trim();
+                if (trimmed !== '') {
+                    sessionId = trimmed;
+                } else {
+                    console.warn(`[opencode-geminicli-a2a] Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
+                }
             } else {
                 console.warn(`[opencode-geminicli-a2a] Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
             }
@@ -84,7 +89,10 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
             headers = response.headers;
         } catch (error) {
             if (sessionId) {
-                this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+                const currentSession = this.sessionStore.get(sessionId);
+                if (Object.keys(currentSession).length > 0) {
+                    this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+                }
             }
             throw error;
         }
@@ -134,7 +142,10 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                 } catch (error) {
                     // エラー時は lastFinishReason をリセットして、次回の taskId 送信を防ぐ
                     if (sessionId) {
-                        this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+                        const currentSession = this.sessionStore.get(sessionId);
+                        if (Object.keys(currentSession).length > 0) {
+                            this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+                        }
                     }
                     controller.error(error);
                 }
