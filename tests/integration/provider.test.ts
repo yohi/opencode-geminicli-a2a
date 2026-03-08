@@ -155,7 +155,7 @@ describe('Integration: Gemini CLI A2A Provider', () => {
         // Create an invalid provider configuration (wrong port)
         const a2a = createGeminiA2AProvider({
             host: '127.0.0.1',
-            port: port + 1000, // Invalid port
+            port: 9, // Invalid port (privileged port, connection will be refused)
             protocol: 'http',
         });
 
