@@ -25,10 +25,28 @@ function isToolRequest(data: unknown): data is ToolRequest {
     return !!req && typeof req === 'object' && typeof (req as Record<string, unknown>).name === 'string';
 }
 
-function isThoughtData(data: unknown): data is ThoughtData {
-    if (!data || typeof data !== 'object') return false;
-    const obj = data as Record<string, unknown>;
-    return typeof obj.subject === 'string' || typeof obj.description === 'string';
+function isThoughtData(data: unknown): data is Record<string, any> & { subject?: string; description?: string } {
+    return typeof data === 'object' && data !== null && ('subject' in data || 'description' in data);
+}
+
+/**
+ * Parses percent-encoded payload directly to Uint8Array treating non-% sequences as single bytes.
+ * Bypasses encodeURIComponent UTF-8 limitations.
+ */
+function percentPayloadToBytes(payload: string): Uint8Array {
+    const bytes: number[] = [];
+    for (let i = 0; i < payload.length; i++) {
+        if (payload[i] === '%' && i + 2 < payload.length) {
+            const hex = payload.substring(i + 1, i + 3);
+            if (/^[0-9a-fA-F]{2}$/.test(hex)) {
+                bytes.push(parseInt(hex, 16));
+                i += 2;
+                continue;
+            }
+        }
+        bytes.push(payload.charCodeAt(i) & 0xFF);
+    }
+    return new Uint8Array(bytes);
 }
 
 /**
@@ -154,16 +172,11 @@ function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extr
                 const matchPlain = str.match(/^data:(.*?),(.*)$/);
                 if (matchPlain) {
                     extractedMimeType = matchPlain[1];
-                    try {
-                        const decoded = decodeURIComponent(matchPlain[2]);
-                        if (typeof Buffer !== 'undefined') {
-                            bytes = Buffer.from(decoded).toString('base64');
-                        } else {
-                            const encodedText = new TextEncoder().encode(decoded);
-                            bytes = btoa(Array.from(encodedText, b => String.fromCharCode(b)).join(''));
-                        }
-                    } catch (e) {
-                        console.warn('[A2A mapper] Malformed percent-encoding in data URI payload.');
+                    const u8 = percentPayloadToBytes(matchPlain[2]);
+                    if (typeof Buffer !== 'undefined') {
+                        bytes = Buffer.from(u8).toString('base64');
+                    } else {
+                        bytes = btoa(Array.from(u8, b => String.fromCharCode(b)).join(''));
                     }
                 } else {
                     console.warn('[A2A mapper] Malformed data URI format.');
@@ -324,6 +337,7 @@ export class A2AStreamMapper {
                 this._taskId = result.id;
                 this.emittedTextByIndex.clear();
                 this.emittedToolCallIds.clear();
+                this._lastFinishReason = undefined;
             }
             return parts;
         }
@@ -334,6 +348,7 @@ export class A2AStreamMapper {
                 this._taskId = result.taskId;
                 this.emittedTextByIndex.clear();
                 this.emittedToolCallIds.clear();
+                this._lastFinishReason = undefined;
             }
 
             const msg = result.status.message;
