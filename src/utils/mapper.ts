@@ -185,7 +185,16 @@ function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extr
         } else if (str.startsWith('http://') || str.startsWith('https://')) {
             uri = str;
         } else {
-            bytes = str;
+            // Validate that the string is a valid base64 (or base64url) payload.
+            // This prevents incorrectly treating generic text or relative paths as binary data.
+            const isBase64 = /^[A-Za-z0-9+/]*={0,2}$/.test(str);
+            const isBase64Url = /^[A-Za-z0-9\-_]*={0,2}$/.test(str);
+
+            if ((isBase64 || isBase64Url) && (str.length % 4 === 0 || !str.endsWith('='))) {
+                bytes = str;
+            } else {
+                console.warn('[A2A mapper] Invalid base64 string provided for binary data. Part will be dropped.');
+            }
         }
     }
 

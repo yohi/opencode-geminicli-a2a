@@ -122,12 +122,12 @@ describe('mapper', () => {
 
         it('should correctly map multimodal file parts (raw base64 string)', () => {
             const prompt: LanguageModelV1Prompt = [{
-                role: 'user', content: [{ type: 'file', data: 'JVBERi0xLjQKJ...' as any, mimeType: 'application/pdf' }]
+                role: 'user', content: [{ type: 'file', data: 'JVBERi0xLjQK' as any, mimeType: 'application/pdf' }]
             }];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
             const part = req.params.message.parts[0] as any;
             expect(part.kind).toBe('file');
-            expect(part.file.fileWithBytes).toBe('JVBERi0xLjQKJ...');
+            expect(part.file.fileWithBytes).toBe('JVBERi0xLjQK');
             expect(part.file.uri).toBeUndefined();
             expect(part.file.mimeType).toBe('application/pdf');
         });
@@ -195,6 +195,7 @@ describe('mapper', () => {
                 role: 'user', content: [
                     { type: 'image', image: { unsupported: true } as any },
                     { type: 'file', data: 'data:malformed-no-comma' as any, mimeType: 'text/plain' },
+                    { type: 'file', data: 'relative/path/not-base64.png' as any, mimeType: 'image/png' },
                     { type: 'text', text: 'valid text' }
                 ]
             }];
@@ -203,6 +204,7 @@ describe('mapper', () => {
             expect((req.params.message.parts[0] as any).kind).toBe('text');
             expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Unsupported image format'));
             expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Malformed data URI format.'));
+            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid base64 string provided for binary data.'));
             consoleSpy.mockRestore();
         });
 
