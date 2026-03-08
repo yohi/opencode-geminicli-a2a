@@ -40,11 +40,13 @@ describe('resolveConfig', () => {
         process.env.GEMINI_A2A_HOST = 'env-host';
         process.env.GEMINI_A2A_PORT = '9999';
         process.env.GEMINI_A2A_TOKEN = 'env-token';
+        process.env.GEMINI_A2A_PROTOCOL = 'https';
 
         const config = resolveConfig({
             host: 'opt-host',
             port: 8888,
             token: 'opt-token',
+            protocol: 'http',
         });
 
         expect(config).toEqual({
