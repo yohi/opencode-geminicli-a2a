@@ -194,6 +194,8 @@ describe('mapper', () => {
             const prompt: LanguageModelV1Prompt = [{
                 role: 'user', content: [
                     { type: 'image', image: { unsupported: true } as any },
+                    { type: 'file', data: 'data:text/plain,%FF' as any, mimeType: 'text/plain' },
+                    { type: 'file', data: 'data:malformed-no-comma' as any, mimeType: 'text/plain' },
                     { type: 'text', text: 'valid text' }
                 ]
             }];
@@ -201,6 +203,8 @@ describe('mapper', () => {
             expect(req.params.message.parts.length).toBe(1);
             expect((req.params.message.parts[0] as any).kind).toBe('text');
             expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Unsupported image format'));
+            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Malformed percent-encoding in data URI payload.'));
+            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Malformed data URI format.'));
             consoleSpy.mockRestore();
         });
 
@@ -544,6 +548,30 @@ describe('mapper', () => {
                 const parts2 = mapper.mapResult(makeUpdate('chunk2'));
                 expect(parts2.length).toBe(1);
                 if (parts2[0].type === 'text-delta') expect(parts2[0].textDelta).toBe('chunk2');
+            });
+
+            it('should handle snapshot deduplication for multiple text parts independently', () => {
+                const mapper = new A2AStreamMapper();
+
+                const makeUpdate = (text1: string, text2: string): A2AResponseResult => ({
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: { parts: [{ kind: 'text', text: text1 }, { kind: 'text', text: text2 }] }
+                    }
+                });
+
+                const parts1 = mapper.mapResult(makeUpdate('A', 'X'));
+                expect(parts1.length).toBe(2);
+                expect(parts1[0].type).toBe('text-delta');
+                if (parts1[0].type === 'text-delta') expect(parts1[0].textDelta).toBe('A');
+                if (parts1[1].type === 'text-delta') expect(parts1[1].textDelta).toBe('X');
+
+                const parts2 = mapper.mapResult(makeUpdate('AB', 'XY'));
+                expect(parts2.length).toBe(2);
+                if (parts2[0].type === 'text-delta') expect(parts2[0].textDelta).toBe('B');
+                if (parts2[1].type === 'text-delta') expect(parts2[1].textDelta).toBe('Y');
             });
         });
 
