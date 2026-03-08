@@ -51,31 +51,43 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
 
     /**
      * @note sessionStore を利用して、並行実行時の状態を分離して管理します。
-     * sessionId は providerMetadata から取得され、ない場合は 'default' が使われます。
+     * sessionId は providerMetadata から取得されます。
      * 並行リクエスト時の状態の競合を避けるため、呼び出し元は必ず一意の sessionId を指定してください。
      */
     async doStream(options: LanguageModelV1CallOptions) {
-        let sessionId = 'default';
+        let sessionId: string | undefined = undefined;
         const opencodeMetadata = options.providerMetadata?.opencode;
 
         if (opencodeMetadata?.sessionId !== undefined) {
-            if (typeof opencodeMetadata.sessionId === 'string') {
+            if (typeof opencodeMetadata.sessionId === 'string' && opencodeMetadata.sessionId !== '') {
                 sessionId = opencodeMetadata.sessionId;
             } else {
-                console.warn(`[opencode-geminicli-a2a] Invalid sessionId type (${typeof opencodeMetadata.sessionId}), expected string. Falling back to 'default'.`);
+                console.warn(`[opencode-geminicli-a2a] Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
             }
         }
 
-        const session = this.sessionStore.get(sessionId);
+        const session = sessionId ? this.sessionStore.get(sessionId) : {};
 
         const request = this.createA2ARequest(options, session);
         const idempotencyKey = (options.providerMetadata?.opencode?.idempotencyKey as string) || undefined;
 
-        const { stream: responseStream, headers } = await this.client.chatStream({
-            request,
-            idempotencyKey,
-            abortSignal: options.abortSignal,
-        });
+        let responseStream;
+        let headers;
+
+        try {
+            const response = await this.client.chatStream({
+                request,
+                idempotencyKey,
+                abortSignal: options.abortSignal,
+            });
+            responseStream = response.stream;
+            headers = response.headers;
+        } catch (error) {
+            if (sessionId) {
+                this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+            }
+            throw error;
+        }
 
         const chunkGenerator = parseA2AStream(responseStream);
         const mapper = new A2AStreamMapper();
@@ -103,11 +115,13 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                     }
 
                     // マルチターン: mapper から contextId / taskId / finishReason を抽出して保存
-                    this.sessionStore.update(sessionId, {
-                        ...(mapper.contextId !== undefined && { contextId: mapper.contextId }),
-                        ...(mapper.taskId !== undefined && { taskId: mapper.taskId }),
-                        lastFinishReason: mapper.lastFinishReason,
-                    });
+                    if (sessionId) {
+                        this.sessionStore.update(sessionId, {
+                            ...(mapper.contextId !== undefined && { contextId: mapper.contextId }),
+                            ...(mapper.taskId !== undefined && { taskId: mapper.taskId }),
+                            lastFinishReason: mapper.lastFinishReason,
+                        });
+                    }
 
                     if (!hasFinished) {
                         controller.enqueue({
@@ -119,7 +133,9 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                     controller.close();
                 } catch (error) {
                     // エラー時は lastFinishReason をリセットして、次回の taskId 送信を防ぐ
-                    this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+                    if (sessionId) {
+                        this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+                    }
                     controller.error(error);
                 }
             },
