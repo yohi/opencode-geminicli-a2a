@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mapPromptToA2AJsonRpcRequest, mapA2AResponseToStreamParts, A2AStreamMapper } from './mapper';
 import type { LanguageModelV1Prompt } from '@ai-sdk/provider';
 import type { A2AResponseResult } from '../schemas';
@@ -8,7 +8,9 @@ describe('mapper', () => {
         it('should map empty prompt', () => {
             const req = mapPromptToA2AJsonRpcRequest([]);
             expect(req.jsonrpc).toBe('2.0');
-            expect(req.params.message.parts[0].text).toBe('(empty prompt)');
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('text');
+            expect(part.text).toBe('(empty prompt)');
         });
 
         it('should map user message correctly', () => {
@@ -16,7 +18,9 @@ describe('mapper', () => {
                 { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toBe('Hello');
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('text');
+            expect(part.text).toBe('Hello');
             expect(req.params.message.role).toBe('user');
         });
 
@@ -25,7 +29,11 @@ describe('mapper', () => {
                 { role: 'user', content: [{ type: 'text', text: 'Hello ' }, { type: 'text', text: 'World' }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toBe('Hello World');
+            expect(req.params.message.parts.length).toBe(2);
+            expect((req.params.message.parts[0] as any).kind).toBe('text');
+            expect((req.params.message.parts[0] as any).text).toBe('Hello ');
+            expect((req.params.message.parts[1] as any).kind).toBe('text');
+            expect((req.params.message.parts[1] as any).text).toBe('World');
             expect(req.params.message.role).toBe('user');
         });
 
@@ -34,7 +42,9 @@ describe('mapper', () => {
                 { role: 'system', content: 'You are a helpful assistant.' }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toBe('You are a helpful assistant.');
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('text');
+            expect(part.text).toBe('You are a helpful assistant.');
         });
 
         it('should format tool results when prompt ends with tool role', () => {
@@ -42,8 +52,10 @@ describe('mapper', () => {
                 { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call1', toolName: 'getWeather', result: { weather: 'sunny' } }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toContain('[Tool Result: getWeather (call1)]');
-            expect(req.params.message.parts[0].text).toContain('"weather":"sunny"');
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('text');
+            expect(part.text).toContain('[Tool Result: getWeather (call1)]');
+            expect(part.text).toContain('"weather":"sunny"');
         });
 
         it('should include user text with tool results when prompt ends with tool', () => {
@@ -53,9 +65,11 @@ describe('mapper', () => {
                 { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call1', toolName: 'getWeather', result: { weather: 'sunny' } }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const text = req.params.message.parts[0].text;
-            expect(text).toContain('Where is Tokyo?');
-            expect(text).toContain('[Tool Result: getWeather (call1)]');
+            expect(req.params.message.parts.length).toBe(2);
+            expect((req.params.message.parts[0] as any).kind).toBe('text');
+            expect((req.params.message.parts[0] as any).text).toContain('Where is Tokyo?');
+            expect((req.params.message.parts[1] as any).kind).toBe('text');
+            expect((req.params.message.parts[1] as any).text).toContain('[Tool Result: getWeather (call1)]');
             expect(req.params.message.role).toBe('user');
         });
 
@@ -64,7 +78,134 @@ describe('mapper', () => {
                 { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call2', toolName: 'failTool', result: 'something went wrong', isError: true }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toContain('[Tool Error: failTool (call2)]');
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('text');
+            expect(part.text).toContain('[Tool Error: failTool (call2)]');
+        });
+
+        it('should correctly map multimodal image parts (Buffer)', () => {
+            const buffer = Buffer.from('hello');
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'image', image: buffer, mimeType: 'image/jpeg' }]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('image');
+            expect(part.image.bytes).toBe(buffer.toString('base64'));
+            expect(part.image.uri).toBeUndefined();
+            expect(part.image.mimeType).toBe('image/jpeg');
+        });
+
+        it('should correctly map multimodal image parts (HTTP URL)', () => {
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'image', image: 'https://example.com/image.png' as any }]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('image');
+            expect(part.image.bytes).toBeUndefined();
+            expect(part.image.uri).toBe('https://example.com/image.png');
+            expect(part.image.mimeType).toBeUndefined();
+        });
+
+        it('should correctly map multimodal file parts (data URI)', () => {
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'file', data: 'data:application/pdf;base64,JVBERi0xLjQKJ...' as any, mimeType: 'application/pdf' }]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('file');
+            expect(part.file.fileWithBytes).toBe('JVBERi0xLjQKJ...');
+            expect(part.file.uri).toBeUndefined();
+            expect(part.file.mimeType).toBe('application/pdf');
+        });
+
+        it('should correctly map multimodal file parts (raw base64 string)', () => {
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'file', data: 'JVBERi0xLjQK' as any, mimeType: 'application/pdf' }]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('file');
+            expect(part.file.fileWithBytes).toBe('JVBERi0xLjQK');
+            expect(part.file.uri).toBeUndefined();
+            expect(part.file.mimeType).toBe('application/pdf');
+        });
+
+        it('should correctly map multimodal image parts (Uint8Array)', () => {
+            const arr = new Uint8Array([104, 101, 108, 108, 111]); // 'hello'
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'image', image: arr, mimeType: 'image/png' }]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('image');
+            expect(part.image.bytes).toBe(typeof Buffer !== 'undefined' ? Buffer.from(arr).toString('base64') : btoa('hello'));
+            expect(part.image.mimeType).toBe('image/png');
+        });
+
+        it('should correctly map multimodal file parts (ArrayBuffer)', () => {
+            const arr = new Uint8Array([104, 101, 108, 108, 111]); // 'hello'
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'file', data: arr.buffer as any, mimeType: 'text/plain' }]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('file');
+            expect(part.file.fileWithBytes).toBe(typeof Buffer !== 'undefined' ? Buffer.from(arr).toString('base64') : btoa('hello'));
+            expect(part.file.mimeType).toBe('text/plain');
+        });
+
+        it('should correctly map multimodal image parts (URL object)', () => {
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'image', image: new URL('https://example.com/test.jpg') }]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('image');
+            expect(part.image.uri).toBe('https://example.com/test.jpg');
+            expect(part.image.bytes).toBeUndefined();
+        });
+
+        it('should correctly map multimodal file parts (data URI with parameters)', () => {
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'file', data: 'data:text/plain;charset=utf-8;base64,aGVsbG8=' as any, mimeType: 'text/plain;charset=utf-8' }]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('file');
+            expect(part.file.fileWithBytes).toBe('aGVsbG8=');
+            expect(part.file.mimeType).toBe('text/plain;charset=utf-8');
+        });
+
+        it('should correctly map multimodal file parts (percent-encoded non-base64 data URI)', () => {
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'file', data: 'data:text/plain,%E3%81%82%E3%81%84%E3%81%86%E3%81%88%E3%81%8A' as any, mimeType: 'text/plain' }] // URL-encoded "あいうえお"
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('file');
+            expect(part.file.fileWithBytes).toBe(typeof Buffer !== 'undefined' ? Buffer.from('あいうえお').toString('base64') : btoa(Array.from(new TextEncoder().encode('あいうえお'), b => String.fromCharCode(b)).join('')));
+            expect(part.file.mimeType).toBe('text/plain');
+        });
+
+        it('should drop malformed or unsupported parts and warn', () => {
+            const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [
+                    { type: 'image', image: { unsupported: true } as any },
+                    { type: 'file', data: 'data:malformed-no-comma' as any, mimeType: 'text/plain' },
+                    { type: 'file', data: 'relative/path/not-base64.png' as any, mimeType: 'image/png' },
+                    { type: 'text', text: 'valid text' }
+                ]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            expect(req.params.message.parts.length).toBe(1);
+            expect((req.params.message.parts[0] as any).kind).toBe('text');
+            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Unsupported image format'));
+            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Malformed data URI format.'));
+            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid base64 string provided for binary data.'));
+            consoleSpy.mockRestore();
         });
 
         it('should select the latest user message when multiple user messages exist', () => {
@@ -73,7 +214,9 @@ describe('mapper', () => {
                 { role: 'user', content: [{ type: 'text', text: 'Second question' }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts[0].text).toBe('Second question');
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('text');
+            expect(part.text).toBe('Second question');
             expect(req.params.message.role).toBe('user');
         });
 
@@ -164,7 +307,7 @@ describe('mapper', () => {
                 kind: 'status-update',
                 taskId: 't1',
                 final: true,
-                status: { state: 'foo' as string }
+                status: { state: 'foo' as any }
             };
             const parts = mapA2AResponseToStreamParts(result);
             expect(parts[0].type).toBe('finish');
@@ -406,6 +549,30 @@ describe('mapper', () => {
                 expect(parts2.length).toBe(1);
                 if (parts2[0].type === 'text-delta') expect(parts2[0].textDelta).toBe('chunk2');
             });
+
+            it('should handle snapshot deduplication for multiple text parts independently', () => {
+                const mapper = new A2AStreamMapper();
+
+                const makeUpdate = (text1: string, text2: string): A2AResponseResult => ({
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: { parts: [{ kind: 'text', text: text1 }, { kind: 'text', text: text2 }] }
+                    }
+                });
+
+                const parts1 = mapper.mapResult(makeUpdate('A', 'X'));
+                expect(parts1.length).toBe(2);
+                expect(parts1[0].type).toBe('text-delta');
+                if (parts1[0].type === 'text-delta') expect(parts1[0].textDelta).toBe('A');
+                if (parts1[1].type === 'text-delta') expect(parts1[1].textDelta).toBe('X');
+
+                const parts2 = mapper.mapResult(makeUpdate('AB', 'XY'));
+                expect(parts2.length).toBe(2);
+                if (parts2[0].type === 'text-delta') expect(parts2[0].textDelta).toBe('B');
+                if (parts2[1].type === 'text-delta') expect(parts2[1].textDelta).toBe('Y');
+            });
         });
 
         describe('tool call deduplication', () => {
@@ -435,30 +602,79 @@ describe('mapper', () => {
                 expect(parts2.filter(p => p.type === 'tool-call').length).toBe(0);
             });
 
-            it('should deduplicate tool calls when callId is absent but name and args are identical', () => {
+            it('should deduplicate tool calls over snapshots but preserve multiple same-arg calls in the same snapshot', () => {
                 const mapper = new A2AStreamMapper();
 
-                const makeUpdate = (): A2AResponseResult => ({
+                const makeUpdate = (toolReqs: any[]): A2AResponseResult => ({
                     kind: 'status-update',
                     taskId: 't1',
                     status: {
                         state: 'working',
                         message: {
-                            parts: [{
+                            parts: toolReqs.map(req => ({
                                 kind: 'data',
-                                data: {
-                                    request: { name: 'getWeather', args: { location: 'Tokyo' } }
-                                }
-                            }]
+                                data: { request: req }
+                            }))
                         }
                     }
                 });
 
-                const parts1 = mapper.mapResult(makeUpdate());
+                // First snapshot has one tool call
+                const parts1 = mapper.mapResult(makeUpdate([
+                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                ]));
                 expect(parts1.filter(p => p.type === 'tool-call').length).toBe(1);
 
-                const parts2 = mapper.mapResult(makeUpdate());
-                expect(parts2.filter(p => p.type === 'tool-call').length).toBe(0);
+                // Second snapshot has TWO identical tool calls (the first is identical and should be deduplicated, the second is NEW)
+                const parts2 = mapper.mapResult(makeUpdate([
+                    { name: 'getWeather', args: { location: 'Tokyo' } },
+                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                ]));
+                expect(parts2.filter(p => p.type === 'tool-call').length).toBe(1);
+
+                // Third snapshot is identical to the second snapshot (so 0 new emitted parts)
+                const parts3 = mapper.mapResult(makeUpdate([
+                    { name: 'getWeather', args: { location: 'Tokyo' } },
+                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                ]));
+                expect(parts3.filter(p => p.type === 'tool-call').length).toBe(0);
+            });
+
+            it('should reset per-task dedup state when taskId changes', () => {
+                const mapper = new A2AStreamMapper();
+
+                const makeUpdate = (taskId: string, toolReqs: any[]): A2AResponseResult => ({
+                    kind: 'status-update',
+                    taskId,
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: toolReqs.map(req => ({
+                                kind: 'data',
+                                data: { request: req }
+                            }))
+                        }
+                    }
+                });
+
+                // First snapshot for task 't1' with one tool call
+                const parts1 = mapper.mapResult(makeUpdate('t1', [
+                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                ]));
+                expect(parts1.filter(p => p.type === 'tool-call').length).toBe(1);
+
+                // Now transition to new taskId 't2' testing the same tool call again
+                // it should NOT be deduplicated
+                const parts2 = mapper.mapResult(makeUpdate('t2', [
+                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                ]));
+                expect(parts2.filter(p => p.type === 'tool-call').length).toBe(1);
+
+                // Subsequent identical requests within 't2' should be deduplicated
+                const parts3 = mapper.mapResult(makeUpdate('t2', [
+                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                ]));
+                expect(parts3.filter(p => p.type === 'tool-call').length).toBe(0);
             });
         });
 
