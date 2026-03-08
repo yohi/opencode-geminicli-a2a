@@ -17,12 +17,6 @@
     // package.json でエクスポートされているモデルIDを指定します。
     // 対応モデル: gemini-2.5-pro, gemini-2.5-flash, gemini-1.5-pro
     "model": "gemini-2.5-pro",
-    // 個別のプロバイダーに対する詳細設定
-    "providers": {
-        "opencode-geminicli-a2a": {
-            "model": "gemini-2.5-flash"
-        }
-    },
     // ---------------------------------------------------------
     // Gemini CLI (A2A) 固有の設定
     // ---------------------------------------------------------
@@ -34,9 +28,10 @@
         // A2A サーバーの待ち受けポート (デフォルト: 41242)
         "port": 41242,
         // 接続に使用するプロトコル (http または https, デフォルト: http)
-        "protocol": "http",
+        "protocol": "http"
         // 認証が必要な場合の Bearer トークン (任意)
-        "token": "your-secret-token"
+        // ※コード内に直接記載するのは非推奨です。環境変数 GEMINI_A2A_TOKEN の利用を推奨します。
+        // "token": "your-secret-token"
     },
     // ---------------------------------------------------------
     // その他の OpenCode 設定
