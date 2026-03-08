@@ -35,9 +35,10 @@ export const A2AJsonRpcRequestSchema = z.object({
                         fileWithBytes: z.string().optional(),
                         uri: z.string().optional(),
                         bytes: z.string().optional()
-                    }).passthrough().refine(obj => Object.values(obj).some(Boolean), {
-                        message: 'file must contain at least one of name, fileWithBytes, uri, bytes, or mimeType'
-                    })
+                    }).passthrough().refine(
+                        (obj: Record<string, any>) => ['name', 'fileWithBytes', 'uri', 'bytes', 'mimeType'].some(k => Boolean(obj[k])),
+                        { message: 'file must contain at least one of name, fileWithBytes, uri, bytes, or mimeType' }
+                    )
                 }),
                 z.object({
                     kind: z.literal('image'),
@@ -45,9 +46,10 @@ export const A2AJsonRpcRequestSchema = z.object({
                         mimeType: z.string().optional(),
                         bytes: z.string().optional(),
                         uri: z.string().optional()
-                    }).passthrough().refine(obj => Object.values(obj).some(Boolean), {
-                        message: 'image must contain at least one of uri, bytes, or mimeType'
-                    })
+                    }).passthrough().refine(
+                        (obj: Record<string, any>) => ['uri', 'bytes', 'mimeType'].some(k => Boolean(obj[k])),
+                        { message: 'image must contain at least one of uri, bytes, or mimeType' }
+                    )
                 })
             ])),
         }),
