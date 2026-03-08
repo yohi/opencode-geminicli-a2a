@@ -114,6 +114,56 @@ export function mapPromptToA2AJsonRpcRequest(
 }
 
 /**
+ * バイナリデータやURIを抽出するヘルパー。
+ */
+function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extractedMimeType?: string } {
+    const isBuffer = typeof Buffer !== 'undefined' && Buffer.isBuffer(data);
+    const isUint8Array = data instanceof Uint8Array;
+    const isArrayBuffer = data instanceof ArrayBuffer || (typeof SharedArrayBuffer !== 'undefined' && data instanceof SharedArrayBuffer);
+    const isUrlObj = data instanceof URL;
+    const isString = typeof data === 'string';
+
+    let bytes: string | undefined = undefined;
+    let uri: string | undefined = undefined;
+    let extractedMimeType: string | undefined = undefined;
+
+    if (isBuffer || isUint8Array) {
+        if (typeof Buffer !== 'undefined') {
+            bytes = Buffer.from(data as unknown as Uint8Array).toString('base64');
+        } else {
+            const arr = data as unknown as Uint8Array;
+            bytes = btoa(Array.from(arr, b => String.fromCharCode(b)).join(''));
+        }
+    } else if (isArrayBuffer) {
+        if (typeof Buffer !== 'undefined') {
+            bytes = Buffer.from(new Uint8Array(data as unknown as ArrayBuffer)).toString('base64');
+        } else {
+            const arr = new Uint8Array(data as unknown as ArrayBuffer);
+            bytes = btoa(Array.from(arr, b => String.fromCharCode(b)).join(''));
+        }
+    } else if (isUrlObj) {
+        uri = (data as URL).href;
+    } else if (isString) {
+        const str = data as unknown as string;
+        if (str.startsWith('data:')) {
+            const match = str.match(/^data:(.*?);base64,(.+)$/);
+            if (match) {
+                extractedMimeType = match[1];
+                bytes = match[2];
+            } else {
+                bytes = str.split(',')[1] || str;
+            }
+        } else if (str.startsWith('http://') || str.startsWith('https://')) {
+            uri = str;
+        } else {
+            bytes = str;
+        }
+    }
+
+    return { bytes, uri, extractedMimeType };
+}
+
+/**
  * ユーザーメッセージから全パーツを抽出する。
  */
 function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcRequest['params']['message']['parts'] {
@@ -127,96 +177,40 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
         if (part.type === 'text') {
             return { kind: 'text' as const, text: part.text };
         } else if (part.type === 'image') {
-            const isBuffer = typeof Buffer !== 'undefined' && Buffer.isBuffer(part.image);
-            const isUint8Array = part.image instanceof Uint8Array;
-            const isArrayBuffer = part.image instanceof ArrayBuffer || (typeof SharedArrayBuffer !== 'undefined' && part.image instanceof SharedArrayBuffer);
-            const isUrlObj = part.image instanceof URL;
-            const isString = typeof part.image === 'string';
+            const extracted = extractBinaryOrUri(part.image);
 
-            let bytes: string | undefined = undefined;
-            let uri: string | undefined = undefined;
-            let extractedMimeType: string | undefined = undefined;
-
-            if (isBuffer || isUint8Array) {
-                bytes = Buffer.from(part.image as unknown as Uint8Array).toString('base64');
-            } else if (isArrayBuffer) {
-                bytes = Buffer.from(new Uint8Array(part.image as unknown as ArrayBuffer)).toString('base64');
-            } else if (isUrlObj) {
-                uri = (part.image as URL).href;
-            } else if (isString) {
-                const str = part.image as unknown as string;
-                if (str.startsWith('data:')) {
-                    const match = str.match(/^data:([^;]+);base64,(.+)$/);
-                    if (match) {
-                        extractedMimeType = match[1];
-                        bytes = match[2];
-                    } else {
-                        bytes = str.split(',')[1] || str;
-                    }
-                } else if (str.startsWith('http://') || str.startsWith('https://')) {
-                    uri = str;
-                } else {
-                    bytes = str;
-                }
+            if (!extracted.bytes && !extracted.uri) {
+                console.warn('[A2A mapper] Unsupported image format: could not extract bytes or uri from image part. Part will be dropped.');
+                return null;
             }
 
-            if (!bytes && !uri) return null;
-
-            const finalMimeType = part.mimeType || extractedMimeType;
+            const finalMimeType = part.mimeType || extracted.extractedMimeType;
 
             return {
                 kind: 'image' as const,
                 image: {
                     ...(finalMimeType ? { mimeType: finalMimeType } : {}),
-                    ...(bytes ? { bytes } : {}),
-                    ...(uri ? { uri } : {})
+                    ...(extracted.bytes ? { bytes: extracted.bytes } : {}),
+                    ...(extracted.uri ? { uri: extracted.uri } : {})
                 }
             };
         } else if (part.type === 'file') {
-            const isBuffer = typeof Buffer !== 'undefined' && Buffer.isBuffer(part.data);
-            const isUint8Array = part.data instanceof Uint8Array;
-            const isArrayBuffer = part.data instanceof ArrayBuffer || (typeof SharedArrayBuffer !== 'undefined' && part.data instanceof SharedArrayBuffer);
-            const isUrlObj = part.data instanceof URL;
-            const isString = typeof part.data === 'string';
+            const extracted = extractBinaryOrUri(part.data);
 
-            let fileWithBytes: string | undefined = undefined;
-            let uri: string | undefined = undefined;
-            let extractedMimeType: string | undefined = undefined;
-
-            if (isBuffer || isUint8Array) {
-                fileWithBytes = Buffer.from(part.data as unknown as Uint8Array).toString('base64');
-            } else if (isArrayBuffer) {
-                fileWithBytes = Buffer.from(new Uint8Array(part.data as unknown as ArrayBuffer)).toString('base64');
-            } else if (isUrlObj) {
-                uri = (part.data as URL).href;
-            } else if (isString) {
-                const str = part.data as unknown as string;
-                if (str.startsWith('data:')) {
-                    const match = str.match(/^data:([^;]+);base64,(.+)$/);
-                    if (match) {
-                        extractedMimeType = match[1];
-                        fileWithBytes = match[2];
-                    } else {
-                        fileWithBytes = str.split(',')[1] || str;
-                    }
-                } else if (str.startsWith('http://') || str.startsWith('https://')) {
-                    uri = str;
-                } else {
-                    fileWithBytes = str;
-                }
+            if (!extracted.bytes && !extracted.uri) {
+                console.warn('[A2A mapper] Unsupported file format: could not extract bytes or uri from file part. Part will be dropped.');
+                return null;
             }
 
-            if (!fileWithBytes && !uri) return null;
-
-            const finalMimeType = part.mimeType || extractedMimeType;
+            const finalMimeType = part.mimeType || extracted.extractedMimeType;
 
             return {
                 kind: 'file' as const,
                 file: {
                     name: part.filename || 'file',
                     ...(finalMimeType ? { mimeType: finalMimeType } : {}),
-                    ...(fileWithBytes ? { fileWithBytes } : {}),
-                    ...(uri ? { uri } : {})
+                    ...(extracted.bytes ? { fileWithBytes: extracted.bytes } : {}),
+                    ...(extracted.uri ? { uri: extracted.uri } : {})
                 }
             };
         }
