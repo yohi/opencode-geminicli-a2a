@@ -25,10 +25,28 @@ function isToolRequest(data: unknown): data is ToolRequest {
     return !!req && typeof req === 'object' && typeof (req as Record<string, unknown>).name === 'string';
 }
 
-function isThoughtData(data: unknown): data is ThoughtData {
-    if (!data || typeof data !== 'object') return false;
-    const obj = data as Record<string, unknown>;
-    return typeof obj.subject === 'string' || typeof obj.description === 'string';
+function isThoughtData(data: unknown): data is Record<string, any> & { subject?: string; description?: string } {
+    return typeof data === 'object' && data !== null && ('subject' in data || 'description' in data);
+}
+
+/**
+ * Parses percent-encoded payload directly to Uint8Array treating non-% sequences as single bytes.
+ * Bypasses encodeURIComponent UTF-8 limitations.
+ */
+function percentPayloadToBytes(payload: string): Uint8Array {
+    const bytes: number[] = [];
+    for (let i = 0; i < payload.length; i++) {
+        if (payload[i] === '%' && i + 2 < payload.length) {
+            const hex = payload.substring(i + 1, i + 3);
+            if (/^[0-9a-fA-F]{2}$/.test(hex)) {
+                bytes.push(parseInt(hex, 16));
+                i += 2;
+                continue;
+            }
+        }
+        bytes.push(payload.charCodeAt(i) & 0xFF);
+    }
+    return new Uint8Array(bytes);
 }
 
 /**
@@ -71,17 +89,20 @@ export function mapPromptToA2AJsonRpcRequest(
     if (lastMessage.role === 'tool') {
         const toolResultText = formatToolResults(lastMessage.content);
         // user メッセージも含める（もしあれば）
-        let userText = '';
+        let userParts: A2AJsonRpcRequest['params']['message']['parts'] = [];
         for (let i = prompt.length - 1; i >= 0; i--) {
             if (prompt[i].role === 'user') {
-                userText = extractUserText(prompt[i]);
+                userParts = extractUserParts(prompt[i]);
                 break;
             }
         }
-        const content = userText
-            ? `${userText}\n\n${toolResultText}`
-            : toolResultText;
-        return buildRequest(content, { tools, contextId, taskId });
+
+        const finalParts: A2AJsonRpcRequest['params']['message']['parts'] = [
+            ...userParts,
+            ...(toolResultText ? [{ kind: 'text' as const, text: toolResultText }] : [])
+        ];
+
+        return buildRequest(finalParts.length > 0 ? finalParts : '(empty prompt)', { tools, contextId, taskId });
     }
 
     // 通常の処理: 末尾から user/system メッセージを探す
@@ -93,38 +114,147 @@ export function mapPromptToA2AJsonRpcRequest(
         }
     }
 
-    let content = '';
+    let parts: A2AJsonRpcRequest['params']['message']['parts'] = [];
 
     if (targetMessage) {
         if (targetMessage.role === 'user') {
-            content = extractUserText(targetMessage);
+            parts = extractUserParts(targetMessage);
         } else if (targetMessage.role === 'system') {
-            content = targetMessage.content;
+            parts = [{ kind: 'text' as const, text: targetMessage.content }];
         }
     }
 
-    if (targetMessage?.role === 'user' && content === '') {
-        throw new Error(
-            'Unsupported user message: contains no text parts (only image/file parts). ' +
-            'The A2A provider currently supports text-only user messages.'
-        );
+    if (parts.length === 0) {
+        parts = [{ kind: 'text' as const, text: '(empty prompt)' }];
     }
 
-    return buildRequest(content || '(empty prompt)', { tools, contextId, taskId });
+    return buildRequest(parts, { tools, contextId, taskId });
 }
 
 /**
- * ユーザーメッセージからテキスト部分を抽出する。
+ * バイナリデータやURIを抽出するヘルパー。
  */
-function extractUserText(message: LanguageModelV1Prompt[number]): string {
-    if (message.role !== 'user') return '';
-    let text = '';
-    for (const part of message.content) {
-        if (part.type === 'text') {
-            text += part.text;
+function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extractedMimeType?: string } {
+    const isBuffer = typeof Buffer !== 'undefined' && Buffer.isBuffer(data);
+    const isUint8Array = data instanceof Uint8Array;
+    const isArrayBuffer = data instanceof ArrayBuffer || (typeof SharedArrayBuffer !== 'undefined' && data instanceof SharedArrayBuffer);
+    const isUrlObj = data instanceof URL;
+    const isString = typeof data === 'string';
+
+    let bytes: string | undefined = undefined;
+    let uri: string | undefined = undefined;
+    let extractedMimeType: string | undefined = undefined;
+
+    if (isBuffer || isUint8Array) {
+        if (typeof Buffer !== 'undefined') {
+            bytes = Buffer.from(data as unknown as Uint8Array).toString('base64');
+        } else {
+            const arr = data as unknown as Uint8Array;
+            bytes = btoa(Array.from(arr, b => String.fromCharCode(b)).join(''));
+        }
+    } else if (isArrayBuffer) {
+        if (typeof Buffer !== 'undefined') {
+            bytes = Buffer.from(new Uint8Array(data as unknown as ArrayBuffer)).toString('base64');
+        } else {
+            const arr = new Uint8Array(data as unknown as ArrayBuffer);
+            bytes = btoa(Array.from(arr, b => String.fromCharCode(b)).join(''));
+        }
+    } else if (isUrlObj) {
+        uri = (data as URL).href;
+    } else if (isString) {
+        const str = data as unknown as string;
+        if (str.startsWith('data:')) {
+            const matchBase64 = str.match(/^data:(.*?);base64,(.*)$/);
+            if (matchBase64) {
+                extractedMimeType = matchBase64[1];
+                bytes = matchBase64[2];
+            } else {
+                const matchPlain = str.match(/^data:(.*?),(.*)$/);
+                if (matchPlain) {
+                    extractedMimeType = matchPlain[1];
+                    const u8 = percentPayloadToBytes(matchPlain[2]);
+                    if (typeof Buffer !== 'undefined') {
+                        bytes = Buffer.from(u8).toString('base64');
+                    } else {
+                        bytes = btoa(Array.from(u8, b => String.fromCharCode(b)).join(''));
+                    }
+                } else {
+                    console.warn('[A2A mapper] Malformed data URI format.');
+                }
+            }
+        } else if (str.startsWith('http://') || str.startsWith('https://')) {
+            uri = str;
+        } else {
+            // Validate that the string is a valid base64 (or base64url) payload.
+            // This prevents incorrectly treating generic text or relative paths as binary data.
+            const isBase64 = /^[A-Za-z0-9+/]*={0,2}$/.test(str);
+            const isBase64Url = /^[A-Za-z0-9\-_]*={0,2}$/.test(str);
+
+            if ((isBase64 || isBase64Url) && (str.length % 4 === 0 || !str.endsWith('='))) {
+                bytes = str;
+            } else {
+                console.warn('[A2A mapper] Invalid base64 string provided for binary data. Part will be dropped.');
+            }
         }
     }
-    return text;
+
+    return { bytes, uri, extractedMimeType };
+}
+
+/**
+ * ユーザーメッセージから全パーツを抽出する。
+ */
+function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcRequest['params']['message']['parts'] {
+    if (message.role !== 'user') return [];
+
+    const content = typeof message.content === 'string'
+        ? [{ type: 'text' as const, text: message.content }]
+        : message.content;
+
+    return content.map(part => {
+        if (part.type === 'text') {
+            return { kind: 'text' as const, text: part.text };
+        } else if (part.type === 'image') {
+            const extracted = extractBinaryOrUri(part.image);
+
+            if (extracted.bytes === undefined && !extracted.uri) {
+                console.warn('[A2A mapper] Unsupported image format: could not extract bytes or uri from image part. Part will be dropped.');
+                return null;
+            }
+
+            const finalMimeType = part.mimeType || extracted.extractedMimeType;
+
+            return {
+                kind: 'image' as const,
+                image: {
+                    ...(finalMimeType ? { mimeType: finalMimeType } : {}),
+                    ...(extracted.bytes !== undefined ? { bytes: extracted.bytes } : {}),
+                    ...(extracted.uri ? { uri: extracted.uri } : {})
+                }
+            };
+        } else if (part.type === 'file') {
+            const extracted = extractBinaryOrUri(part.data);
+
+            if (extracted.bytes === undefined && !extracted.uri) {
+                console.warn('[A2A mapper] Unsupported file format: could not extract bytes or uri from file part. Part will be dropped.');
+                return null;
+            }
+
+            const finalMimeType = part.mimeType || extracted.extractedMimeType;
+
+            return {
+                kind: 'file' as const,
+                file: {
+                    name: part.filename || 'file',
+                    ...(finalMimeType ? { mimeType: finalMimeType } : {}),
+                    ...(extracted.bytes !== undefined ? { fileWithBytes: extracted.bytes } : {}),
+                    ...(extracted.uri ? { uri: extracted.uri } : {})
+                }
+            };
+        }
+
+        return null;
+    }).filter((p): p is NonNullable<typeof p> => p !== null);
 }
 
 /**
@@ -145,10 +275,13 @@ function formatToolResults(content: Array<{ type: 'tool-result'; toolCallId: str
  * A2A JSON-RPC リクエストを構築するヘルパー。
  */
 function buildRequest(
-    content: string,
+    content: string | A2AJsonRpcRequest['params']['message']['parts'],
     options: { tools?: Tool[]; contextId?: string; taskId?: string }
 ): A2AJsonRpcRequest {
     const { tools, contextId, taskId } = options;
+    const parts = typeof content === 'string'
+        ? [{ kind: 'text' as const, text: content }]
+        : content;
 
     return {
         jsonrpc: '2.0',
@@ -158,7 +291,7 @@ function buildRequest(
             message: {
                 messageId: crypto.randomUUID(),
                 role: 'user',
-                parts: [{ kind: 'text', text: content }],
+                parts,
             },
             configuration: {
                 blocking: false,
@@ -182,8 +315,8 @@ function buildRequest(
  *   AI SDK の reasoning ストリームパーツとして出力する。
  */
 export class A2AStreamMapper {
-    /** 出力済みテキストの累計。スナップショット重複排除に使用 */
-    private emittedText = '';
+    /** 出力済みテキストの累計インデックス別マップ。スナップショット重複排除に使用 */
+    private emittedTextByIndex = new Map<number, string>();
     /** 出力済みツールコール ID の Set。重複排除に使用 */
     private emittedToolCallIds = new Set<string>();
     /** レスポンスから抽出した contextId */
@@ -209,13 +342,23 @@ export class A2AStreamMapper {
         // contextId / taskId の抽出
         if (result.kind === 'task') {
             this._contextId = result.contextId;
-            this._taskId = result.id;
+            if (this._taskId !== result.id) {
+                this._taskId = result.id;
+                this.emittedTextByIndex.clear();
+                this.emittedToolCallIds.clear();
+                this._lastFinishReason = undefined;
+            }
             return parts;
         }
 
         if (result.kind === 'status-update') {
             if (result.contextId) this._contextId = result.contextId;
-            this._taskId = result.taskId;
+            if (this._taskId !== result.taskId) {
+                this._taskId = result.taskId;
+                this.emittedTextByIndex.clear();
+                this.emittedToolCallIds.clear();
+                this._lastFinishReason = undefined;
+            }
 
             const msg = result.status.message;
             const metadata = result.metadata as Record<string, any> | undefined;
@@ -223,9 +366,9 @@ export class A2AStreamMapper {
 
             const shouldProcessParts = result.status.state === 'working' || result.status.state === 'input-required' || result.status.state === 'tool_calls';
             if (shouldProcessParts && msg && msg.parts) {
-                for (const p of msg.parts) {
+                for (const [index, p] of msg.parts.entries()) {
                     if (p.kind === 'text' && p.text && result.status.state === 'working') {
-                        const delta = this.extractTextDelta(p.text);
+                        const delta = this.extractTextDelta(index, p.text);
                         if (delta) {
                             parts.push({
                                 type: 'text-delta',
@@ -236,7 +379,7 @@ export class A2AStreamMapper {
                         const req = p.data.request;
                         const toolName = req.name;
 
-                        const toolCallId = req.callId || `call_${crypto.createHash('sha256').update(toolName + JSON.stringify(req.args ?? {})).digest('hex').substring(0, 16)}`;
+                        const toolCallId = req.callId || `call_${crypto.createHash('sha256').update(toolName + JSON.stringify(req.args ?? {})).digest('hex').substring(0, 16)}_${index}`;
                         if (this.emittedToolCallIds.has(toolCallId)) continue;
                         this.emittedToolCallIds.add(toolCallId);
 
@@ -324,13 +467,14 @@ export class A2AStreamMapper {
      * 新しいテキストが前回出力済みテキストで始まっている場合、差分のみを返す。
      * それ以外の場合（別メッセージ等）は全テキストを返し、累計をリセットする。
      */
-    private extractTextDelta(newText: string): string {
-        if (newText.startsWith(this.emittedText)) {
-            const delta = newText.slice(this.emittedText.length);
-            this.emittedText = newText;
+    private extractTextDelta(index: number, newText: string): string {
+        const emittedText = this.emittedTextByIndex.get(index) || '';
+        if (newText.startsWith(emittedText)) {
+            const delta = newText.slice(emittedText.length);
+            this.emittedTextByIndex.set(index, newText);
             return delta;
         } else {
-            this.emittedText = newText;
+            this.emittedTextByIndex.set(index, newText);
             return newText;
         }
     }
