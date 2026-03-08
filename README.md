@@ -117,6 +117,7 @@ runConversation().catch(console.error);
 ## 開発ガイド
 
 ### 前提条件
+
 - Node.js (v20 以上)
 - npm
 
@@ -149,13 +150,13 @@ npm install
    > 拡張子のないコマンド（シンボリックリンク）を実行すると、ESM 判定に失敗して何も表示されずに終了（サイレントエグジット）することがあります。その場合は、以下のように実体の `.mjs` ファイルを `node` で直接実行してください。
    >
    > ```bash
-   > # Homebrew 環境の例
-   > USE_CCPA=true CODER_AGENT_PORT=41242 node /home/linuxbrew/.linuxbrew/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs
+   > # クロスプラットフォームな環境の例 (Homebrew/macOS, nvm, local installs 等)
+   > USE_CCPA=true GEMINI_API_KEY=your_api_key CODER_AGENT_PORT=41242 node $(npm root -g)/@google/gemini-cli-a2a-server/dist/a2a-server.mjs
    > ```
 
 ### 開発用コマンド
+
 - `npm run dev`: ホットリロードを有効にしてビルドを開始します。
 - `npm run build`: プロジェクトをビルドします (CJS/ESM 両対応)。
 - `npm run test`: Vitest による全テストを実行します。
 - `npm run typecheck`: TypeScript の型チェックを実行します。
-

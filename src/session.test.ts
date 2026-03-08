@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { InMemorySessionStore } from './session';
 
 describe('InMemorySessionStore', () => {
@@ -8,51 +8,113 @@ describe('InMemorySessionStore', () => {
         store = new InMemorySessionStore();
     });
 
-    it('should return empty object for new session', () => {
-        expect(store.get('session1')).toEqual({});
+    it('should return undefined for new session', async () => {
+        expect(await store.get('session1')).toBeUndefined();
     });
 
-    it('should update and get session data', () => {
-        store.update('session1', { contextId: 'ctx-123', lastFinishReason: 'stop' });
-        expect(store.get('session1')).toEqual({
+    it('should update and get session data', async () => {
+        await store.update('session1', { contextId: 'ctx-123', lastFinishReason: 'stop' });
+        expect(await store.get('session1')).toEqual({
             contextId: 'ctx-123',
             lastFinishReason: 'stop'
         });
     });
 
-    it('should partially update session data', () => {
-        store.update('session2', { contextId: 'ctx-456' });
-        store.update('session2', { taskId: 'task-789' });
+    it('should partially update session data', async () => {
+        await store.update('session2', { contextId: 'ctx-456' });
+        await store.update('session2', { taskId: 'task-789' });
 
-        expect(store.get('session2')).toEqual({
+        expect(await store.get('session2')).toEqual({
             contextId: 'ctx-456',
             taskId: 'task-789'
         });
     });
 
-    it('should isolate different sessions', () => {
-        store.update('sessionA', { contextId: 'ctx-A' });
-        store.update('sessionB', { contextId: 'ctx-B' });
+    it('should isolate different sessions', async () => {
+        await store.update('sessionA', { contextId: 'ctx-A' });
+        await store.update('sessionB', { contextId: 'ctx-B' });
 
-        expect(store.get('sessionA').contextId).toBe('ctx-A');
-        expect(store.get('sessionB').contextId).toBe('ctx-B');
+        expect((await store.get('sessionA'))?.contextId).toBe('ctx-A');
+        expect((await store.get('sessionB'))?.contextId).toBe('ctx-B');
     });
 
-    it('should delete a session', () => {
-        store.update('session3', { contextId: 'ctx-999' });
-        store.delete('session3');
+    it('should delete a session', async () => {
+        await store.update('session3', { contextId: 'ctx-999' });
+        await store.delete('session3');
 
-        // Accessing deleted session creates a new empty one
-        expect(store.get('session3')).toEqual({});
+        expect(await store.get('session3')).toBeUndefined();
     });
 
-    it('should clear all sessions', () => {
-        store.update('s1', { contextId: 'c1' });
-        store.update('s2', { contextId: 'c2' });
+    it('should clear all sessions', async () => {
+        await store.update('s1', { contextId: 'c1' });
+        await store.update('s2', { contextId: 'c2' });
 
-        store.clear();
+        await store.clear();
 
-        expect(store.get('s1')).toEqual({});
-        expect(store.get('s2')).toEqual({});
+        expect(await store.get('s1')).toBeUndefined();
+        expect(await store.get('s2')).toBeUndefined();
+    });
+});
+
+describe('InMemorySessionStore limits and expiration', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('should reject invalid constructor args', () => {
+        expect(() => new InMemorySessionStore({ ttlMs: -1 })).toThrow(RangeError);
+        expect(() => new InMemorySessionStore({ maxEntries: 0 })).toThrow(RangeError);
+        expect(() => new InMemorySessionStore({ maxEntries: 1.5 })).toThrow(RangeError);
+    });
+
+    it('should evict oldest session when exceeding maxEntries', async () => {
+        const store = new InMemorySessionStore({ maxEntries: 2 });
+        await store.update('s1', { contextId: '1' });
+        await store.update('s2', { contextId: '2' });
+        await store.update('s3', { contextId: '3' }); // should evict s1
+
+        expect(await store.get('s1')).toBeUndefined();
+        expect(await store.get('s2')).toBeDefined();
+        expect(await store.get('s3')).toBeDefined();
+    });
+
+    it('should expire session after ttlMs', async () => {
+        const store = new InMemorySessionStore({ ttlMs: 1000 });
+        await store.update('s1', { contextId: '1' });
+
+        vi.advanceTimersByTime(500);
+        expect(await store.get('s1')).toBeDefined();
+
+        vi.advanceTimersByTime(1001);
+        expect(await store.get('s1')).toBeUndefined();
+    });
+
+    it('should prune expired sessions', async () => {
+        const store = new InMemorySessionStore({ ttlMs: 1000 });
+        await store.update('s1', { contextId: '1' });
+        await store.update('s2', { contextId: '2' });
+
+        vi.advanceTimersByTime(1500);
+        await store.update('s3', { contextId: '3' }); // Not expired
+
+        await store.prune();
+
+        expect(await store.get('s1')).toBeUndefined();
+        expect(await store.get('s2')).toBeUndefined();
+        expect(await store.get('s3')).toBeDefined();
+    });
+
+    it('get() should return a defensive copy', async () => {
+        const store = new InMemorySessionStore();
+        await store.update('s1', { contextId: '1' });
+
+        const session = await store.get('s1');
+        session!.contextId = 'mutated';
+
+        const retrieved = await store.get('s1');
+        expect(retrieved?.contextId).toBe('1');
     });
 });
