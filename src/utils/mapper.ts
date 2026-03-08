@@ -146,7 +146,7 @@ function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extr
     } else if (isString) {
         const str = data as unknown as string;
         if (str.startsWith('data:')) {
-            const matchBase64 = str.match(/^data:(.*?);base64,(.+)$/);
+            const matchBase64 = str.match(/^data:(.*?);base64,(.*)$/);
             if (matchBase64) {
                 extractedMimeType = matchBase64[1];
                 bytes = matchBase64[2];
@@ -195,7 +195,7 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
         } else if (part.type === 'image') {
             const extracted = extractBinaryOrUri(part.image);
 
-            if (!extracted.bytes && !extracted.uri) {
+            if (extracted.bytes === undefined && !extracted.uri) {
                 console.warn('[A2A mapper] Unsupported image format: could not extract bytes or uri from image part. Part will be dropped.');
                 return null;
             }
@@ -206,14 +206,14 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
                 kind: 'image' as const,
                 image: {
                     ...(finalMimeType ? { mimeType: finalMimeType } : {}),
-                    ...(extracted.bytes ? { bytes: extracted.bytes } : {}),
+                    ...(extracted.bytes !== undefined ? { bytes: extracted.bytes } : {}),
                     ...(extracted.uri ? { uri: extracted.uri } : {})
                 }
             };
         } else if (part.type === 'file') {
             const extracted = extractBinaryOrUri(part.data);
 
-            if (!extracted.bytes && !extracted.uri) {
+            if (extracted.bytes === undefined && !extracted.uri) {
                 console.warn('[A2A mapper] Unsupported file format: could not extract bytes or uri from file part. Part will be dropped.');
                 return null;
             }
@@ -225,7 +225,7 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
                 file: {
                     name: part.filename || 'file',
                     ...(finalMimeType ? { mimeType: finalMimeType } : {}),
-                    ...(extracted.bytes ? { fileWithBytes: extracted.bytes } : {}),
+                    ...(extracted.bytes !== undefined ? { fileWithBytes: extracted.bytes } : {}),
                     ...(extracted.uri ? { uri: extracted.uri } : {})
                 }
             };
@@ -320,13 +320,21 @@ export class A2AStreamMapper {
         // contextId / taskId の抽出
         if (result.kind === 'task') {
             this._contextId = result.contextId;
-            this._taskId = result.id;
+            if (this._taskId !== result.id) {
+                this._taskId = result.id;
+                this.emittedTextByIndex.clear();
+                this.emittedToolCallIds.clear();
+            }
             return parts;
         }
 
         if (result.kind === 'status-update') {
             if (result.contextId) this._contextId = result.contextId;
-            this._taskId = result.taskId;
+            if (this._taskId !== result.taskId) {
+                this._taskId = result.taskId;
+                this.emittedTextByIndex.clear();
+                this.emittedToolCallIds.clear();
+            }
 
             const msg = result.status.message;
             const metadata = result.metadata as Record<string, any> | undefined;

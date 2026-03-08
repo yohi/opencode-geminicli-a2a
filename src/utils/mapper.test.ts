@@ -639,6 +639,43 @@ describe('mapper', () => {
                 ]));
                 expect(parts3.filter(p => p.type === 'tool-call').length).toBe(0);
             });
+
+            it('should reset per-task dedup state when taskId changes', () => {
+                const mapper = new A2AStreamMapper();
+
+                const makeUpdate = (taskId: string, toolReqs: any[]): A2AResponseResult => ({
+                    kind: 'status-update',
+                    taskId,
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: toolReqs.map(req => ({
+                                kind: 'data',
+                                data: { request: req }
+                            }))
+                        }
+                    }
+                });
+
+                // First snapshot for task 't1' with one tool call
+                const parts1 = mapper.mapResult(makeUpdate('t1', [
+                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                ]));
+                expect(parts1.filter(p => p.type === 'tool-call').length).toBe(1);
+
+                // Now transition to new taskId 't2' testing the same tool call again
+                // it should NOT be deduplicated
+                const parts2 = mapper.mapResult(makeUpdate('t2', [
+                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                ]));
+                expect(parts2.filter(p => p.type === 'tool-call').length).toBe(1);
+
+                // Subsequent identical requests within 't2' should be deduplicated
+                const parts3 = mapper.mapResult(makeUpdate('t2', [
+                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                ]));
+                expect(parts3.filter(p => p.type === 'tool-call').length).toBe(0);
+            });
         });
 
         describe('thoughts (reasoning)', () => {
