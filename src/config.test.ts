@@ -67,6 +67,7 @@ describe('resolveConfig', () => {
     it('should handle partial options overlaying environment variables', () => {
         process.env.GEMINI_A2A_PORT = '12345';
         process.env.GEMINI_A2A_TOKEN = 'env-token';
+        process.env.GEMINI_A2A_PROTOCOL = 'https';
 
         const config = resolveConfig({
             host: 'opt-host',
@@ -77,7 +78,7 @@ describe('resolveConfig', () => {
             host: 'opt-host', // defined in opt
             port: 12345,      // defined in env
             token: 'opt-token', // opt prioritized over env
-            protocol: 'http',
+            protocol: 'https', // defined in env
         });
     });
 
