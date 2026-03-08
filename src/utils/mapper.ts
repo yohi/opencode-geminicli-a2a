@@ -213,7 +213,7 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
             return {
                 kind: 'file' as const,
                 file: {
-                    name: 'file',
+                    name: part.filename || 'file',
                     ...(finalMimeType ? { mimeType: finalMimeType } : {}),
                     ...(fileWithBytes ? { fileWithBytes } : {}),
                     ...(uri ? { uri } : {})
