@@ -29,5 +29,9 @@ export function createGeminiA2AProvider(options?: OpenCodeProviderOptions): Gemi
         return new OpenCodeGeminiA2AProvider(modelId, { ...options, ...settings });
     };
 
+    provider.textEmbeddingModel = (_modelId: string) => {
+        throw new Error('textEmbeddingModel is not supported by opencode-geminicli-a2a provider');
+    };
+
     return provider;
 }
