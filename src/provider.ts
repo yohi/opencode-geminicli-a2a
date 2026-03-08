@@ -12,6 +12,8 @@ import { parseA2AStream } from './utils/stream';
 import type { A2AJsonRpcRequest } from './schemas';
 import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
 
+const sharedSessionStore = new InMemorySessionStore();
+
 export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
     readonly specificationVersion = 'v1';
     readonly provider = 'opencode-geminicli-a2a';
@@ -31,7 +33,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         this.modelId = modelId;
         const config = resolveConfig(options);
         this.client = new A2AClient(config);
-        this.sessionStore = options?.sessionStore ?? new InMemorySessionStore();
+        this.sessionStore = options?.sessionStore ?? sharedSessionStore;
     }
 
     private createA2ARequest(options: LanguageModelV1CallOptions, session: A2ASession): A2AJsonRpcRequest {
@@ -77,7 +79,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
             }
         }
 
-        const session = sessionId ? this.sessionStore.get(sessionId) : {};
+        const session = sessionId ? await this.sessionStore.get(sessionId) || {} : {};
 
         const request = this.createA2ARequest(options, session);
         const idempotencyKey = (options.providerMetadata?.opencode?.idempotencyKey as string) || undefined;
@@ -95,9 +97,9 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
             headers = response.headers;
         } catch (error) {
             if (sessionId) {
-                const currentSession = this.sessionStore.get(sessionId);
-                if (Object.keys(currentSession).length > 0) {
-                    this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+                const currentSession = await this.sessionStore.get(sessionId);
+                if (currentSession && Object.keys(currentSession).length > 0) {
+                    await this.sessionStore.update(sessionId, { lastFinishReason: undefined });
                 }
             }
             throw error;
@@ -131,9 +133,10 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                     // マルチターン: mapper から contextId / taskId / finishReason を抽出して保存
                     if (sessionId) {
                         const hasUpdate = mapper.contextId !== undefined || mapper.taskId !== undefined || mapper.lastFinishReason !== undefined;
-                        const hasExisting = Object.keys(this.sessionStore.get(sessionId)).length > 0;
+                        const existingSession = await this.sessionStore.get(sessionId);
+                        const hasExisting = existingSession !== undefined && Object.keys(existingSession).length > 0;
                         if (hasUpdate || hasExisting) {
-                            this.sessionStore.update(sessionId, {
+                            await this.sessionStore.update(sessionId, {
                                 ...(mapper.contextId !== undefined && { contextId: mapper.contextId }),
                                 ...(mapper.taskId !== undefined && { taskId: mapper.taskId }),
                                 lastFinishReason: mapper.lastFinishReason,
@@ -152,9 +155,9 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                 } catch (error) {
                     // エラー時は lastFinishReason をリセットして、次回の taskId 送信を防ぐ
                     if (sessionId) {
-                        const currentSession = this.sessionStore.get(sessionId);
-                        if (Object.keys(currentSession).length > 0) {
-                            this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+                        const currentSession = await this.sessionStore.get(sessionId);
+                        if (currentSession && Object.keys(currentSession).length > 0) {
+                            await this.sessionStore.update(sessionId, { lastFinishReason: undefined });
                         }
                     }
                     controller.error(error);

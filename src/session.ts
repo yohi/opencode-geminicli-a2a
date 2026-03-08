@@ -5,11 +5,11 @@ export interface A2ASession {
 }
 
 export interface SessionStore {
-    get(sessionId: string): A2ASession;
-    update(sessionId: string, patch: Partial<A2ASession>): void;
-    delete(sessionId: string): void;
-    clear(): void;
-    prune?(): void;
+    get(sessionId: string): Promise<A2ASession | undefined>;
+    update(sessionId: string, patch: Partial<A2ASession>): Promise<void>;
+    delete(sessionId: string): Promise<void>;
+    clear(): Promise<void>;
+    prune?(): Promise<void>;
 }
 
 interface InMemorySessionEntry {
@@ -60,12 +60,12 @@ export class InMemorySessionStore implements SessionStore {
         }
     }
 
-    get(sessionId: string): A2ASession {
+    async get(sessionId: string): Promise<A2ASession | undefined> {
         const entry = this.sessions.get(sessionId);
         if (entry) {
             if (this.isExpired(entry)) {
                 this.sessions.delete(sessionId);
-                return {};
+                return undefined;
             }
             entry.lastAccessedAt = Date.now();
             // Re-insert to maintain LRU order
@@ -73,10 +73,10 @@ export class InMemorySessionStore implements SessionStore {
             this.sessions.set(sessionId, entry);
             return { ...entry.session };
         }
-        return {};
+        return undefined;
     }
 
-    update(sessionId: string, patch: Partial<A2ASession>): void {
+    async update(sessionId: string, patch: Partial<A2ASession>): Promise<void> {
         let entry = this.sessions.get(sessionId);
 
         if (entry && this.isExpired(entry)) {
@@ -99,15 +99,15 @@ export class InMemorySessionStore implements SessionStore {
         }
     }
 
-    delete(sessionId: string): void {
+    async delete(sessionId: string): Promise<void> {
         this.sessions.delete(sessionId);
     }
 
-    clear(): void {
+    async clear(): Promise<void> {
         this.sessions.clear();
     }
 
-    prune(): void {
+    async prune(): Promise<void> {
         if (this.ttlMs === undefined) return;
         const now = Date.now();
         for (const [key, entry] of this.sessions.entries()) {
