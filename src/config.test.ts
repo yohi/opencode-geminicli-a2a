@@ -74,7 +74,7 @@ describe('resolveConfig', () => {
         expect(config).toEqual({
             host: 'opt-host', // defined in opt
             port: 12345,      // defined in env
-            token: 'opt-token', // opt prioritied over env
+            token: 'opt-token', // opt prioritized over env
             protocol: 'http',
         });
     });
