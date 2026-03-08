@@ -33,11 +33,10 @@ export const A2AJsonRpcRequestSchema = z.object({
                         name: z.string().optional(),
                         mimeType: z.string().optional(),
                         fileWithBytes: z.string().optional(),
-                        uri: z.string().optional(),
-                        bytes: z.string().optional()
+                        uri: z.string().optional()
                     }).passthrough().refine(
-                        (obj: Record<string, any>) => Boolean(obj.fileWithBytes) || Boolean(obj.bytes) || Boolean(obj.uri),
-                        { message: 'file must contain at least one of fileWithBytes, bytes, or uri' }
+                        (obj: Record<string, any>) => Boolean(obj.fileWithBytes) || Boolean(obj.uri),
+                        { message: 'file must contain at least one of fileWithBytes, or uri' }
                     )
                 }),
                 z.object({

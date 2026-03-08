@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mapPromptToA2AJsonRpcRequest, mapA2AResponseToStreamParts, A2AStreamMapper } from './mapper';
 import type { LanguageModelV1Prompt } from '@ai-sdk/provider';
 import type { A2AResponseResult } from '../schemas';
@@ -130,6 +130,67 @@ describe('mapper', () => {
             expect(part.file.fileWithBytes).toBe('JVBERi0xLjQKJ...');
             expect(part.file.uri).toBeUndefined();
             expect(part.file.mimeType).toBe('application/pdf');
+        });
+
+        it('should correctly map multimodal image parts (Uint8Array)', () => {
+            const arr = new Uint8Array([104, 101, 108, 108, 111]); // 'hello'
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'image', image: arr, mimeType: 'image/png' }]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('image');
+            expect(part.image.bytes).toBe(typeof Buffer !== 'undefined' ? Buffer.from(arr).toString('base64') : btoa('hello'));
+            expect(part.image.mimeType).toBe('image/png');
+        });
+
+        it('should correctly map multimodal file parts (ArrayBuffer)', () => {
+            const arr = new Uint8Array([104, 101, 108, 108, 111]); // 'hello'
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'file', data: arr.buffer as any, mimeType: 'text/plain' }]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('file');
+            expect(part.file.fileWithBytes).toBe(typeof Buffer !== 'undefined' ? Buffer.from(arr).toString('base64') : btoa('hello'));
+            expect(part.file.mimeType).toBe('text/plain');
+        });
+
+        it('should correctly map multimodal image parts (URL object)', () => {
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'image', image: new URL('https://example.com/test.jpg') }]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('image');
+            expect(part.image.uri).toBe('https://example.com/test.jpg');
+            expect(part.image.bytes).toBeUndefined();
+        });
+
+        it('should correctly map multimodal file parts (data URI with parameters)', () => {
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [{ type: 'file', data: 'data:text/plain;charset=utf-8;base64,aGVsbG8=' as any, mimeType: 'text/plain;charset=utf-8' }]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            const part = req.params.message.parts[0] as any;
+            expect(part.kind).toBe('file');
+            expect(part.file.fileWithBytes).toBe('aGVsbG8=');
+            expect(part.file.mimeType).toBe('text/plain;charset=utf-8');
+        });
+
+        it('should drop malformed or unsupported parts and warn', () => {
+            const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
+            const prompt: LanguageModelV1Prompt = [{
+                role: 'user', content: [
+                    { type: 'image', image: { unsupported: true } as any },
+                    { type: 'text', text: 'valid text' }
+                ]
+            }];
+            const req = mapPromptToA2AJsonRpcRequest(prompt);
+            expect(req.params.message.parts.length).toBe(1);
+            expect((req.params.message.parts[0] as any).kind).toBe('text');
+            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Unsupported image format'));
+            consoleSpy.mockRestore();
         });
 
         it('should select the latest user message when multiple user messages exist', () => {
