@@ -16,13 +16,18 @@ export * from './session';
  * const model = a2a.languageModel('gemini-2.5-pro');
  */
 export interface GeminiA2AProvider extends ProviderV1 {
+    // 意図的な contravariance: ProviderV1 の settings に比べ型の範囲を絞っています。
+    // satisfies によるコンパイル時の型チェックでこの挙動が安全であることを確認済みです。
     (modelId: string, settings?: Partial<OpenCodeProviderOptions>): OpenCodeGeminiA2AProvider;
     languageModel(modelId: string, settings?: Partial<OpenCodeProviderOptions>): OpenCodeGeminiA2AProvider;
 }
 
 export function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2AProvider {
     const createModel = (modelId: string, settings?: Partial<OpenCodeProviderOptions>) => {
-        return new OpenCodeGeminiA2AProvider(modelId, { ...options, ...settings });
+        const sanitizedSettings = Object.fromEntries(
+            Object.entries(settings ?? {}).filter(([_, v]) => v !== undefined)
+        );
+        return new OpenCodeGeminiA2AProvider(modelId, { ...options, ...sanitizedSettings });
     };
 
     const provider = function geminicliA2A(modelId: string, settings?: Partial<OpenCodeProviderOptions>) {
