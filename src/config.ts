@@ -29,12 +29,12 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig {
     const optToken = options?.token;
     const optProtocol = options?.protocol;
 
-    // 3. 優先順位（環境変数 > オプション）でマージ
+    // 3. 優先順位（オプション > 環境変数）でマージ
     const mergedConfig = {
-        host: envHost ?? optHost,
-        port: envPortStr ?? optPortStr,
-        token: envToken ?? optToken,
-        protocol: (envProtocol as 'http' | 'https' | undefined) ?? optProtocol,
+        host: optHost ?? envHost,
+        port: optPortStr ?? envPortStr,
+        token: optToken ?? envToken,
+        protocol: optProtocol ?? (envProtocol as 'http' | 'https' | undefined),
     };
 
     // 4. Zod スキーマでパース（デフォルト値の適用と型変換）

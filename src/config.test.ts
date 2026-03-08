@@ -36,7 +36,7 @@ describe('resolveConfig', () => {
         });
     });
 
-    it('should prioritize environment variables over options', () => {
+    it('should prioritize options over environment variables', () => {
         process.env.GEMINI_A2A_HOST = 'env-host';
         process.env.GEMINI_A2A_PORT = '9999';
         process.env.GEMINI_A2A_TOKEN = 'env-token';
@@ -48,9 +48,9 @@ describe('resolveConfig', () => {
         });
 
         expect(config).toEqual({
-            host: 'env-host',
-            port: 9999,
-            token: 'env-token',
+            host: 'opt-host',
+            port: 8888,
+            token: 'opt-token',
             protocol: 'http',
         });
     });
@@ -62,8 +62,9 @@ describe('resolveConfig', () => {
         expect(typeof config.port).toBe('number');
     });
 
-    it('should handle partial environment variables', () => {
+    it('should handle partial options overlaying environment variables', () => {
         process.env.GEMINI_A2A_PORT = '12345';
+        process.env.GEMINI_A2A_TOKEN = 'env-token';
 
         const config = resolveConfig({
             host: 'opt-host',
@@ -71,9 +72,9 @@ describe('resolveConfig', () => {
         });
 
         expect(config).toEqual({
-            host: 'opt-host',
-            port: 12345,
-            token: 'opt-token',
+            host: 'opt-host', // defined in opt
+            port: 12345,      // defined in env
+            token: 'opt-token', // opt prioritied over env
             protocol: 'http',
         });
     });
