@@ -154,15 +154,19 @@ function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extr
                 const matchPlain = str.match(/^data:(.*?),(.*)$/);
                 if (matchPlain) {
                     extractedMimeType = matchPlain[1];
-                    const decoded = decodeURIComponent(matchPlain[2]);
-                    if (typeof Buffer !== 'undefined') {
-                        bytes = Buffer.from(decoded).toString('base64');
-                    } else {
-                        const encodedText = new TextEncoder().encode(decoded);
-                        bytes = btoa(Array.from(encodedText, b => String.fromCharCode(b)).join(''));
+                    try {
+                        const decoded = decodeURIComponent(matchPlain[2]);
+                        if (typeof Buffer !== 'undefined') {
+                            bytes = Buffer.from(decoded).toString('base64');
+                        } else {
+                            const encodedText = new TextEncoder().encode(decoded);
+                            bytes = btoa(Array.from(encodedText, b => String.fromCharCode(b)).join(''));
+                        }
+                    } catch (e) {
+                        console.warn('[A2A mapper] Malformed percent-encoding in data URI payload.');
                     }
                 } else {
-                    bytes = str.split(',')[1] || str;
+                    console.warn('[A2A mapper] Malformed data URI format.');
                 }
             }
         } else if (str.startsWith('http://') || str.startsWith('https://')) {
@@ -289,8 +293,8 @@ function buildRequest(
  *   AI SDK の reasoning ストリームパーツとして出力する。
  */
 export class A2AStreamMapper {
-    /** 出力済みテキストの累計。スナップショット重複排除に使用 */
-    private emittedText = '';
+    /** 出力済みテキストの累計インデックス別マップ。スナップショット重複排除に使用 */
+    private emittedTextByIndex = new Map<number, string>();
     /** 出力済みツールコール ID の Set。重複排除に使用 */
     private emittedToolCallIds = new Set<string>();
     /** レスポンスから抽出した contextId */
@@ -332,7 +336,7 @@ export class A2AStreamMapper {
             if (shouldProcessParts && msg && msg.parts) {
                 for (const [index, p] of msg.parts.entries()) {
                     if (p.kind === 'text' && p.text && result.status.state === 'working') {
-                        const delta = this.extractTextDelta(p.text);
+                        const delta = this.extractTextDelta(index, p.text);
                         if (delta) {
                             parts.push({
                                 type: 'text-delta',
@@ -431,13 +435,14 @@ export class A2AStreamMapper {
      * 新しいテキストが前回出力済みテキストで始まっている場合、差分のみを返す。
      * それ以外の場合（別メッセージ等）は全テキストを返し、累計をリセットする。
      */
-    private extractTextDelta(newText: string): string {
-        if (newText.startsWith(this.emittedText)) {
-            const delta = newText.slice(this.emittedText.length);
-            this.emittedText = newText;
+    private extractTextDelta(index: number, newText: string): string {
+        const emittedText = this.emittedTextByIndex.get(index) || '';
+        if (newText.startsWith(emittedText)) {
+            const delta = newText.slice(emittedText.length);
+            this.emittedTextByIndex.set(index, newText);
             return delta;
         } else {
-            this.emittedText = newText;
+            this.emittedTextByIndex.set(index, newText);
             return newText;
         }
     }
