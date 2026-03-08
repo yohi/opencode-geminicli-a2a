@@ -53,16 +53,18 @@ describe('parseA2AStream', () => {
 
     it('throws error on malformed JSON chunk', async () => {
         const stream = createStream(['data: {invalid json}\n\n']);
-        await expect(async () => {
+        const promise = (async () => {
             for await (const _ of parseA2AStream(stream)) { }
-        }).rejects.toThrowError(/Failed to parse JSON chunk/);
+        })();
+        await expect(promise).rejects.toThrowError(/Failed to parse JSON chunk/);
     });
 
     it('throws error on validation failure', async () => {
         const stream = createStream(['data: {"id": "1", "result": {"missing_kind": true}}\n\n']);
-        await expect(async () => {
+        const promise = (async () => {
             for await (const _ of parseA2AStream(stream)) { }
-        }).rejects.toThrowError(/Chunk validation failed/);
+        })();
+        await expect(promise).rejects.toThrowError(/Chunk validation failed/);
     });
 
     it('produces no outputs for empty lines/newlines', async () => {
