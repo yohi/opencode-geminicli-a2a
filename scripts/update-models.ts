@@ -38,6 +38,7 @@ async function fetchModels() {
 
     // Extracts the constant names from the Set
     const varNames = validMatch[1]
+        .replace(/\/\*[\s\S]*?\*\//g, '') // Remove block comments
         .split('\n')
         .map(s => s.replace(/\/\/.*$/, '').trim()) // Ignore inline comments
         .join(',')
@@ -70,7 +71,7 @@ function formatModelName(id: string): string {
         if (word === 'customtools') return 'Custom Tools';
         if (word === 'learning') return 'Learning';
         if (word === 'thinking') return 'Thinking';
-        return word;
+        return word.charAt(0).toUpperCase() + word.slice(1);
     }).join(' ');
 
     return `${formatted} (A2A)`;
@@ -90,10 +91,23 @@ async function updatePackageJson(models: string[]) {
         .map((line, i) => i === 0 ? line : `    ${line}`)
         .join('\n');
 
-    const updatedContent = content.replace(
+    let updatedContent = content.replace(
         /"models"\s*:\s*\[[\s\S]*?\]/,
         `"models": ${formattedModels}`
     );
+
+    if (updatedContent === content) {
+        if (/"opencode"\s*:\s*\{/.test(content)) {
+            console.log('Warning: "models" array not found. Injecting a new "models" entry into "opencode" structure.');
+            updatedContent = content.replace(
+                /"opencode"\s*:\s*\{/,
+                `"opencode": {\n    "models": ${formattedModels},`
+            );
+        } else {
+            console.error('Error: Unexpected package.json structure. Could not find "models" array or "opencode" object to update.');
+            process.exit(1);
+        }
+    }
 
     await fs.writeFile(pkjPath, updatedContent);
     console.log(`Updated package.json with ${newModels.length} models.`);
