@@ -30,10 +30,11 @@
                 // ※トークンによる認証を追加する場合は、コメントアウトを外して設定してください。
                 // ただし、設定ファイルへの平文でのトークン記述は推奨されません。
                 // 可能な限り、実行環境の環境変数 `GEMINI_A2A_TOKEN` を使用してください。
-                // "token": "your-secret-token"
+                // , "token": "your-secret-token"
             },
             "models": {
                 "gemini-3.1-pro-preview": {},
+                "gemini-3.1-pro-preview-customtools": {},
                 "gemini-3-pro-preview": {},
                 "gemini-3-flash-preview": {},
                 "gemini-2.5-pro": {},
