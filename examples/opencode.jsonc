@@ -4,34 +4,44 @@
     // プラグイン設定
     // ---------------------------------------------------------
     // npm link 等で追加したカスタムプロバイダーを読み込むための設定
-    "plugins": [
+    "plugin": [
         "opencode-geminicli-a2a-provider"
     ],
     // ---------------------------------------------------------
-    // プロバイダーとモデルの設定
+    // モデル設定
     // ---------------------------------------------------------
-    // デフォルトで使用するプロバイダー名
-    // このプラグインが提供するプロバイダーIDは 'opencode-geminicli-a2a' です。
-    "provider": "opencode-geminicli-a2a",
-    // デフォルトで使用するモデル名
-    // package.json でエクスポートされているモデルIDを指定します。
-    // 対応モデル: gemini-2.5-pro, gemini-2.5-flash, gemini-1.5-pro
-    "model": "gemini-2.5-pro",
+    // エージェントに設定するデフォルトのモデルを指定します。
+    // フォーマット: プロバイダーID/モデルID
+    // 対応モデル: gemini-3.1-pro-preview, gemini-3-pro-preview, gemini-3-flash-preview, gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite
+    "model": "opencode-geminicli-a2a/gemini-2.5-pro",
+    "small_model": "opencode-geminicli-a2a/gemini-2.5-flash",
     // ---------------------------------------------------------
     // Gemini CLI (A2A) 固有の設定
     // ---------------------------------------------------------
-    // プロバイダー内部で利用されるサーバーへの接続情報
-    // ※この設定は環境変数 (GEMINI_A2A_PORT等) よりも優先されます。
-    "a2aProvider": {
-        // A2A サーバーのホスト名 (デフォルト: 127.0.0.1)
-        "host": "127.0.0.1",
-        // A2A サーバーの待ち受けポート (デフォルト: 41242)
-        "port": 41242,
-        // 接続に使用するプロトコル (http または https, デフォルト: http)
-        "protocol": "http"
-        // 認証が必要な場合の Bearer トークン (任意)
-        // ※コード内に直接記載するのは非推奨です。環境変数 GEMINI_A2A_TOKEN の利用を推奨します。
-        // "token": "your-secret-token"
+    // ※ A2A サーバーとの接続設定（デフォルトで問題ない場合は options は省略可能）
+    // ※ OpenCodeのUIでモデルを選択可能にするためには models への列挙が必要です
+    "provider": {
+        "opencode-geminicli-a2a": {
+            "options": {
+                // A2A サーバーのアクセス先を指定 (デフォルトは 127.0.0.1:41242)
+                "host": "127.0.0.1",
+                "port": 41242,
+                "protocol": "http"
+                // ※トークンによる認証を追加する場合は、コメントアウトを外して設定してください。
+                // ただし、設定ファイルへの平文でのトークン記述は推奨されません。
+                // 可能な限り、実行環境の環境変数 `GEMINI_A2A_TOKEN` を使用してください。
+                // , "token": "your-secret-token"
+            },
+            "models": {
+                "gemini-3.1-pro-preview": {},
+                "gemini-3.1-pro-preview-customtools": {},
+                "gemini-3-pro-preview": {},
+                "gemini-3-flash-preview": {},
+                "gemini-2.5-pro": {},
+                "gemini-2.5-flash": {},
+                "gemini-2.5-flash-lite": {}
+            }
+        }
     },
     // ---------------------------------------------------------
     // その他の OpenCode 設定

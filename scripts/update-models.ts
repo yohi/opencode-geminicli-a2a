@@ -1,0 +1,133 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = path.resolve(__dirname, '..');
+
+const MODEL_REF = process.env.MODEL_REF || process.argv[2] || 'main';
+if (!MODEL_REF.trim()) {
+    console.error('Error: MODEL_REF cannot be empty');
+    process.exit(1);
+}
+const MODELS_URL = `https://raw.githubusercontent.com/google-gemini/gemini-cli/${MODEL_REF}/packages/core/src/config/models.ts`;
+
+async function fetchModels() {
+    console.log(`Fetching models from ${MODELS_URL}...`);
+    const res = await fetch(MODELS_URL);
+    if (!res.ok) {
+        throw new Error(`Failed to fetch: ${res.statusText}`);
+    }
+    const text = await res.text();
+
+    const modelVarMap = new Map<string, string>();
+    // Matches expressions like: export const SOME_MODEL = 'gemini-model-name';
+    // including those wrapped to the next line.
+    const constRegex = /export\s+const\s+([A-Z0-9_]+)\s*=\s*['"]([^'"]+)['"]/g;
+    let match;
+    while ((match = constRegex.exec(text)) !== null) {
+        modelVarMap.set(match[1], match[2]);
+    }
+
+    // Finds the VALID_GEMINI_MODELS Set array
+    const validModelsRegex = /export\s+const\s+VALID_GEMINI_MODELS\s*=\s*new\s+Set\(\[\s*([\s\S]*?)\s*\]\)/;
+    const validMatch = text.match(validModelsRegex);
+    if (!validMatch) {
+        throw new Error("Could not find VALID_GEMINI_MODELS in the source file.");
+    }
+
+    // Extracts the constant names from the Set
+    const varNames = validMatch[1]
+        .replace(/\/\*[\s\S]*?\*\//g, '') // Remove block comments
+        .split('\n')
+        .map(s => s.replace(/\/\/.*$/, '').trim()) // Ignore inline comments
+        .join(',')
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s !== ''); // Ignore empty entries
+
+    const validModels: string[] = [];
+    for (const varName of varNames) {
+        const val = modelVarMap.get(varName);
+        if (val) {
+            validModels.push(val);
+        } else {
+            throw new Error(`Could not find resolved value for constant ${varName}`);
+        }
+    }
+
+    return validModels;
+}
+
+function formatModelName(id: string): string {
+    // gemini-3.1-pro-preview-customtools -> Gemini 3.1 Pro Preview Custom Tools (A2A)
+    const formatted = id.split('-').map(word => {
+        if (word === 'gemini') return 'Gemini';
+        if (word === 'pro') return 'Pro';
+        if (word === 'flash') return 'Flash';
+        if (word === 'lite') return 'Lite';
+        if (word === 'preview') return 'Preview';
+        if (word === 'customtools') return 'Custom Tools';
+        if (word === 'learning') return 'Learning';
+        if (word === 'thinking') return 'Thinking';
+        return word.charAt(0).toUpperCase() + word.slice(1);
+    }).join(' ');
+
+    return `${formatted} (A2A)`;
+}
+
+async function updatePackageJson(models: string[]) {
+    const pkjPath = path.join(ROOT_DIR, 'package.json');
+    const content = await fs.readFile(pkjPath, 'utf8');
+
+    const newModels = models.map(id => ({
+        id,
+        name: formatModelName(id)
+    }));
+
+    const formattedModels = JSON.stringify(newModels, null, 2)
+        .split('\n')
+        .map((line, i) => i === 0 ? line : `    ${line}`)
+        .join('\n');
+
+    let updatedContent = content.replace(
+        /"models"\s*:\s*\[[\s\S]*?\]/,
+        `"models": ${formattedModels}`
+    );
+
+    if (updatedContent === content) {
+        if (/"opencode"\s*:\s*\{\s*\}/.test(content)) {
+            console.log('Warning: "models" array not found. Injecting a new "models" entry into empty "opencode" structure.');
+            updatedContent = content.replace(
+                /"opencode"\s*:\s*\{\s*\}/,
+                `"opencode": {\n    "models": ${formattedModels}\n  }`
+            );
+        } else if (/"opencode"\s*:\s*\{/.test(content)) {
+            console.log('Warning: "models" array not found. Injecting a new "models" entry into "opencode" structure.');
+            updatedContent = content.replace(
+                /"opencode"\s*:\s*\{/,
+                `"opencode": {\n    "models": ${formattedModels},`
+            );
+        } else {
+            console.error('Error: Unexpected package.json structure. Could not find "models" array or "opencode" object to update.');
+            process.exit(1);
+        }
+    }
+
+    await fs.writeFile(pkjPath, updatedContent);
+    console.log(`Updated package.json with ${newModels.length} models.`);
+}
+
+async function main() {
+    try {
+        const models = await fetchModels();
+        console.log('Detected valid models:', models);
+        await updatePackageJson(models);
+        console.log('Successfully synchronized models with Gemini CLI.');
+    } catch (err) {
+        console.error('Error syncing models:', err);
+        process.exit(1);
+    }
+}
+
+main();
