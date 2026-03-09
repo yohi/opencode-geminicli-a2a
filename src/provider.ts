@@ -63,6 +63,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
      * 並行リクエスト時の状態の競合を避けるため、呼び出し元は必ず一意の sessionId を指定してください。
      */
     async doStream(options: LanguageModelV1CallOptions) {
+        console.error('[opencode-geminicli-a2a] doStream called for model:', this.modelId);
         let sessionId: string | undefined = undefined;
         const opencodeMetadata = options.providerMetadata?.opencode;
 
