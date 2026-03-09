@@ -5,7 +5,12 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
 
-const MODELS_URL = 'https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/config/models.ts';
+const MODEL_REF = process.env.MODEL_REF || process.argv[2] || 'main';
+if (!MODEL_REF.trim()) {
+    console.error('Error: MODEL_REF cannot be empty');
+    process.exit(1);
+}
+const MODELS_URL = `https://raw.githubusercontent.com/google-gemini/gemini-cli/${MODEL_REF}/packages/core/src/config/models.ts`;
 
 async function fetchModels() {
     console.log(`Fetching models from ${MODELS_URL}...`);
@@ -32,9 +37,13 @@ async function fetchModels() {
     }
 
     // Extracts the constant names from the Set
-    const varNames = validMatch[1].split(',')
+    const varNames = validMatch[1]
+        .split('\n')
+        .map(s => s.replace(/\/\/.*$/, '').trim()) // Ignore inline comments
+        .join(',')
+        .split(',')
         .map(s => s.trim())
-        .filter(s => s && !s.startsWith('//')); // Ignore comments and empty lines
+        .filter(s => s !== ''); // Ignore empty entries
 
     const validModels: string[] = [];
     for (const varName of varNames) {
@@ -42,7 +51,8 @@ async function fetchModels() {
         if (val) {
             validModels.push(val);
         } else {
-            console.warn(`Warning: Could not find resolved value for constant ${varName}`);
+            console.error(`Error: Could not find resolved value for constant ${varName}`);
+            process.exit(1);
         }
     }
 
@@ -69,17 +79,23 @@ function formatModelName(id: string): string {
 async function updatePackageJson(models: string[]) {
     const pkjPath = path.join(ROOT_DIR, 'package.json');
     const content = await fs.readFile(pkjPath, 'utf8');
-    const pkg = JSON.parse(content);
 
     const newModels = models.map(id => ({
         id,
         name: formatModelName(id)
     }));
 
-    pkg.opencode = pkg.opencode || {};
-    pkg.opencode.models = newModels;
+    const formattedModels = JSON.stringify(newModels, null, 2)
+        .split('\n')
+        .map((line, i) => i === 0 ? line : `    ${line}`)
+        .join('\n');
 
-    await fs.writeFile(pkjPath, JSON.stringify(pkg, null, 2) + '\n');
+    const updatedContent = content.replace(
+        /"models"\s*:\s*\[[\s\S]*?\]/,
+        `"models": ${formattedModels}`
+    );
+
+    await fs.writeFile(pkjPath, updatedContent);
     console.log(`Updated package.json with ${newModels.length} models.`);
 }
 
