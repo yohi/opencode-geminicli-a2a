@@ -52,8 +52,7 @@ async function fetchModels() {
         if (val) {
             validModels.push(val);
         } else {
-            console.error(`Error: Could not find resolved value for constant ${varName}`);
-            process.exit(1);
+            throw new Error(`Could not find resolved value for constant ${varName}`);
         }
     }
 
@@ -97,7 +96,13 @@ async function updatePackageJson(models: string[]) {
     );
 
     if (updatedContent === content) {
-        if (/"opencode"\s*:\s*\{/.test(content)) {
+        if (/"opencode"\s*:\s*\{\s*\}/.test(content)) {
+            console.log('Warning: "models" array not found. Injecting a new "models" entry into empty "opencode" structure.');
+            updatedContent = content.replace(
+                /"opencode"\s*:\s*\{\s*\}/,
+                `"opencode": {\n    "models": ${formattedModels}\n  }`
+            );
+        } else if (/"opencode"\s*:\s*\{/.test(content)) {
             console.log('Warning: "models" array not found. Injecting a new "models" entry into "opencode" structure.');
             updatedContent = content.replace(
                 /"opencode"\s*:\s*\{/,
