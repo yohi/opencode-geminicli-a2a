@@ -2,11 +2,10 @@ import type { ProviderV1, EmbeddingModelV1 } from '@ai-sdk/provider';
 import { OpenCodeGeminiA2AProvider } from './provider';
 import type { OpenCodeProviderOptions } from './config';
 
-export * from './a2a-client';
-export * from './config';
-export * from './schemas';
-export * from './provider';
-export * from './session';
+// ファイルが読み込まれた瞬間にログを出力（最優先）
+console.error('[opencode-geminicli-a2a] PLUGIN SCRIPT LOADED');
+
+export { createGeminiA2AProvider };
 
 /**
  * OpenCode Gemini CLI A2A Provider を生成するファクトリ関数
@@ -22,7 +21,10 @@ export interface GeminiA2AProvider extends ProviderV1 {
     languageModel(modelId: string, settings?: Partial<OpenCodeProviderOptions>): OpenCodeGeminiA2AProvider;
 }
 
-export function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2AProvider {
+function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2AProvider {
+    // 起動確認用のログ（標準エラー出力に出るはずです）
+    console.error(`[opencode-geminicli-a2a] Provider factory called with options: ${JSON.stringify(options)}`);
+    
     const createModel = (modelId: string, settings?: Partial<OpenCodeProviderOptions>) => {
         const sanitizedSettings = Object.fromEntries(
             Object.entries(settings ?? {}).filter(([_, v]) => v !== undefined)
@@ -30,15 +32,26 @@ export function createGeminiA2AProvider(options?: OpenCodeProviderOptions): Gemi
         return new OpenCodeGeminiA2AProvider(modelId, { ...options, ...sanitizedSettings });
     };
 
-    const provider = function geminicliA2A(modelId: string, settings?: Partial<OpenCodeProviderOptions>) {
+    const providerInstance = function geminicliA2A(modelId: string, settings?: Partial<OpenCodeProviderOptions>) {
         return createModel(modelId, settings);
     };
 
-    return Object.assign(provider, {
+    return Object.assign(providerInstance, {
         providerId: 'opencode-geminicli-a2a',
+        id: 'opencode-geminicli-a2a',
+        // AI SDK / OpenCode が OpenAI 互換として扱おうとした場合のフォールバック
+        baseURL: 'http://127.0.0.1:41242/',
         languageModel: createModel,
         textEmbeddingModel: (_modelId: string): EmbeddingModelV1<string> => {
             throw new Error('textEmbeddingModel is not supported by opencode-geminicli-a2a provider');
         },
     }) satisfies GeminiA2AProvider;
 }
+
+/**
+ * OpenCode 向けの互換エクスポート
+ */
+export const createProvider = createGeminiA2AProvider;
+export const provider = createGeminiA2AProvider();
+export const opencodeGeminicliA2a = provider;
+export default createGeminiA2AProvider;
