@@ -1,6 +1,52 @@
 import type { ProviderV1, EmbeddingModelV1 } from '@ai-sdk/provider';
+import fs from 'node:fs';
 import { OpenCodeGeminiA2AProvider } from './provider';
 import { type OpenCodeProviderOptions } from './config';
+
+function getAvailableModels(): Record<string, { id: string; name: string }> {
+    const defaultModels = {
+        'gemini-3-pro-preview': { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview (A2A)' },
+        'gemini-3.1-pro-preview': { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview (A2A)' },
+        'gemini-3.1-pro-preview-customtools': { id: 'gemini-3.1-pro-preview-customtools', name: 'Gemini 3.1 Pro Preview Custom Tools (A2A)' },
+        'gemini-3-flash-preview': { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview (A2A)' },
+        'gemini-2.5-pro': { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (A2A)' },
+        'gemini-2.5-flash': { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (A2A)' },
+        'gemini-2.5-flash-lite': { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite (A2A)' },
+    };
+
+    try {
+        let modelsConfig: any;
+
+        if (process.env['OPENCODE_A2A_MODELS']) {
+            modelsConfig = JSON.parse(process.env['OPENCODE_A2A_MODELS']);
+        } else if (process.env['OPENCODE_A2A_MODELS_PATH']) {
+            if (fs.existsSync(process.env['OPENCODE_A2A_MODELS_PATH'])) {
+                modelsConfig = JSON.parse(fs.readFileSync(process.env['OPENCODE_A2A_MODELS_PATH'], 'utf8'));
+            }
+        }
+
+        if (modelsConfig && typeof modelsConfig === 'object') {
+            const parsedModels: Record<string, { id: string; name: string }> = {};
+            for (const [key, value] of Object.entries(modelsConfig)) {
+                if (value && typeof value === 'object' && 'id' in value && 'name' in value) {
+                    parsedModels[key] = {
+                        id: String((value as any).id),
+                        name: String((value as any).name)
+                    };
+                }
+            }
+            if (Object.keys(parsedModels).length > 0) {
+                return parsedModels;
+            }
+        }
+    } catch (err) {
+        if (process.env['DEBUG_OPENCODE']) {
+            console.error('[opencode-geminicli-a2a] Failed to load custom models configuration; using default models.', err);
+        }
+    }
+
+    return defaultModels;
+}
 
 if (process.env['NODE_ENV'] !== 'production' && process.env['DEBUG_OPENCODE']) {
     console.log('[opencode-geminicli-a2a] PLUGIN SCRIPT LOADED');
@@ -49,15 +95,7 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
             return new OpenCodeGeminiA2AProvider(modelId, { ...options, ...sanitizedSettings });
         };
 
-        const models = {
-            'gemini-3-pro-preview': { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview (A2A)' },
-            'gemini-3.1-pro-preview': { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview (A2A)' },
-            'gemini-3.1-pro-preview-customtools': { id: 'gemini-3.1-pro-preview-customtools', name: 'Gemini 3.1 Pro Preview Custom Tools (A2A)' },
-            'gemini-3-flash-preview': { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview (A2A)' },
-            'gemini-2.5-pro': { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (A2A)' },
-            'gemini-2.5-flash': { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (A2A)' },
-            'gemini-2.5-flash-lite': { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite (A2A)' },
-        };
+        const models = getAvailableModels();
 
         // createModel を直接呼び出し可能なプロバイダー関数として使用し、
         // プロパティを付与して ProviderV1 互換にする。
@@ -121,6 +159,8 @@ let _providerInstance: GeminiA2AProvider | undefined;
 export function initProvider(config?: OpenCodeProviderOptions): GeminiA2AProvider {
     if (!_providerInstance) {
         _providerInstance = createGeminiA2AProvider(config);
+    } else if (config !== undefined && !!process.env['DEBUG_OPENCODE']) {
+        console.log('[opencode-geminicli-a2a] initProvider called with new config while _providerInstance already exists. The new config will be ignored.');
     }
     return _providerInstance;
 }
