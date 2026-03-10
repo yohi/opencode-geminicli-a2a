@@ -5,6 +5,7 @@ import {
     isQuotaErrorMessage,
     getNextFallbackModel,
     resolveFallbackConfig,
+    setAllowedVendorQuotaCodes,
     type FallbackConfig,
 } from './fallback';
 
@@ -65,13 +66,29 @@ describe('isQuotaError', () => {
             const error = new Error('Connection refused');
             expect(isQuotaError(error)).toBe(false);
         });
+
+        it('汎用Errorにcodeプロパティがあり設定したベンダーコードと一致する場合はクォータエラーになる', () => {
+            setAllowedVendorQuotaCodes([-32050, -32051]);
+            const error = new Error('Unknown server failure');
+            (error as any).code = -32051;
+            expect(isQuotaError(error)).toBe(true);
+            setAllowedVendorQuotaCodes([]); // reset
+        });
     });
 
     describe('JSON-RPC エラーオブジェクトの場合', () => {
         it('プロバイダ固有のallowlistに含まれないコードはクォータエラーではない', () => {
+            setAllowedVendorQuotaCodes([-32051]);
             const error = { code: -32050, message: 'Server error' };
-            // 現在 ALLOWED_VENDOR_QUOTA_CODES は空なので、コードのみではfalseになる
             expect(isQuotaError(error)).toBe(false);
+            setAllowedVendorQuotaCodes([]); // reset
+        });
+
+        it('プロバイダ固有のallowlistに含まれるコードはクォータエラーになる', () => {
+            setAllowedVendorQuotaCodes([-32050]);
+            const error = { code: -32050, message: 'Server error' };
+            expect(isQuotaError(error)).toBe(true);
+            setAllowedVendorQuotaCodes([]); // reset
         });
 
         it('メッセージが一致する場合はクォータエラー', () => {
@@ -167,6 +184,15 @@ describe('getNextFallbackModel', () => {
         expect(getNextFallbackModel('current-model', sameConfig)).toBe('fallback-model');
     });
 
+    it('現在のモデルと同じモデルがチェーンにある場合はスキップして次を返す', () => {
+        const dupConfig: FallbackConfig = {
+            enabled: true,
+            fallbackChain: ['model-a', 'model-a', 'model-b'],
+        };
+        // resolveFallbackConfigで重複排除されていなくても、ループ内のガードでスキップされる
+        expect(getNextFallbackModel('model-a', dupConfig)).toBe('model-b');
+    });
+
     describe('レジストリが指定されている場合', () => {
         it('レジストリに存在しないモデルをスキップし、存在するモデルを返す', () => {
             const mockRegistry = {
@@ -234,5 +260,13 @@ describe('resolveFallbackConfig', () => {
     it('fallbackChain 未指定時は空配列がデフォルト', () => {
         const result = resolveFallbackConfig({ enabled: true });
         expect(result!.fallbackChain).toEqual([]);
+    });
+
+    it('fallbackChain に重複がある場合は一意にして返す', () => {
+        const result = resolveFallbackConfig({ 
+            enabled: true,
+            fallbackChain: ['model-a', 'model-a', 'model-b', 'model-a']
+        });
+        expect(result!.fallbackChain).toEqual(['model-a', 'model-b']);
     });
 });

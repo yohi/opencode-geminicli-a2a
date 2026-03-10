@@ -36,9 +36,19 @@ const DEFAULT_QUOTA_PATTERNS = [
 ];
 
 /** 特定のベンダー固有クォータエラーとみなすJSON-RPCエラーコード（allowlist） */
-const ALLOWED_VENDOR_QUOTA_CODES = new Set<number>([
+export const ALLOWED_VENDOR_QUOTA_CODES = new Set<number>([
     // ベンダー固有のエラーコードが必要な場合はここに追加
 ]);
+
+/**
+ * ベンダー固有のクォータエラーコード（allowlist）を設定する。
+ */
+export function setAllowedVendorQuotaCodes(codes: number[]): void {
+    ALLOWED_VENDOR_QUOTA_CODES.clear();
+    for (const code of codes) {
+        ALLOWED_VENDOR_QUOTA_CODES.add(code);
+    }
+}
 
 /**
  * エラーがクォータ関連のエラーか判定する。
@@ -49,44 +59,36 @@ const ALLOWED_VENDOR_QUOTA_CODES = new Set<number>([
  * - JSON-RPC エラーコードが特定のベンダー固有のクォータエラーコード（allowlist）に含まれる
  */
 export function isQuotaError(error: unknown, config?: FallbackConfig): boolean {
-    // 1. APICallError の場合
+    let statusCode: number | undefined;
+    let message: string | undefined;
+    let code: number | undefined;
+    let responseBody: string | undefined;
+
+    // 1. エラーオブジェクトの正規化
     if (error instanceof APICallError) {
-        // HTTP 429
-        if (error.statusCode === 429) return true;
-
-        // レスポンスボディのパターンマッチ
-        if (error.responseBody && isQuotaErrorMessage(error.responseBody, config)) {
-            return true;
+        statusCode = error.statusCode;
+        message = error.message;
+        if (typeof error.responseBody === 'string') {
+            responseBody = error.responseBody;
         }
-
-        // エラーメッセージのパターンマッチ
-        if (isQuotaErrorMessage(error.message, config)) {
-            return true;
+    } else if (error instanceof Error) {
+        message = error.message;
+        if ('code' in error && typeof (error as any).code === 'number') {
+            code = (error as any).code;
         }
-
-        return false;
+    } else if (error && typeof error === 'object') {
+        const record = error as Record<string, unknown>;
+        if (typeof record.message === 'string') message = record.message;
+        if (typeof record.code === 'number') code = record.code;
+    } else if (typeof error === 'string') {
+        message = error;
     }
 
-    // 2. 汎用 Error の場合
-    if (error instanceof Error) {
-        return isQuotaErrorMessage(error.message, config);
-    }
-
-    // 3. JSON-RPC エラーオブジェクトの場合
-    if (error && typeof error === 'object' && 'code' in error) {
-        const code = (error as Record<string, unknown>).code;
-        const message = (error as Record<string, unknown>).message;
-
-        if (typeof message === 'string' && isQuotaErrorMessage(message, config)) {
-            return true;
-        }
-
-        if (typeof code === 'number' && ALLOWED_VENDOR_QUOTA_CODES.has(code)) {
-            return true;
-        }
-
-        return false;
-    }
+    // 2. 正規化されたデータに基づく判定
+    if (statusCode === 429) return true;
+    if (responseBody && isQuotaErrorMessage(responseBody, config)) return true;
+    if (message && isQuotaErrorMessage(message, config)) return true;
+    if (code !== undefined && ALLOWED_VENDOR_QUOTA_CODES.has(code)) return true;
 
     return false;
 }
@@ -138,6 +140,12 @@ export function getNextFallbackModel(
         iterations++;
         const nextModelId = chain[searchIndex];
 
+        // 念のため、次のモデルが現在のモデルと同じ場合はスキップ
+        if (nextModelId === currentModelId) {
+            searchIndex++;
+            continue;
+        }
+
         // レジストリが指定されている場合、モデルの存在を確認
         if (registry) {
             const model = registry.getModel(nextModelId);
@@ -178,7 +186,8 @@ export function resolveFallbackConfig(config?: Partial<FallbackConfig>): Fallbac
 
     return {
         enabled: true,
-        fallbackChain: config.fallbackChain ?? [],
+        // 重複エントリを除外する
+        fallbackChain: config.fallbackChain ? Array.from(new Set(config.fallbackChain)) : [],
         quotaErrorPatterns: config.quotaErrorPatterns,
         maxRetries: config.maxRetries ?? 2,
     };
