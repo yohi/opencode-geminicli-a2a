@@ -15,7 +15,7 @@ export interface ExtendedFinishPart {
     rawState?: string;
 }
 
-export type ExtendedStreamPart = LanguageModelV1StreamPart | ExtendedFinishPart;
+export type ExtendedStreamPart = LanguageModelV1StreamPart | ExtendedFinishPart | FileStreamPart;
 
 // AI SDK v1 の LanguageModelV1StreamPart に含まれる file 型
 export interface FileStreamPart {
@@ -432,6 +432,9 @@ export class A2AStreamMapper {
                         }
                         continue;
                     } else if (p.kind === 'image') {
+                        // マルチモーダルパーツは text の working 状態以外でも処理する。
+                        // ツール呼び出し時(tool_calls)や入力要求時(input-required)等に、
+                        // 現在のコンテキストとしての画像データをストリームに流す必要があるため。
                         // A2A レスポンスの画像パーツを AI SDK の file パーツに変換
                         const imageData = (p as any).image;
                         if (imageData && (imageData.bytes || imageData.uri)) {
@@ -447,6 +450,7 @@ export class A2AStreamMapper {
                             console.warn('[A2A mapper] Received image part without bytes or uri. Skipping.');
                         }
                     } else if (p.kind === 'file') {
+                        // 画像と同様に、マルチモーダルパーツは working 状態以外でも処理する。
                         // A2A レスポンスのファイルパーツを AI SDK の file パーツに変換
                         const fileData = (p as any).file;
                         if (fileData && (fileData.fileWithBytes || fileData.uri)) {
