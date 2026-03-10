@@ -1,7 +1,10 @@
 import type { ProviderV1, EmbeddingModelV1 } from '@ai-sdk/provider';
 import fs from 'node:fs';
-import { OpenCodeGeminiA2AProvider, sharedSessionStore } from './provider';
+import { OpenCodeGeminiA2AProvider } from './provider';
+import { InMemorySessionStore } from './session';
 import { type OpenCodeProviderOptions } from './config';
+
+export const sharedSessionStore = new InMemorySessionStore();
 
 function getAvailableModels(): Record<string, { id: string; name: string }> {
     const defaultModels = {
@@ -105,10 +108,14 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
         const sessionStore = options?.sessionStore ?? sharedSessionStore;
 
         const createModel = (modelId: string, settings?: any) => {
+            const { sessionStore: modelSessionStore, ...restSettings } = settings ?? {};
+            if (modelSessionStore && modelSessionStore !== sessionStore) {
+                throw new Error('Conflicting session stores detected: Per-model sessionStore overrides are not permitted. Please configure the sessionStore at the provider level.');
+            }
             const sanitizedSettings = Object.fromEntries(
-                Object.entries(settings ?? {}).filter(([_, v]) => v !== undefined)
+                Object.entries(restSettings).filter(([_, v]) => v !== undefined)
             );
-            return new OpenCodeGeminiA2AProvider(modelId, { ...options, ...sanitizedSettings });
+            return new OpenCodeGeminiA2AProvider(modelId, { ...options, sessionStore, ...sanitizedSettings });
         };
 
         const models = getAvailableModels();

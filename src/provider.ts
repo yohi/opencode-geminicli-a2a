@@ -11,8 +11,6 @@ import { parseA2AStream } from './utils/stream';
 import type { A2AJsonRpcRequest } from './schemas';
 import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
 
-const sharedSessionStore = new InMemorySessionStore();
-export { sharedSessionStore };
 
 export class OpenCodeGeminiA2AProvider {
     readonly specificationVersion = 'v2' as const;
@@ -43,7 +41,7 @@ export class OpenCodeGeminiA2AProvider {
             this.modelID = modelId;
             const config = resolveConfig(options);
             this.client = new A2AClient(config);
-            this.sessionStore = options?.sessionStore ?? sharedSessionStore;
+            this.sessionStore = options?.sessionStore ?? new InMemorySessionStore();
         } catch (err) {
             console.error(`[opencode-geminicli-error] ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
             throw err;
@@ -102,11 +100,12 @@ export class OpenCodeGeminiA2AProvider {
         if (opencodeMetadata?.resetContext === true && sessionId) {
             await this.sessionStore.resetSession(sessionId);
             // リセット後はセッション情報をクリアして新規コンテキストで開始
-            session.contextId = undefined;
-            session.taskId = undefined;
-            session.lastFinishReason = undefined;
+            delete session.contextId;
+            delete session.taskId;
+            delete session.lastFinishReason;
             if (process.env['DEBUG_OPENCODE']) {
-                console.log(`[opencode-geminicli-a2a] Context reset for session: ${sessionId}`);
+                const maskedId = sessionId.length > 8 ? `${sessionId.substring(0, 4)}...${sessionId.substring(sessionId.length - 4)}` : '***';
+                console.log(`[opencode-geminicli-a2a] Context reset for session: ${maskedId}`);
             }
         }
 
