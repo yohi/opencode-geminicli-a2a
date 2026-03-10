@@ -1,5 +1,4 @@
 import type {
-    LanguageModelV1,
     LanguageModelV1CallOptions,
     LanguageModelV1StreamPart,
     LanguageModelV1FunctionToolCall,
@@ -14,11 +13,16 @@ import { type SessionStore, InMemorySessionStore, type A2ASession } from './sess
 
 const sharedSessionStore = new InMemorySessionStore();
 
-export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
-    readonly specificationVersion = 'v1';
+export class OpenCodeGeminiA2AProvider {
+    readonly specificationVersion = 'v2' as const;
     readonly provider = 'opencode-geminicli-a2a';
+    readonly providerId = 'opencode-geminicli-a2a';
+    readonly providerID = 'opencode-geminicli-a2a';
+    readonly id = 'opencode-geminicli-a2a'; // プロバイダーとしてのID
+    readonly name = 'Gemini CLI (A2A)';
     readonly defaultObjectGenerationMode = undefined;
     readonly modelId: string;
+    readonly modelID: string;
 
     private client: A2AClient;
     private sessionStore: SessionStore;
@@ -30,10 +34,17 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
      * 例: `new OpenCodeGeminiA2AProvider(modelId, { sessionStore: myRedisStore })`
      */
     constructor(modelId: string, options?: OpenCodeProviderOptions) {
-        this.modelId = modelId;
-        const config = resolveConfig(options);
-        this.client = new A2AClient(config);
-        this.sessionStore = options?.sessionStore ?? sharedSessionStore;
+        try {
+            console.error(`[opencode-geminicli-a2a] Initializing model: ${modelId}`);
+            this.modelId = modelId;
+            this.modelID = modelId;
+            const config = resolveConfig(options);
+            this.client = new A2AClient(config);
+            this.sessionStore = options?.sessionStore ?? sharedSessionStore;
+        } catch (err) {
+            console.error(`[opencode-geminicli-a2a] ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
+            throw err;
+        }
     }
 
     private createA2ARequest(options: LanguageModelV1CallOptions, session: A2ASession): A2AJsonRpcRequest {
@@ -109,16 +120,98 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         const chunkGenerator = parseA2AStream(responseStream);
         const mapper = new A2AStreamMapper();
 
-        const stream = new ReadableStream<LanguageModelV1StreamPart>({
+        // v2 ストリーム変換: v1 の LanguageModelV1StreamPart を
+        // AI SDK v2 のストリームパーツ形式に変換する。
+        // OpenCode は v2 形式（text-start/text-delta(delta,id)/text-end 等）を要求。
+        let textPartCounter = 0;
+        let activeTextId: string | undefined;
+        let toolCallCounter = 0;
+
+        const stream = new ReadableStream<any>({
             start: async (controller) => {
                 try {
+                    // stream-start を送信
+                    controller.enqueue({ type: 'stream-start' });
+
                     let hasFinished = false;
                     for await (const chunk of chunkGenerator) {
                         if ('result' in chunk && chunk.result) {
                             const parts = mapper.mapResult(chunk.result);
                             for (const part of parts) {
-                                if (part.type === 'finish') hasFinished = true;
-                                controller.enqueue(part);
+                                switch (part.type) {
+                                    case 'text-delta': {
+                                        // text-start を送信（初回またはテキストパーツが変わった場合）
+                                        if (activeTextId === undefined) {
+                                            activeTextId = `text-${textPartCounter++}`;
+                                            controller.enqueue({ type: 'text-start', id: activeTextId });
+                                        }
+                                        controller.enqueue({
+                                            type: 'text-delta',
+                                            id: activeTextId,
+                                            delta: part.textDelta,
+                                        });
+                                        break;
+                                    }
+                                    case 'reasoning': {
+                                        // テキストパーツが開いていれば閉じる
+                                        if (activeTextId !== undefined) {
+                                            controller.enqueue({ type: 'text-end', id: activeTextId });
+                                            activeTextId = undefined;
+                                        }
+                                        // v2 reasoning ライフサイクル: start → delta → end
+                                        const reasoningId = `reasoning-${textPartCounter++}`;
+                                        controller.enqueue({ type: 'reasoning-start', id: reasoningId });
+                                        controller.enqueue({
+                                            type: 'reasoning-delta',
+                                            id: reasoningId,
+                                            delta: part.textDelta,
+                                        });
+                                        controller.enqueue({ type: 'reasoning-end', id: reasoningId });
+                                        break;
+                                    }
+                                    case 'tool-call': {
+                                        // テキストパーツを閉じる
+                                        if (activeTextId !== undefined) {
+                                            controller.enqueue({ type: 'text-end', id: activeTextId });
+                                            activeTextId = undefined;
+                                        }
+                                        const toolId = `tool-${toolCallCounter++}`;
+                                        controller.enqueue({
+                                            type: 'tool-input-start',
+                                            id: toolId,
+                                            toolCallId: part.toolCallId,
+                                            toolName: part.toolName,
+                                        });
+                                        controller.enqueue({
+                                            type: 'tool-input-delta',
+                                            id: toolId,
+                                            delta: part.args,
+                                        });
+                                        controller.enqueue({
+                                            type: 'tool-input-end',
+                                            id: toolId,
+                                        });
+                                        break;
+                                    }
+                                    case 'finish': {
+                                        hasFinished = true;
+                                        // テキストパーツを閉じる
+                                        if (activeTextId !== undefined) {
+                                            controller.enqueue({ type: 'text-end', id: activeTextId });
+                                            activeTextId = undefined;
+                                        }
+                                        controller.enqueue({
+                                            type: 'finish',
+                                            finishReason: part.finishReason,
+                                            usage: part.usage,
+                                        });
+                                        break;
+                                    }
+                                    default:
+                                        // 未知のパーツタイプはそのまま転送
+                                        controller.enqueue(part);
+                                        break;
+                                }
                             }
                         } else if ('error' in chunk && chunk.error) {
                             const rpcError = new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`);
@@ -145,10 +238,16 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                         }
                     }
 
+                    // テキストパーツが開いていれば閉じる
+                    if (activeTextId !== undefined) {
+                        controller.enqueue({ type: 'text-end', id: activeTextId });
+                        activeTextId = undefined;
+                    }
+
                     if (!hasFinished) {
                         controller.enqueue({
                             type: 'finish',
-                            finishReason: 'unknown',
+                            finishReason: 'stop',
                             usage: { promptTokens: 0, completionTokens: 0 },
                         });
                     }
@@ -192,7 +291,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
         let finishReason: LanguageModelV1FinishReason = 'unknown';
         const usage = { promptTokens: 0, completionTokens: 0 };
 
-        const activeToolCalls = new Map<string, { name: string; args: string }>();
+        const activeToolCalls = new Map<string, { toolCallId: string; name: string; args: string }>();
 
         try {
             while (true) {
@@ -200,23 +299,39 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                 if (done) break;
 
                 switch (value.type) {
+                    // v2 ストリームパーツ
+                    case 'stream-start':
+                    case 'text-start':
+                    case 'text-end':
+                    case 'reasoning-start':
+                    case 'reasoning-end':
+                        // ライフサイクルイベントはスキップ
+                        break;
                     case 'text-delta':
-                        text += value.textDelta;
+                        text += value.delta;
                         break;
-                    case 'reasoning':
-                        reasoning += value.textDelta;
+                    case 'reasoning-delta':
+                        reasoning += value.delta;
                         break;
-                    case 'tool-call':
-                        activeToolCalls.set(value.toolCallId, { name: value.toolName, args: value.args });
+                    case 'tool-input-start':
+                        activeToolCalls.set(value.id, { toolCallId: value.toolCallId, name: value.toolName, args: '' });
                         break;
-                    case 'tool-call-delta':
-                        if (value.toolCallId) {
-                            if (activeToolCalls.has(value.toolCallId)) {
-                                const current = activeToolCalls.get(value.toolCallId)!;
-                                current.args += value.argsTextDelta;
-                            } else {
-                                activeToolCalls.set(value.toolCallId, { name: value.toolName, args: value.argsTextDelta });
-                            }
+                    case 'tool-input-delta':
+                        if (activeToolCalls.has(value.id)) {
+                            activeToolCalls.get(value.id)!.args += value.delta;
+                        }
+                        break;
+                    case 'tool-input-end':
+                        // 完了時に toolCalls に追加
+                        if (activeToolCalls.has(value.id)) {
+                            const call = activeToolCalls.get(value.id)!;
+                            toolCalls.push({
+                                toolCallType: 'function',
+                                toolCallId: call.toolCallId,
+                                toolName: call.name,
+                                args: call.args,
+                            });
+                            activeToolCalls.delete(value.id);
                         }
                         break;
                     case 'finish':
@@ -228,16 +343,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV1 {
                         break;
                 }
             }
-
-            for (const [id, call] of activeToolCalls.entries()) {
-                toolCalls.push({
-                    toolCallType: 'function',
-                    toolCallId: id,
-                    toolName: call.name,
-                    args: call.args,
-                });
-            }
-
         } finally {
             reader.releaseLock();
         }

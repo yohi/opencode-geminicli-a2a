@@ -98,10 +98,14 @@ describe('Integration: Gemini CLI A2A Provider', () => {
             parts.push(value);
         }
 
-        expect(parts.length).toBe(3);
-        expect(parts[0]).toEqual({ type: 'text-delta', textDelta: 'Integration ' });
-        expect(parts[1]).toEqual({ type: 'text-delta', textDelta: 'success!' });
-        expect(parts[2]).toMatchObject({ type: 'finish', finishReason: 'stop' });
+        // v2 ストリーム形式: stream-start → text-start → text-delta(×2) → text-end → finish
+        expect(parts.length).toBe(6);
+        expect(parts[0]).toEqual({ type: 'stream-start' });
+        expect(parts[1]).toMatchObject({ type: 'text-start' });
+        expect(parts[2]).toMatchObject({ type: 'text-delta', delta: 'Integration ' });
+        expect(parts[3]).toMatchObject({ type: 'text-delta', delta: 'success!' });
+        expect(parts[4]).toMatchObject({ type: 'text-end' });
+        expect(parts[5]).toMatchObject({ type: 'finish', finishReason: 'stop' });
     });
 
     it('should handle generate request seamlessly', async () => {
