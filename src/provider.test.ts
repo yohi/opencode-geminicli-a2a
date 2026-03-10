@@ -49,7 +49,7 @@ describe('OpenCodeGeminiA2AProvider', () => {
     ];
 
     it('should initialize with correct metadata', () => {
-        expect(provider.specificationVersion).toBe('v1');
+        expect(provider.specificationVersion).toBe('v2');
         expect(provider.provider).toBe('opencode-geminicli-a2a');
         expect(provider.modelId).toBe(mockModelId);
     });
@@ -84,10 +84,14 @@ describe('OpenCodeGeminiA2AProvider', () => {
             parts.push(value);
         }
 
-        expect(parts.length).toBe(3);
-        expect(parts[0]).toEqual({ type: 'text-delta', textDelta: 'Hello ' });
-        expect(parts[1]).toEqual({ type: 'text-delta', textDelta: 'world' });
-        expect(parts[2]).toMatchObject({ type: 'finish', finishReason: 'stop' });
+        // v2 ストリーム形式: stream-start → text-start → text-delta(×2) → text-end → finish
+        expect(parts.length).toBe(6);
+        expect(parts[0]).toEqual({ type: 'stream-start' });
+        expect(parts[1]).toMatchObject({ type: 'text-start' });
+        expect(parts[2]).toMatchObject({ type: 'text-delta', delta: 'Hello ' });
+        expect(parts[3]).toMatchObject({ type: 'text-delta', delta: 'world' });
+        expect(parts[4]).toMatchObject({ type: 'text-end' });
+        expect(parts[5]).toMatchObject({ type: 'finish', finishReason: 'stop' });
     });
 
     it('should implement doGenerate with reasoning support', async () => {
@@ -111,6 +115,7 @@ describe('OpenCodeGeminiA2AProvider', () => {
             prompt,
         });
 
+        // v2 では reasoning-start/reasoning-delta/reasoning-end で正しく分離される
         expect(result.reasoning).toBe('[Thinking] Step 1\n');
         expect(result.text).toBe('Final answer');
         expect(result.finishReason).toBe('stop');

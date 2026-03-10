@@ -401,6 +401,9 @@ export class A2AStreamMapper {
                         }
 
                         if (textDelta) {
+                            // v2 ストリーム形式では reasoning-start/reasoning-delta/reasoning-end
+                            // がサポートされている。provider.ts の v1→v2 変換レイヤーで
+                            // 適切な v2 ライフサイクルイベントに変換される。
                             parts.push({
                                 type: 'reasoning',
                                 textDelta,
@@ -418,7 +421,9 @@ export class A2AStreamMapper {
                         finishReason = 'error';
                         break;
                     case 'input-required':
-                        finishReason = 'tool-calls';
+                        // A2A の input-required は「エージェントがユーザー入力を待っている（ターン終了）」状態。
+                        // これを tool-calls にすると OpenCode が空のツール結果を送って無限ループになるため、stop 扱いにする。
+                        finishReason = 'stop';
                         break;
                     case 'cancelled':
                     case 'timeout':
@@ -437,10 +442,13 @@ export class A2AStreamMapper {
                         finishReason = 'tool-calls';
                         break;
                     case 'stop':
+                    case 'completed':
                         finishReason = 'stop';
                         break;
                     default:
-                        finishReason = 'other';
+                        // final=true で認識できない state の場合も stop 扱い
+                        // (OpenCode は stop 以外を「未完了」と判断してリトライする)
+                        finishReason = 'stop';
                         break;
                 }
 
