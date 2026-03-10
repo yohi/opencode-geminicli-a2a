@@ -125,7 +125,7 @@ export class StaticModelRegistry implements ModelRegistry {
     private readonly initialModels?: ModelInfo[];
 
     constructor(initialModels?: ModelInfo[]) {
-        this.initialModels = initialModels;
+        this.initialModels = initialModels ? initialModels.map(model => Object.freeze({ ...model })) : undefined;
         this.resolveModels();
     }
 
