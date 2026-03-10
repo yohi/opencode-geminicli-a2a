@@ -12,6 +12,7 @@ import type { A2AJsonRpcRequest } from './schemas';
 import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
 
 const sharedSessionStore = new InMemorySessionStore();
+export { sharedSessionStore };
 
 export class OpenCodeGeminiA2AProvider {
     readonly specificationVersion = 'v2' as const;
@@ -96,6 +97,18 @@ export class OpenCodeGeminiA2AProvider {
         }
 
         const session = sessionId ? await this.sessionStore.get(sessionId) || {} : {};
+
+        // resetContext フラグの検出: 新規チャットスレッド開始時等にコンテキストをリセット
+        if (opencodeMetadata?.resetContext === true && sessionId) {
+            await this.sessionStore.resetSession(sessionId);
+            // リセット後はセッション情報をクリアして新規コンテキストで開始
+            session.contextId = undefined;
+            session.taskId = undefined;
+            session.lastFinishReason = undefined;
+            if (process.env['DEBUG_OPENCODE']) {
+                console.log(`[opencode-geminicli-a2a] Context reset for session: ${sessionId}`);
+            }
+        }
 
         const request = this.createA2ARequest(options, session);
         const idempotencyKey = (options.providerMetadata?.opencode?.idempotencyKey as string) || undefined;
@@ -198,6 +211,16 @@ export class OpenCodeGeminiA2AProvider {
                                         });
                                         break;
                                     }
+                                    case 'file': {
+                                        // テキストパーツを閉じる
+                                        if (activeTextId !== undefined) {
+                                            controller.enqueue({ type: 'text-end', id: activeTextId });
+                                            activeTextId = undefined;
+                                        }
+                                        // マルチモーダルレスポンス: file パーツをそのまま転送
+                                        controller.enqueue(part);
+                                        break;
+                                    }
                                     case 'finish': {
                                         hasFinished = true;
                                         // テキストパーツを閉じる
@@ -295,6 +318,7 @@ export class OpenCodeGeminiA2AProvider {
         let text = '';
         let reasoning = '';
         const toolCalls: LanguageModelV1FunctionToolCall[] = [];
+        const files: Array<{ data: string | Uint8Array; mimeType: string }> = [];
         let finishReason: LanguageModelV1FinishReason = 'unknown';
         const usage = { promptTokens: 0, completionTokens: 0 };
         let providerMetadata: Record<string, any> | undefined;
@@ -354,6 +378,10 @@ export class OpenCodeGeminiA2AProvider {
                         if ('inputRequired' in value) inputRequired = (value as any).inputRequired;
                         if ('rawState' in value) rawState = (value as any).rawState;
                         break;
+                    case 'file':
+                        // マルチモーダルレスポンス: file パーツを蓄積
+                        files.push({ data: value.data, mimeType: value.mimeType });
+                        break;
                 }
             }
         } finally {
@@ -364,6 +392,7 @@ export class OpenCodeGeminiA2AProvider {
             text: text.length > 0 ? text : undefined,
             reasoning: reasoning.length > 0 ? reasoning : undefined,
             toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+            files: files.length > 0 ? files : undefined,
             finishReason,
             usage,
             rawCall,

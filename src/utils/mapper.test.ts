@@ -836,5 +836,233 @@ describe('mapper', () => {
                 }
             });
         });
+        describe('multimodal response parts', () => {
+            it('should map image response part with bytes to file stream part', () => {
+                const mapper = new A2AStreamMapper();
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'image',
+                                image: { mimeType: 'image/png', bytes: 'iVBORw0KGgoAAAANSUhEUg==' }
+                            } as any]
+                        }
+                    }
+                };
+
+                const parts = mapper.mapResult(result);
+                expect(parts.length).toBe(1);
+                expect(parts[0].type).toBe('file');
+                if (parts[0].type === 'file') {
+                    expect(parts[0].mimeType).toBe('image/png');
+                    expect(parts[0].data).toBe('iVBORw0KGgoAAAANSUhEUg==');
+                }
+            });
+
+            it('should map image response part with uri to file stream part', () => {
+                const mapper = new A2AStreamMapper();
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'image',
+                                image: { uri: 'https://example.com/generated.png', mimeType: 'image/png' }
+                            } as any]
+                        }
+                    }
+                };
+
+                const parts = mapper.mapResult(result);
+                expect(parts.length).toBe(1);
+                expect(parts[0].type).toBe('file');
+                if (parts[0].type === 'file') {
+                    expect(parts[0].mimeType).toBe('image/png');
+                    expect(parts[0].data).toBe('https://example.com/generated.png');
+                }
+            });
+
+            it('should map file response part with fileWithBytes to file stream part', () => {
+                const mapper = new A2AStreamMapper();
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'file',
+                                file: { mimeType: 'application/pdf', fileWithBytes: 'JVBERi0xLjQK' }
+                            } as any]
+                        }
+                    }
+                };
+
+                const parts = mapper.mapResult(result);
+                expect(parts.length).toBe(1);
+                expect(parts[0].type).toBe('file');
+                if (parts[0].type === 'file') {
+                    expect(parts[0].mimeType).toBe('application/pdf');
+                    expect(parts[0].data).toBe('JVBERi0xLjQK');
+                }
+            });
+
+            it('should map file response part with uri to file stream part', () => {
+                const mapper = new A2AStreamMapper();
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'file',
+                                file: { mimeType: 'text/csv', uri: 'https://example.com/data.csv' }
+                            } as any]
+                        }
+                    }
+                };
+
+                const parts = mapper.mapResult(result);
+                expect(parts.length).toBe(1);
+                expect(parts[0].type).toBe('file');
+                if (parts[0].type === 'file') {
+                    expect(parts[0].mimeType).toBe('text/csv');
+                    expect(parts[0].data).toBe('https://example.com/data.csv');
+                }
+            });
+
+            it('should use default mimeType for image without mimeType', () => {
+                const mapper = new A2AStreamMapper();
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'image',
+                                image: { bytes: 'abc123' }
+                            } as any]
+                        }
+                    }
+                };
+
+                const parts = mapper.mapResult(result);
+                expect(parts.length).toBe(1);
+                if (parts[0].type === 'file') {
+                    expect(parts[0].mimeType).toBe('image/png');
+                }
+            });
+
+            it('should use default mimeType for file without mimeType', () => {
+                const mapper = new A2AStreamMapper();
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'file',
+                                file: { fileWithBytes: 'abc123' }
+                            } as any]
+                        }
+                    }
+                };
+
+                const parts = mapper.mapResult(result);
+                expect(parts.length).toBe(1);
+                if (parts[0].type === 'file') {
+                    expect(parts[0].mimeType).toBe('application/octet-stream');
+                }
+            });
+
+            it('should skip image part without bytes or uri and warn', () => {
+                const mapper = new A2AStreamMapper();
+                const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'image',
+                                image: { mimeType: 'image/png' }
+                            } as any]
+                        }
+                    }
+                };
+
+                const parts = mapper.mapResult(result);
+                expect(parts.length).toBe(0);
+                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Received image part without bytes or uri'));
+                consoleSpy.mockRestore();
+            });
+
+            it('should skip file part without fileWithBytes or uri and warn', () => {
+                const mapper = new A2AStreamMapper();
+                const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'file',
+                                file: { mimeType: 'application/pdf' }
+                            } as any]
+                        }
+                    }
+                };
+
+                const parts = mapper.mapResult(result);
+                expect(parts.length).toBe(0);
+                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Received file part without fileWithBytes or uri'));
+                consoleSpy.mockRestore();
+            });
+
+            it('should handle mixed text and image parts', () => {
+                const mapper = new A2AStreamMapper();
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [
+                                { kind: 'text', text: 'Here is the image:' },
+                                { kind: 'image', image: { mimeType: 'image/jpeg', bytes: '/9j/4AAQ==' } } as any
+                            ]
+                        }
+                    }
+                };
+
+                const parts = mapper.mapResult(result);
+                expect(parts.length).toBe(2);
+                expect(parts[0].type).toBe('text-delta');
+                expect(parts[1].type).toBe('file');
+                if (parts[1].type === 'file') {
+                    expect(parts[1].mimeType).toBe('image/jpeg');
+                    expect(parts[1].data).toBe('/9j/4AAQ==');
+                }
+            });
+        });
     });
 });

@@ -1,6 +1,6 @@
 import type { ProviderV1, EmbeddingModelV1 } from '@ai-sdk/provider';
 import fs from 'node:fs';
-import { OpenCodeGeminiA2AProvider } from './provider';
+import { OpenCodeGeminiA2AProvider, sharedSessionStore } from './provider';
 import { type OpenCodeProviderOptions } from './config';
 
 function getAvailableModels(): Record<string, { id: string; name: string }> {
@@ -72,6 +72,11 @@ export interface GeminiA2AProvider extends Omit<ProviderV1, 'languageModel' | 's
     id: string;
     specificationVersion: 'v2';
     languageModel: (modelId: string, settings?: any) => OpenCodeGeminiA2AProvider;
+    /**
+     * 指定されたセッションのコンテキスト（contextId / taskId）をリセットします。
+     * 新規チャットスレッド開始時等に使用してください。
+     */
+    resetSession: (sessionId: string) => Promise<void>;
     (modelId: string, settings?: any): OpenCodeGeminiA2AProvider;
 }
 
@@ -97,6 +102,8 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
             console.log(`[opencode-geminicli-a2a] Provider factory called with options: ${JSON.stringify(logPayload)}`);
         }
         
+        const sessionStore = options?.sessionStore ?? sharedSessionStore;
+
         const createModel = (modelId: string, settings?: any) => {
             const sanitizedSettings = Object.fromEntries(
                 Object.entries(settings ?? {}).filter(([_, v]) => v !== undefined)
@@ -118,6 +125,9 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
             languageModel: createModel,
             textEmbeddingModel: (modelId: string) => {
                 throw new Error(`Embedding model '${modelId}' is not supported by Gemini CLI (A2A).`);
+            },
+            resetSession: async (sessionId: string) => {
+                await sessionStore.resetSession(sessionId);
             },
         };
 

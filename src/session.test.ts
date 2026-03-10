@@ -54,6 +54,27 @@ describe('InMemorySessionStore', () => {
         expect(await store.get('s1')).toBeUndefined();
         expect(await store.get('s2')).toBeUndefined();
     });
+
+    it('should reset a session via resetSession', async () => {
+        await store.update('session-reset', { contextId: 'ctx-old', taskId: 'task-old', lastFinishReason: 'stop' });
+        await store.resetSession('session-reset');
+
+        expect(await store.get('session-reset')).toBeUndefined();
+    });
+
+    it('should not affect other sessions when resetting one session', async () => {
+        await store.update('keep-me', { contextId: 'ctx-keep' });
+        await store.update('reset-me', { contextId: 'ctx-reset' });
+        await store.resetSession('reset-me');
+
+        expect(await store.get('keep-me')).toEqual({ contextId: 'ctx-keep' });
+        expect(await store.get('reset-me')).toBeUndefined();
+    });
+
+    it('should handle resetSession for non-existent session gracefully', async () => {
+        // Should not throw
+        await expect(store.resetSession('non-existent')).resolves.toBeUndefined();
+    });
 });
 
 describe('InMemorySessionStore limits and expiration', () => {
