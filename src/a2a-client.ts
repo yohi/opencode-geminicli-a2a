@@ -51,7 +51,9 @@ export class A2AClient {
         }
 
         const retryCount = idempotencyKey ? 3 : 0;
-        console.error('[opencode-geminicli-a2a] Fetching URL:', this.endpoint, 'Method: POST');
+        if (process.env['DEBUG_OPENCODE']) {
+            console.log('[opencode-geminicli-a2a] Fetching URL:', this.endpoint, 'Method: POST');
+        }
 
         try {
             const response = await ofetch.raw(this.endpoint, {

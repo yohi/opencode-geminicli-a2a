@@ -36,7 +36,7 @@ export class OpenCodeGeminiA2AProvider {
     constructor(modelId: string, options?: OpenCodeProviderOptions) {
         try {
             if (process.env['DEBUG_OPENCODE']) {
-                console.debug(`[opencode-geminicli-a2a] Initializing model: ${modelId}`);
+                console.log(`[opencode-geminicli-a2a] Initializing model: ${modelId}`);
             }
             this.modelId = modelId;
             this.modelID = modelId;
@@ -77,7 +77,7 @@ export class OpenCodeGeminiA2AProvider {
      */
     async doStream(options: LanguageModelV1CallOptions) {
         if (process.env['DEBUG_OPENCODE']) {
-            console.debug('[opencode-geminicli-a2a] doStream called for model:', this.modelId);
+            console.log('[opencode-geminicli-a2a] doStream called for model:', this.modelId);
         }
         let sessionId: string | undefined = undefined;
         const opencodeMetadata = options.providerMetadata?.opencode;
@@ -128,6 +128,7 @@ export class OpenCodeGeminiA2AProvider {
         // AI SDK v2 のストリームパーツ形式に変換する。
         // OpenCode は v2 形式（text-start/text-delta(delta,id)/text-end 等）を要求。
         let textPartCounter = 0;
+        let reasoningPartCounter = 0;
         let activeTextId: string | undefined;
         let toolCallCounter = 0;
 
@@ -163,7 +164,7 @@ export class OpenCodeGeminiA2AProvider {
                                             activeTextId = undefined;
                                         }
                                         // v2 reasoning ライフサイクル: start → delta → end
-                                        const reasoningId = `reasoning-${textPartCounter++}`;
+                                        const reasoningId = `reasoning-${reasoningPartCounter++}`;
                                         controller.enqueue({ type: 'reasoning-start', id: reasoningId });
                                         controller.enqueue({
                                             type: 'reasoning-delta',

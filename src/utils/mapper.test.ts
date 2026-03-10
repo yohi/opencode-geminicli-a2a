@@ -357,7 +357,7 @@ describe('mapper', () => {
             }
         });
 
-        it('should return Number.NaN for promptTokens and completionTokens when usage is missing', () => {
+        it('should return 0 for promptTokens and completionTokens when usage is missing', () => {
             const result: A2AResponseResult = {
                 kind: 'status-update',
                 taskId: 't1',

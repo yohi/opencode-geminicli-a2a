@@ -450,6 +450,7 @@ export class A2AStreamMapper {
                     default:
                         // final=true で認識できない state の場合も stop 扱い
                         // (OpenCode は stop 以外を「未完了」と判断してリトライする)
+                        console.warn(`[A2A mapper] Unexpected final status state: '${result.status.state}' for taskId: '${result.taskId}'. Treating as 'stop'.`);
                         finishReason = 'stop';
                         break;
                 }
