@@ -17,6 +17,13 @@ export interface ExtendedFinishPart {
 
 export type ExtendedStreamPart = LanguageModelV1StreamPart | ExtendedFinishPart;
 
+// AI SDK v1 の LanguageModelV1StreamPart に含まれる file 型
+export interface FileStreamPart {
+    type: 'file';
+    mimeType: string;
+    data: string | Uint8Array;
+}
+
 
 interface ToolRequest {
     request: {
@@ -424,6 +431,35 @@ export class A2AStreamMapper {
                             });
                         }
                         continue;
+                    } else if (p.kind === 'image') {
+                        // A2A レスポンスの画像パーツを AI SDK の file パーツに変換
+                        const imageData = (p as any).image;
+                        if (imageData && (imageData.bytes || imageData.uri)) {
+                            const mimeType = imageData.mimeType || 'image/png';
+                            // bytes がある場合は base64 データとして、uri がある場合はそのまま渡す
+                            const data: string = imageData.bytes || imageData.uri;
+                            parts.push({
+                                type: 'file',
+                                mimeType,
+                                data,
+                            } as FileStreamPart);
+                        } else {
+                            console.warn('[A2A mapper] Received image part without bytes or uri. Skipping.');
+                        }
+                    } else if (p.kind === 'file') {
+                        // A2A レスポンスのファイルパーツを AI SDK の file パーツに変換
+                        const fileData = (p as any).file;
+                        if (fileData && (fileData.fileWithBytes || fileData.uri)) {
+                            const mimeType = fileData.mimeType || 'application/octet-stream';
+                            const data: string = fileData.fileWithBytes || fileData.uri;
+                            parts.push({
+                                type: 'file',
+                                mimeType,
+                                data,
+                            } as FileStreamPart);
+                        } else {
+                            console.warn('[A2A mapper] Received file part without fileWithBytes or uri. Skipping.');
+                        }
                     }
                 }
             }

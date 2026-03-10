@@ -94,7 +94,20 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
                 parts: z.array(z.object({
                     kind: z.string(),
                     text: z.string().optional(),
-                    data: z.unknown().optional()
+                    data: z.unknown().optional(),
+                    // マルチモーダル対応: A2A レスポンス内の画像パーツ
+                    image: z.object({
+                        mimeType: z.string().optional(),
+                        bytes: z.string().optional(),
+                        uri: z.string().optional()
+                    }).optional(),
+                    // マルチモーダル対応: A2A レスポンス内のファイルパーツ
+                    file: z.object({
+                        name: z.string().optional(),
+                        mimeType: z.string().optional(),
+                        fileWithBytes: z.string().optional(),
+                        uri: z.string().optional()
+                    }).optional(),
                 }))
             }).optional(),
             timestamp: z.string().optional()

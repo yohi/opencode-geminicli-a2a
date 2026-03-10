@@ -257,4 +257,57 @@ describe('A2AJsonRpcResponseSchema', () => {
         const result = A2AJsonRpcResponseSchema.safeParse(chunk);
         expect(result.success).toBe(true);
     });
+
+    it('should parse response with image part in status.message.parts', () => {
+        const chunk = {
+            jsonrpc: '2.0',
+            id: '123',
+            result: {
+                kind: 'status-update',
+                taskId: 't1',
+                status: {
+                    state: 'working',
+                    message: {
+                        parts: [{
+                            kind: 'image',
+                            image: { mimeType: 'image/png', bytes: 'iVBORw0KGgoAAAANSUhEUg==' }
+                        }]
+                    }
+                }
+            }
+        };
+        const result = A2AJsonRpcResponseSchema.safeParse(chunk);
+        expect(result.success).toBe(true);
+        if (result.success) {
+            const statusUpdate = result.data.result as any;
+            expect(statusUpdate.status.message.parts[0].image.bytes).toBe('iVBORw0KGgoAAAANSUhEUg==');
+        }
+    });
+
+    it('should parse response with file part in status.message.parts', () => {
+        const chunk = {
+            jsonrpc: '2.0',
+            id: '123',
+            result: {
+                kind: 'status-update',
+                taskId: 't1',
+                status: {
+                    state: 'working',
+                    message: {
+                        parts: [{
+                            kind: 'file',
+                            file: { mimeType: 'application/pdf', fileWithBytes: 'JVBERi0xLjQK', name: 'report.pdf' }
+                        }]
+                    }
+                }
+            }
+        };
+        const result = A2AJsonRpcResponseSchema.safeParse(chunk);
+        expect(result.success).toBe(true);
+        if (result.success) {
+            const statusUpdate = result.data.result as any;
+            expect(statusUpdate.status.message.parts[0].file.fileWithBytes).toBe('JVBERi0xLjQK');
+            expect(statusUpdate.status.message.parts[0].file.name).toBe('report.pdf');
+        }
+    });
 });

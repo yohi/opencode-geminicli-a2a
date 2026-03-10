@@ -120,4 +120,60 @@ describe('OpenCodeGeminiA2AProvider', () => {
         expect(result.text).toBe('Final answer');
         expect(result.finishReason).toBe('stop');
     });
+
+    it('should reset context when resetContext flag is set in providerMetadata', async () => {
+        const sseChunks = [
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t-new", "contextId":"ctx-new", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"New context response"}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t-new", "final":true, "status":{"state":"stop"}}}\n\n',
+        ];
+
+        const mockResponse = {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'text/event-stream' }),
+            _data: createMockStream(sseChunks),
+        };
+        vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
+
+        await provider.doStream({
+            inputFormat: 'messages',
+            mode: { type: 'regular' },
+            prompt,
+            providerMetadata: {
+                opencode: { sessionId: 'test-session-reset', resetContext: true }
+            }
+        });
+
+        // Verify the A2A request was sent WITHOUT contextId/taskId (reset cleared them)
+        const requestBody = vi.mocked(ofetch.raw).mock.calls[0][1]?.body as any;
+        expect(requestBody.params.contextId).toBeUndefined();
+        expect(requestBody.params.taskId).toBeUndefined();
+    });
+
+    it('should not reset context when resetContext flag is absent', async () => {
+        const sseChunks = [
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"Response"}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "final":true, "status":{"state":"stop"}}}\n\n',
+        ];
+
+        const mockResponse = {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'text/event-stream' }),
+            _data: createMockStream(sseChunks),
+        };
+        vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
+
+        await provider.doStream({
+            inputFormat: 'messages',
+            mode: { type: 'regular' },
+            prompt,
+            providerMetadata: {
+                opencode: { sessionId: 'test-session-no-reset' }
+            }
+        });
+
+        // No error, normal operation
+        expect(vi.mocked(ofetch.raw)).toHaveBeenCalled();
+    });
 });
