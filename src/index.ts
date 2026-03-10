@@ -1,7 +1,14 @@
 import type { ProviderV1, EmbeddingModelV1 } from '@ai-sdk/provider';
 import fs from 'node:fs';
 import { OpenCodeGeminiA2AProvider } from './provider';
+import { InMemorySessionStore } from './session';
 import { type OpenCodeProviderOptions } from './config';
+
+/**
+ * @note これはプロセス内シングルトンであり、サーバレスやマルチプロセス環境では
+ * プロセス間で状態を共有しないため外部セッションストアを使う必要があります。
+ */
+export const sharedSessionStore = new InMemorySessionStore();
 
 function getAvailableModels(): Record<string, { id: string; name: string }> {
     const defaultModels = {
@@ -72,6 +79,11 @@ export interface GeminiA2AProvider extends Omit<ProviderV1, 'languageModel' | 's
     id: string;
     specificationVersion: 'v2';
     languageModel: (modelId: string, settings?: any) => OpenCodeGeminiA2AProvider;
+    /**
+     * 指定されたセッションのコンテキスト（contextId / taskId）をリセットします。
+     * 新規チャットスレッド開始時等に使用してください。
+     */
+    resetSession: (sessionId: string) => Promise<void>;
     (modelId: string, settings?: any): OpenCodeGeminiA2AProvider;
 }
 
@@ -97,11 +109,17 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
             console.log(`[opencode-geminicli-a2a] Provider factory called with options: ${JSON.stringify(logPayload)}`);
         }
         
+        const sessionStore = options?.sessionStore ?? sharedSessionStore;
+
         const createModel = (modelId: string, settings?: any) => {
+            const { sessionStore: modelSessionStore, ...restSettings } = settings ?? {};
+            if (modelSessionStore && modelSessionStore !== sessionStore) {
+                throw new Error('Conflicting session stores detected: Per-model sessionStore overrides are not permitted. Please configure the sessionStore at the provider level.');
+            }
             const sanitizedSettings = Object.fromEntries(
-                Object.entries(settings ?? {}).filter(([_, v]) => v !== undefined)
+                Object.entries(restSettings).filter(([_, v]) => v !== undefined)
             );
-            return new OpenCodeGeminiA2AProvider(modelId, { ...options, ...sanitizedSettings });
+            return new OpenCodeGeminiA2AProvider(modelId, { ...options, sessionStore, ...sanitizedSettings });
         };
 
         const models = getAvailableModels();
@@ -118,6 +136,9 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
             languageModel: createModel,
             textEmbeddingModel: (modelId: string) => {
                 throw new Error(`Embedding model '${modelId}' is not supported by Gemini CLI (A2A).`);
+            },
+            resetSession: async (sessionId: string) => {
+                await sessionStore.resetSession(sessionId);
             },
         };
 

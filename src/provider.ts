@@ -11,7 +11,6 @@ import { parseA2AStream } from './utils/stream';
 import type { A2AJsonRpcRequest } from './schemas';
 import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
 
-const sharedSessionStore = new InMemorySessionStore();
 
 export class OpenCodeGeminiA2AProvider {
     readonly specificationVersion = 'v2' as const;
@@ -42,7 +41,7 @@ export class OpenCodeGeminiA2AProvider {
             this.modelID = modelId;
             const config = resolveConfig(options);
             this.client = new A2AClient(config);
-            this.sessionStore = options?.sessionStore ?? sharedSessionStore;
+            this.sessionStore = options?.sessionStore ?? new InMemorySessionStore();
         } catch (err) {
             console.error(`[opencode-geminicli-error] ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
             throw err;
@@ -96,6 +95,19 @@ export class OpenCodeGeminiA2AProvider {
         }
 
         const session = sessionId ? await this.sessionStore.get(sessionId) || {} : {};
+
+        // resetContext フラグの検出: 新規チャットスレッド開始時等にコンテキストをリセット
+        if (opencodeMetadata?.resetContext === true && sessionId) {
+            await this.sessionStore.resetSession(sessionId);
+            // リセット後はセッション情報をクリアして新規コンテキストで開始
+            delete session.contextId;
+            delete session.taskId;
+            delete session.lastFinishReason;
+            if (process.env['DEBUG_OPENCODE']) {
+                const maskedId = sessionId.length > 8 ? `${sessionId.substring(0, 4)}...${sessionId.substring(sessionId.length - 4)}` : '***';
+                console.log(`[opencode-geminicli-a2a] Context reset for session: ${maskedId}`);
+            }
+        }
 
         const request = this.createA2ARequest(options, session);
         const idempotencyKey = (options.providerMetadata?.opencode?.idempotencyKey as string) || undefined;
@@ -198,6 +210,16 @@ export class OpenCodeGeminiA2AProvider {
                                         });
                                         break;
                                     }
+                                    case 'file': {
+                                        // テキストパーツを閉じる
+                                        if (activeTextId !== undefined) {
+                                            controller.enqueue({ type: 'text-end', id: activeTextId });
+                                            activeTextId = undefined;
+                                        }
+                                        // マルチモーダルレスポンス: file パーツをそのまま転送
+                                        controller.enqueue(part);
+                                        break;
+                                    }
                                     case 'finish': {
                                         hasFinished = true;
                                         // テキストパーツを閉じる
@@ -295,6 +317,7 @@ export class OpenCodeGeminiA2AProvider {
         let text = '';
         let reasoning = '';
         const toolCalls: LanguageModelV1FunctionToolCall[] = [];
+        const files: Array<{ data: string | Uint8Array; mimeType: string }> = [];
         let finishReason: LanguageModelV1FinishReason = 'unknown';
         const usage = { promptTokens: 0, completionTokens: 0 };
         let providerMetadata: Record<string, any> | undefined;
@@ -354,6 +377,12 @@ export class OpenCodeGeminiA2AProvider {
                         if ('inputRequired' in value) inputRequired = (value as any).inputRequired;
                         if ('rawState' in value) rawState = (value as any).rawState;
                         break;
+                    case 'file': {
+                        // マルチモーダルレスポンス: file パーツを蓄積
+                        const filePart = value as import('./utils/mapper').FileStreamPart;
+                        files.push({ data: filePart.data, mimeType: filePart.mimeType });
+                        break;
+                    }
                 }
             }
         } finally {
@@ -364,6 +393,7 @@ export class OpenCodeGeminiA2AProvider {
             text: text.length > 0 ? text : undefined,
             reasoning: reasoning.length > 0 ? reasoning : undefined,
             toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+            files: files.length > 0 ? files : undefined,
             finishReason,
             usage,
             rawCall,

@@ -120,4 +120,84 @@ describe('OpenCodeGeminiA2AProvider', () => {
         expect(result.text).toBe('Final answer');
         expect(result.finishReason).toBe('stop');
     });
+
+    it('should reset context when resetContext flag is set in providerMetadata', async () => {
+        const sseChunks = [
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t-new", "contextId":"ctx-new", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"New context response"}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t-new", "final":true, "status":{"state":"stop"}}}\n\n',
+        ];
+
+        const mockResponse = {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'text/event-stream' }),
+            _data: createMockStream(sseChunks),
+        };
+        vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
+
+        // Seed a session with context
+        await provider['sessionStore'].update('test-session-reset', { contextId: 'old-ctx', taskId: 'old-task' });
+
+        const { stream } = await provider.doStream({
+            inputFormat: 'messages',
+            mode: { type: 'regular' },
+            prompt,
+            providerMetadata: {
+                opencode: { sessionId: 'test-session-reset', resetContext: true }
+            }
+        });
+
+        const reader = stream.getReader();
+        while (true) {
+            const { done } = await reader.read();
+            if (done) break;
+        }
+
+        // Verify the A2A request was sent WITHOUT contextId/taskId (reset cleared them)
+        expect(vi.mocked(ofetch.raw)).toHaveBeenCalledTimes(1);
+        const requestBody = vi.mocked(ofetch.raw).mock.calls[0][1]?.body as any;
+        const parsedBody = typeof requestBody === 'string' ? JSON.parse(requestBody) : requestBody;
+        expect(parsedBody.params.contextId).toBeUndefined();
+        expect(parsedBody.params.taskId).toBeUndefined();
+    });
+
+    it('should not reset context when resetContext flag is absent', async () => {
+        const sseChunks = [
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "status":{"state":"working", "message":{"parts":[{"kind":"text", "text":"Response"}]}}}}\n\n',
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "final":true, "status":{"state":"stop"}}}\n\n',
+        ];
+
+        const mockResponse = {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'text/event-stream' }),
+            _data: createMockStream(sseChunks),
+        };
+        vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
+
+        // Seed a session with context
+        await provider['sessionStore'].update('test-session-no-reset', { contextId: 'existing-ctx', taskId: 'existing-task', lastFinishReason: 'tool-calls' });
+
+        const { stream } = await provider.doStream({
+            inputFormat: 'messages',
+            mode: { type: 'regular' },
+            prompt,
+            providerMetadata: {
+                opencode: { sessionId: 'test-session-no-reset' }
+            }
+        });
+
+        const reader = stream.getReader();
+        while (true) {
+            const { done } = await reader.read();
+            if (done) break;
+        }
+
+        // Verify it retained context
+        expect(vi.mocked(ofetch.raw)).toHaveBeenCalledTimes(1);
+        const requestBody2 = vi.mocked(ofetch.raw).mock.calls[0][1]?.body as any;
+        const parsedBody2 = typeof requestBody2 === 'string' ? JSON.parse(requestBody2) : requestBody2;
+        expect(parsedBody2.params.contextId).toBe('existing-ctx');
+        expect(parsedBody2.params.taskId).toBe('existing-task');
+    });
 });
