@@ -46,7 +46,7 @@ const ALLOWED_VENDOR_QUOTA_CODES = new Set<number>([
  * 以下の条件のいずれかに該当する場合にクォータエラーとみなす:
  * - HTTP 429 ステータスコード
  * - レスポンスメッセージに既知のクォータエラーパターンを含む
- * - JSON-RPC エラーコードが -32000 から -32099 の範囲（サーバー定義エラー）
+ * - JSON-RPC エラーコードが特定のベンダー固有のクォータエラーコード（allowlist）に含まれる
  */
 export function isQuotaError(error: unknown, config?: FallbackConfig): boolean {
     // 1. APICallError の場合
