@@ -35,6 +35,11 @@ const DEFAULT_QUOTA_PATTERNS = [
     'too many requests',
 ];
 
+/** 特定のベンダー固有クォータエラーとみなすJSON-RPCエラーコード（allowlist） */
+const ALLOWED_VENDOR_QUOTA_CODES = new Set<number>([
+    // ベンダー固有のエラーコードが必要な場合はここに追加
+]);
+
 /**
  * エラーがクォータ関連のエラーか判定する。
  *
@@ -70,13 +75,17 @@ export function isQuotaError(error: unknown, config?: FallbackConfig): boolean {
     // 3. JSON-RPC エラーオブジェクトの場合
     if (error && typeof error === 'object' && 'code' in error) {
         const code = (error as Record<string, unknown>).code;
-        if (typeof code === 'number' && code >= -32099 && code <= -32000) {
-            return true;
-        }
         const message = (error as Record<string, unknown>).message;
+
         if (typeof message === 'string' && isQuotaErrorMessage(message, config)) {
             return true;
         }
+
+        if (typeof code === 'number' && ALLOWED_VENDOR_QUOTA_CODES.has(code)) {
+            return true;
+        }
+
+        return false;
     }
 
     return false;
@@ -90,7 +99,10 @@ export function isQuotaErrorMessage(message: string, config?: FallbackConfig): b
     const patterns = [...DEFAULT_QUOTA_PATTERNS];
 
     if (config?.quotaErrorPatterns) {
-        patterns.push(...config.quotaErrorPatterns);
+        const validPatterns = config.quotaErrorPatterns
+            .map(p => p.trim())
+            .filter(p => p.length > 0);
+        patterns.push(...validPatterns);
     }
 
     return patterns.some(pattern => lowerMessage.includes(pattern.toLowerCase()));

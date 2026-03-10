@@ -68,17 +68,13 @@ describe('isQuotaError', () => {
     });
 
     describe('JSON-RPC エラーオブジェクトの場合', () => {
-        it('コード -32000 から -32099 の範囲はクォータエラー', () => {
+        it('プロバイダ固有のallowlistに含まれないコードはクォータエラーではない', () => {
             const error = { code: -32050, message: 'Server error' };
-            expect(isQuotaError(error)).toBe(true);
-        });
-
-        it('コード範囲外はクォータエラーではない（メッセージが一致しない限り）', () => {
-            const error = { code: -32600, message: 'Invalid Request' };
+            // 現在 ALLOWED_VENDOR_QUOTA_CODES は空なので、コードのみではfalseになる
             expect(isQuotaError(error)).toBe(false);
         });
 
-        it('コード範囲外でもメッセージが一致する場合はクォータエラー', () => {
+        it('メッセージが一致する場合はクォータエラー', () => {
             const error = { code: -32600, message: 'Quota exceeded for this model' };
             expect(isQuotaError(error)).toBe(true);
         });
@@ -93,6 +89,20 @@ describe('isQuotaError', () => {
             };
             const error = new Error('Custom capacity limit reached');
             expect(isQuotaError(error, config)).toBe(true);
+        });
+
+        it('空文字や空白のみのパターンは除外されるため異常検知しない', () => {
+            const config: FallbackConfig = {
+                enabled: true,
+                fallbackChain: [],
+                quotaErrorPatterns: ['', '   ', 'specific quota issue'],
+            };
+            // 空文字が原因で全てのエラーがマッチしてしまう不具合を防ぐためのテスト
+            const error1 = new Error('Random innocent error');
+            expect(isQuotaError(error1, config)).toBe(false);
+
+            const error2 = new Error('Encountered specific quota issue here.');
+            expect(isQuotaError(error2, config)).toBe(true);
         });
     });
 
