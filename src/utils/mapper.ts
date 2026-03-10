@@ -6,6 +6,18 @@ import {
 import type { A2AJsonRpcRequest, A2AResponseResult, Tool } from '../schemas';
 import crypto from 'node:crypto';
 
+export interface ExtendedFinishPart {
+    type: 'finish';
+    finishReason: LanguageModelV1FinishReason;
+    usage: { promptTokens: number; completionTokens: number };
+    providerMetadata?: Record<string, unknown>;
+    inputRequired?: boolean;
+    rawState?: string;
+}
+
+export type ExtendedStreamPart = LanguageModelV1StreamPart | ExtendedFinishPart;
+
+
 interface ToolRequest {
     request: {
         callId?: string;
@@ -338,8 +350,8 @@ export class A2AStreamMapper {
     /**
      * A2A のレスポンス（各チャンク）を AI SDK のストリームパーツに変換する。
      */
-    mapResult(result: A2AResponseResult): LanguageModelV1StreamPart[] {
-        const parts: LanguageModelV1StreamPart[] = [];
+    mapResult(result: A2AResponseResult): ExtendedStreamPart[] {
+        const parts: ExtendedStreamPart[] = [];
 
         // contextId / taskId の抽出
         if (result.kind === 'task') {
@@ -467,7 +479,7 @@ export class A2AStreamMapper {
                     finishReason,
                     usage,
                     ...(result.status.state === 'input-required' ? { inputRequired: true, rawState: 'input-required' } : {})
-                } as any);
+                } as ExtendedFinishPart);
             }
         }
 
@@ -496,7 +508,7 @@ export class A2AStreamMapper {
  * 後方互換のためのステートレスラッパー関数。
  * 既存テストとの互換性を維持する。
  */
-export function mapA2AResponseToStreamParts(result: A2AResponseResult): LanguageModelV1StreamPart[] {
+export function mapA2AResponseToStreamParts(result: A2AResponseResult): ExtendedStreamPart[] {
     const mapper = new A2AStreamMapper();
     return mapper.mapResult(result);
 }
