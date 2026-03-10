@@ -3,7 +3,7 @@ import { OpenCodeGeminiA2AProvider } from './provider';
 import { type OpenCodeProviderOptions } from './config';
 
 if (process.env['NODE_ENV'] !== 'production' && process.env['DEBUG_OPENCODE']) {
-    console.debug('[opencode-geminicli-a2a] PLUGIN SCRIPT LOADED');
+    console.log('[opencode-geminicli-a2a] PLUGIN SCRIPT LOADED');
 }
 
 export { createGeminiA2AProvider, OpenCodeGeminiA2AProvider };
@@ -29,7 +29,7 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
         if (process.env['DEBUG_OPENCODE']) {
             const safeOptions = { ...options };
             if (safeOptions.token) safeOptions.token = '***REDACTED***';
-            console.debug(`[opencode-geminicli-a2a] Provider factory called with options: ${JSON.stringify(safeOptions)}`);
+            console.log(`[opencode-geminicli-a2a] Provider factory called with options: ${JSON.stringify(safeOptions)}`);
         }
         
         const createModel = (modelId: string, settings?: any) => {
@@ -83,7 +83,7 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
         });
 
         if (process.env['DEBUG_OPENCODE']) {
-            console.debug('[opencode-geminicli-a2a] Provider instance created successfully');
+            console.log('[opencode-geminicli-a2a] Provider instance created successfully');
         }
         
         if (!isGeminiA2AProvider(createModel)) {
@@ -103,6 +103,11 @@ export const createProvider = createGeminiA2AProvider;
 
 let _providerInstance: GeminiA2AProvider | undefined;
 
+/**
+ * OpenCode 向けのプロバイダーを初期化・取得します。
+ * 初回呼び出し時の `config` を用いてインスタンス化し、以降の呼び出しでは
+ * 同じインスタンスを返します。(後続の異なる config は無視されます)
+ */
 export function initProvider(config?: OpenCodeProviderOptions): GeminiA2AProvider {
     if (!_providerInstance) {
         _providerInstance = createGeminiA2AProvider(config);
