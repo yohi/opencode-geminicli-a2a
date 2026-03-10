@@ -1,5 +1,5 @@
 import { APICallError } from '@ai-sdk/provider';
-import type { ModelRegistry, ModelInfo } from './model-registry';
+import type { ModelRegistry } from './model-registry';
 
 /**
  * フォールバック設定。
@@ -114,36 +114,34 @@ export function getNextFallbackModel(
 
     const currentIndex = chain.indexOf(currentModelId);
 
-    // 現在のモデルがチェーンに含まれていない場合、チェーンの先頭を返す
-    // （ただし先頭が現在のモデルと同じ場合は次へ）
-    if (currentIndex === -1) {
-        const candidate = chain[0];
-        if (candidate === currentModelId) {
-            return chain.length > 1 ? chain[1] : undefined;
-        }
-        return candidate;
-    }
+    // 現在のモデルがチェーンに含まれていない場合は先頭(0)から、
+    // 含まれている場合は次のモデル(currentIndex + 1)から探す
+    let searchIndex = currentIndex === -1 ? 0 : currentIndex + 1;
 
-    // チェーン末端に到達した場合
-    if (currentIndex >= chain.length - 1) return undefined;
+    // 無限ループ防止用のセーフガード
+    const maxIterations = chain.length;
+    let iterations = 0;
 
-    // 次のモデルを返す
-    const nextModelId = chain[currentIndex + 1];
+    while (searchIndex < chain.length && iterations < maxIterations) {
+        iterations++;
+        const nextModelId = chain[searchIndex];
 
-    // レジストリが指定されている場合、モデルの存在を確認
-    if (registry) {
-        const model = registry.getModel(nextModelId);
-        if (!model) {
-            // 次のモデルがレジストリに存在しない場合、さらに次を探す
-            if (process.env['DEBUG_OPENCODE']) {
-                console.warn(`[opencode-geminicli-a2a] Fallback model '${nextModelId}' not found in registry. Trying next.`);
+        // レジストリが指定されている場合、モデルの存在を確認
+        if (registry) {
+            const model = registry.getModel(nextModelId);
+            if (!model) {
+                if (process.env['DEBUG_OPENCODE']) {
+                    console.warn(`[opencode-geminicli-a2a] Fallback model '${nextModelId}' not found in registry. Trying next.`);
+                }
+                searchIndex++;
+                continue;
             }
-            // 再帰的に次のモデルを探す（チェーン内の存在しないモデルをスキップ）
-            return getNextFallbackModel(nextModelId, config, registry);
         }
+
+        return nextModelId;
     }
 
-    return nextModelId;
+    return undefined;
 }
 
 /**
