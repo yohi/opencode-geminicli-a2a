@@ -9,10 +9,6 @@ import {
 } from './fallback';
 
 describe('isQuotaError', () => {
-    const defaultConfig: FallbackConfig = {
-        enabled: true,
-        fallbackChain: ['model-a', 'model-b'],
-    };
 
     describe('APICallError の場合', () => {
         it('HTTP 429 をクォータエラーとして検知する', () => {
@@ -153,12 +149,46 @@ describe('getNextFallbackModel', () => {
         expect(getNextFallbackModel('any-model', emptyConfig)).toBeUndefined();
     });
 
-    it('チェーンに含まれないモデルでチェーン先頭が同じモデルの場合は2番目を返す', () => {
+    it('チェーン内の先頭モデルの場合は2番目のモデルを返す', () => {
         const sameConfig: FallbackConfig = {
             enabled: true,
             fallbackChain: ['current-model', 'fallback-model'],
         };
         expect(getNextFallbackModel('current-model', sameConfig)).toBe('fallback-model');
+    });
+
+    describe('レジストリが指定されている場合', () => {
+        it('レジストリに存在しないモデルをスキップし、存在するモデルを返す', () => {
+            const mockRegistry = {
+                getModel: (id: string) => id === 'model-c' ? {} as any : undefined,
+                listModels: () => [],
+                refresh: async () => {},
+                toRecord: () => ({}),
+            } as any;
+            
+            const configWithRegistry: FallbackConfig = {
+                enabled: true,
+                fallbackChain: ['model-a', 'model-b', 'model-c'],
+            };
+            
+            expect(getNextFallbackModel('model-a', configWithRegistry, mockRegistry)).toBe('model-c');
+        });
+
+        it('チェーン内のすべてのモデルがレジストリに存在しない場合は undefined を返す', () => {
+            const mockRegistry = {
+                getModel: () => undefined,
+                listModels: () => [],
+                refresh: async () => {},
+                toRecord: () => ({}),
+            } as any;
+            
+            const configWithRegistry: FallbackConfig = {
+                enabled: true,
+                fallbackChain: ['model-a', 'model-b', 'model-c'],
+            };
+            
+            expect(getNextFallbackModel('model-a', configWithRegistry, mockRegistry)).toBeUndefined();
+        });
     });
 });
 
