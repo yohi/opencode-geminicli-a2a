@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { APICallError } from '@ai-sdk/provider';
 import {
     isQuotaError,
@@ -10,6 +10,9 @@ import {
 } from './fallback';
 
 describe('isQuotaError', () => {
+    afterEach(() => {
+        setAllowedVendorQuotaCodes([]);
+    });
 
     describe('APICallError の場合', () => {
         it('HTTP 429 をクォータエラーとして検知する', () => {
@@ -72,7 +75,6 @@ describe('isQuotaError', () => {
             const error = new Error('Unknown server failure');
             (error as any).code = -32051;
             expect(isQuotaError(error)).toBe(true);
-            setAllowedVendorQuotaCodes([]); // reset
         });
     });
 
@@ -81,14 +83,12 @@ describe('isQuotaError', () => {
             setAllowedVendorQuotaCodes([-32051]);
             const error = { code: -32050, message: 'Server error' };
             expect(isQuotaError(error)).toBe(false);
-            setAllowedVendorQuotaCodes([]); // reset
         });
 
         it('プロバイダ固有のallowlistに含まれるコードはクォータエラーになる', () => {
             setAllowedVendorQuotaCodes([-32050]);
             const error = { code: -32050, message: 'Server error' };
             expect(isQuotaError(error)).toBe(true);
-            setAllowedVendorQuotaCodes([]); // reset
         });
 
         it('メッセージが一致する場合はクォータエラー', () => {
@@ -132,8 +132,12 @@ describe('isQuotaError', () => {
             expect(isQuotaError(undefined)).toBe(false);
         });
 
-        it('文字列はクォータエラーではない', () => {
+        it('非マッチ文字列はクォータエラーではない', () => {
             expect(isQuotaError('some error')).toBe(false);
+        });
+
+        it('パターンに一致する文字列はクォータエラーになる', () => {
+            expect(isQuotaError('rate limit exceeded')).toBe(true);
         });
     });
 });
