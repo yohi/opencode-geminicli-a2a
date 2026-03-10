@@ -10,6 +10,14 @@ export const ConfigSchema = z.object({
 
 export type A2AConfig = z.infer<typeof ConfigSchema>;
 
+// Agent Endpoint Schema (Phase 5-D)
+export const AgentEndpointSchema = ConfigSchema.extend({
+    key: z.string().min(1),
+    models: z.array(z.string()).default([]),
+});
+
+export type AgentEndpoint = z.infer<typeof AgentEndpointSchema>;
+
 // 2. A2A JSON-RPC Request Schema
 export const ToolSchema = z.object({}).passthrough();
 export type Tool = z.infer<typeof ToolSchema>;
