@@ -46,7 +46,7 @@ export class A2AClient {
             if (isSecure || isLocalhost) {
                 headers['Authorization'] = `Bearer ${this.config.token}`;
             } else {
-                console.warn('A2AClient: Token is present but endpoint is not secure and not localhost. Authorization header will not be sent.');
+                throw new Error('A2AClient: Token cannot be sent over an insecure non-localhost connection.');
             }
         }
 

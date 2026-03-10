@@ -187,10 +187,12 @@ function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extr
         } else {
             // Validate that the string is a valid base64 (or base64url) payload.
             // This prevents incorrectly treating generic text or relative paths as binary data.
-            const isBase64 = /^[A-Za-z0-9+/]*={0,2}$/.test(str);
-            const isBase64Url = /^[A-Za-z0-9\-_]*={0,2}$/.test(str);
+            const isBase64 = str.length > 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(str);
+            const isBase64Url = str.length > 0 && /^[A-Za-z0-9\-_]+={0,2}$/.test(str);
+            
+            const isValidLength = str.length % 4 === 0 || (!str.endsWith('=') && str.length % 4 !== 1);
 
-            if ((isBase64 || isBase64Url) && (str.length % 4 === 0 || !str.endsWith('='))) {
+            if ((isBase64 || isBase64Url) && isValidLength) {
                 bytes = str;
             } else {
                 console.warn('[A2A mapper] Invalid base64 string provided for binary data. Part will be dropped.');
@@ -455,8 +457,8 @@ export class A2AStreamMapper {
                 this._lastFinishReason = finishReason;
 
                 const usage = {
-                    promptTokens: result.usage?.promptTokens ?? Number.NaN,
-                    completionTokens: result.usage?.completionTokens ?? Number.NaN,
+                    promptTokens: result.usage?.promptTokens ?? 0,
+                    completionTokens: result.usage?.completionTokens ?? 0,
                 };
 
                 parts.push({
