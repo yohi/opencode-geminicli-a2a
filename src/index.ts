@@ -27,9 +27,19 @@ function isGeminiA2AProvider(obj: any): obj is GeminiA2AProvider {
 function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2AProvider {
     try {
         if (process.env['DEBUG_OPENCODE']) {
-            const safeOptions = { ...options };
-            if (safeOptions.token) safeOptions.token = '***REDACTED***';
-            console.log(`[opencode-geminicli-a2a] Provider factory called with options: ${JSON.stringify(safeOptions)}`);
+            const logPayload: Record<string, any> = {};
+            if (options) {
+                for (const [key, value] of Object.entries(options)) {
+                    if (key === 'token') {
+                        logPayload[key] = '***REDACTED***';
+                    } else if (key === 'sessionStore') {
+                        logPayload[key] = '<sessionStore>';
+                    } else if (typeof value !== 'object' && typeof value !== 'function') {
+                        logPayload[key] = value;
+                    }
+                }
+            }
+            console.log(`[opencode-geminicli-a2a] Provider factory called with options: ${JSON.stringify(logPayload)}`);
         }
         
         const createModel = (modelId: string, settings?: any) => {

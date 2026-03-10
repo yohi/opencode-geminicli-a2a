@@ -46,7 +46,12 @@ export class A2AClient {
             if (isSecure || isLocalhost) {
                 headers['Authorization'] = `Bearer ${this.config.token}`;
             } else {
-                throw new Error('A2AClient: Token cannot be sent over an insecure non-localhost connection.');
+                throw new APICallError({
+                    message: 'A2AClient: Token cannot be sent over an insecure non-localhost connection.',
+                    url: this.endpoint,
+                    requestBodyValues: request,
+                    isRetryable: false,
+                });
             }
         }
 

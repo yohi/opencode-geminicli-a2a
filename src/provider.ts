@@ -6,7 +6,7 @@ import type {
 } from '@ai-sdk/provider';
 import { resolveConfig, type OpenCodeProviderOptions } from './config';
 import { A2AClient } from './a2a-client';
-import { mapPromptToA2AJsonRpcRequest, A2AStreamMapper, type MapPromptOptions } from './utils/mapper';
+import { mapPromptToA2AJsonRpcRequest, A2AStreamMapper, type MapPromptOptions, type ExtendedFinishPart } from './utils/mapper';
 import { parseA2AStream } from './utils/stream';
 import type { A2AJsonRpcRequest } from './schemas';
 import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
@@ -205,14 +205,15 @@ export class OpenCodeGeminiA2AProvider {
                                             controller.enqueue({ type: 'text-end', id: activeTextId });
                                             activeTextId = undefined;
                                         }
+                                        const finishPart = part as ExtendedFinishPart;
                                         controller.enqueue({
                                             type: 'finish',
-                                            finishReason: part.finishReason,
-                                            usage: part.usage,
-                                            ...('providerMetadata' in part ? { providerMetadata: (part as any).providerMetadata } : {}),
-                                            ...('inputRequired' in part ? { inputRequired: (part as any).inputRequired } : {}),
-                                            ...('rawState' in part ? { rawState: (part as any).rawState } : {})
-                                        } as any);
+                                            finishReason: finishPart.finishReason,
+                                            usage: finishPart.usage,
+                                            ...(finishPart.providerMetadata !== undefined ? { providerMetadata: finishPart.providerMetadata } : {}),
+                                            ...(finishPart.inputRequired !== undefined ? { inputRequired: finishPart.inputRequired } : {}),
+                                            ...(finishPart.rawState !== undefined ? { rawState: finishPart.rawState } : {})
+                                        });
                                         break;
                                     }
                                     default:
@@ -232,6 +233,17 @@ export class OpenCodeGeminiA2AProvider {
                         }
                     }
 
+                    // テキストパーツが開いていれば閉じる
+                    if (activeTextId !== undefined) {
+                        controller.enqueue({ type: 'text-end', id: activeTextId });
+                        activeTextId = undefined;
+                    }
+
+                    if (!hasFinished) {
+                        controller.error(new Error('A2A stream disconnected before sending final status-update.'));
+                        return;
+                    }
+
                     // マルチターン: mapper から contextId / taskId / finishReason を抽出して保存
                     if (sessionId) {
                         const hasUpdate = mapper.contextId !== undefined || mapper.taskId !== undefined || mapper.lastFinishReason !== undefined;
@@ -246,16 +258,6 @@ export class OpenCodeGeminiA2AProvider {
                         }
                     }
 
-                    // テキストパーツが開いていれば閉じる
-                    if (activeTextId !== undefined) {
-                        controller.enqueue({ type: 'text-end', id: activeTextId });
-                        activeTextId = undefined;
-                    }
-
-                    if (!hasFinished) {
-                        controller.error(new Error('A2A stream disconnected before sending final status-update.'));
-                        return;
-                    }
                     controller.close();
                 } catch (error) {
                     // エラー時は lastFinishReason をリセットして、次回の taskId 送信を防ぐ
@@ -295,6 +297,9 @@ export class OpenCodeGeminiA2AProvider {
         const toolCalls: LanguageModelV1FunctionToolCall[] = [];
         let finishReason: LanguageModelV1FinishReason = 'unknown';
         const usage = { promptTokens: 0, completionTokens: 0 };
+        let providerMetadata: Record<string, any> | undefined;
+        let inputRequired: boolean | undefined;
+        let rawState: string | undefined;
 
         const activeToolCalls = new Map<string, { toolCallId: string; name: string; args: string }>();
 
@@ -345,6 +350,9 @@ export class OpenCodeGeminiA2AProvider {
                             usage.promptTokens = value.usage.promptTokens;
                             usage.completionTokens = value.usage.completionTokens;
                         }
+                        if ('providerMetadata' in value) providerMetadata = (value as any).providerMetadata;
+                        if ('inputRequired' in value) inputRequired = (value as any).inputRequired;
+                        if ('rawState' in value) rawState = (value as any).rawState;
                         break;
                 }
             }
@@ -362,6 +370,9 @@ export class OpenCodeGeminiA2AProvider {
             rawResponse,
             request,
             warnings,
+            ...(providerMetadata !== undefined ? { providerMetadata } : {}),
+            ...(inputRequired !== undefined ? { inputRequired } : {}),
+            ...(rawState !== undefined ? { rawState } : {})
         };
     }
 }
