@@ -312,7 +312,7 @@ describe('mapper', () => {
             const parts = mapA2AResponseToStreamParts(result);
             expect(parts[0].type).toBe('finish');
             if (parts[0].type === 'finish') {
-                expect(parts[0].finishReason).toBe('other');
+                expect(parts[0].finishReason).toBe('stop');
             }
         });
 
@@ -357,7 +357,7 @@ describe('mapper', () => {
             }
         });
 
-        it('should return Number.NaN for promptTokens and completionTokens when usage is missing', () => {
+        it('should return 0 for promptTokens and completionTokens when usage is missing', () => {
             const result: A2AResponseResult = {
                 kind: 'status-update',
                 taskId: 't1',
@@ -367,8 +367,8 @@ describe('mapper', () => {
             const parts = mapA2AResponseToStreamParts(result);
             const finishPart = parts.find(p => p.type === 'finish');
             if (finishPart && finishPart.type === 'finish') {
-                expect(Number.isNaN(finishPart.usage?.promptTokens)).toBe(true);
-                expect(Number.isNaN(finishPart.usage?.completionTokens)).toBe(true);
+                expect(finishPart.usage?.promptTokens).toBe(0);
+                expect(finishPart.usage?.completionTokens).toBe(0);
             }
         });
 
@@ -398,7 +398,7 @@ describe('mapper', () => {
             }
         });
 
-        it('should extract tool-calls and finish reason when state is input-required and final is true', () => {
+        it('should extract tool-calls finish reason when state is input-required and final is true even with tool-calls', () => {
             const result: A2AResponseResult = {
                 kind: 'status-update',
                 taskId: 't1',
@@ -421,6 +421,8 @@ describe('mapper', () => {
             expect(parts[1].type).toBe('finish');
             if (parts[1].type === 'finish') {
                 expect(parts[1].finishReason).toBe('tool-calls');
+                expect((parts[1] as any).inputRequired).toBe(true);
+                expect((parts[1] as any).rawState).toBe('input-required');
             }
         });
 
@@ -830,6 +832,7 @@ describe('mapper', () => {
                 expect(finishParts[0].type).toBe('finish');
                 if (finishParts[0].type === 'finish') {
                     expect(finishParts[0].finishReason).toBe('tool-calls');
+                    expect((finishParts[0] as any).inputRequired).toBe(true);
                 }
             });
         });
