@@ -122,8 +122,10 @@ function loadModelsFromConfig(): ModelInfo[] | undefined {
  */
 export class StaticModelRegistry implements ModelRegistry {
     private models: Map<string, ModelInfo>;
+    private readonly initialModels?: ModelInfo[];
 
     constructor(initialModels?: ModelInfo[]) {
+        this.initialModels = initialModels;
         this.models = new Map();
         const source = initialModels ?? loadModelsFromConfig() ?? DEFAULT_MODELS;
         for (const model of source) {
@@ -141,11 +143,10 @@ export class StaticModelRegistry implements ModelRegistry {
 
     refresh(): void {
         const loaded = loadModelsFromConfig();
-        if (loaded) {
-            this.models.clear();
-            for (const model of loaded) {
-                this.models.set(model.id, model);
-            }
+        const source = loaded ?? this.initialModels ?? DEFAULT_MODELS;
+        this.models.clear();
+        for (const model of source) {
+            this.models.set(model.id, model);
         }
     }
 
