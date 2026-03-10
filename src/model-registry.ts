@@ -5,11 +5,11 @@ import fs from 'node:fs';
  */
 export interface ModelInfo {
     /** モデルの一意識別子 (例: 'gemini-2.5-pro') */
-    id: string;
+    readonly id: string;
     /** 表示名 (例: 'Gemini 2.5 Pro (A2A)') */
-    name: string;
+    readonly name: string;
     /** このモデルが紐づく A2A エンドポイントのキー（5-D マルチエージェントルーティングで使用） */
-    endpointKey?: string;
+    readonly endpointKey?: string;
 }
 
 /**
@@ -35,13 +35,13 @@ export interface ModelRegistry {
  * package.json の opencode.models と同期すること。
  */
 const DEFAULT_MODELS: ModelInfo[] = [
-    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview (A2A)' },
-    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview (A2A)' },
-    { id: 'gemini-3.1-pro-preview-customtools', name: 'Gemini 3.1 Pro Preview Custom Tools (A2A)' },
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview (A2A)' },
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (A2A)' },
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (A2A)' },
-    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite (A2A)' },
+    Object.freeze({ id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview (A2A)' }),
+    Object.freeze({ id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview (A2A)' }),
+    Object.freeze({ id: 'gemini-3.1-pro-preview-customtools', name: 'Gemini 3.1 Pro Preview Custom Tools (A2A)' }),
+    Object.freeze({ id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview (A2A)' }),
+    Object.freeze({ id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (A2A)' }),
+    Object.freeze({ id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (A2A)' }),
+    Object.freeze({ id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite (A2A)' }),
 ];
 
 /**
@@ -121,13 +121,20 @@ function loadModelsFromConfig(): ModelInfo[] | undefined {
  * refresh() を呼び出すことで、環境変数やファイルからモデル一覧を再読み込みできます。
  */
 export class StaticModelRegistry implements ModelRegistry {
-    private models: Map<string, ModelInfo>;
+    private models: Map<string, ModelInfo> = new Map();
+    private readonly initialModels?: ModelInfo[];
 
     constructor(initialModels?: ModelInfo[]) {
-        this.models = new Map();
-        const source = initialModels ?? loadModelsFromConfig() ?? DEFAULT_MODELS;
+        this.initialModels = initialModels ? initialModels.map(model => Object.freeze({ ...model })) : undefined;
+        this.resolveModels();
+    }
+
+    private resolveModels(): void {
+        const source = this.initialModels ?? loadModelsFromConfig() ?? DEFAULT_MODELS;
+        this.models.clear();
         for (const model of source) {
-            this.models.set(model.id, model);
+            // 格納時に防御的コピーを作成してフリーズし、外部からの変更を防ぐ
+            this.models.set(model.id, Object.freeze({ ...model }));
         }
     }
 
@@ -140,13 +147,7 @@ export class StaticModelRegistry implements ModelRegistry {
     }
 
     refresh(): void {
-        const loaded = loadModelsFromConfig();
-        if (loaded) {
-            this.models.clear();
-            for (const model of loaded) {
-                this.models.set(model.id, model);
-            }
-        }
+        this.resolveModels();
     }
 
     toRecord(): Record<string, ModelInfo> {
@@ -162,5 +163,5 @@ export class StaticModelRegistry implements ModelRegistry {
  * デフォルトモデル一覧を取得する（テスト等での利用向け）。
  */
 export function getDefaultModels(): ModelInfo[] {
-    return [...DEFAULT_MODELS];
+    return DEFAULT_MODELS.map(model => Object.freeze({ ...model }));
 }
