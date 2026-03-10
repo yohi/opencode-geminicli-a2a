@@ -8,6 +8,12 @@ export interface SessionStore {
     get(sessionId: string): Promise<A2ASession | undefined>;
     update(sessionId: string, patch: Partial<A2ASession>): Promise<void>;
     delete(sessionId: string): Promise<void>;
+    /**
+     * 指定されたセッションのコンテキスト（contextId / taskId / lastFinishReason）をリセットします。
+     * delete() と同等の動作ですが、意味的にリセットであることを明示します。
+     * 将来的に A2A サーバーへのキャンセル通知等のフックポイントとして拡張可能です。
+     */
+    resetSession(sessionId: string): Promise<void>;
     clear(): Promise<void>;
     prune?(): Promise<void>;
 }
@@ -100,6 +106,14 @@ export class InMemorySessionStore implements SessionStore {
     }
 
     async delete(sessionId: string): Promise<void> {
+        this.sessions.delete(sessionId);
+    }
+
+    async resetSession(sessionId: string): Promise<void> {
+        if (process.env['DEBUG_OPENCODE']) {
+            const maskedId = sessionId.length > 8 ? `${sessionId.substring(0, 4)}...${sessionId.substring(sessionId.length - 4)}` : '***';
+            console.log(`[opencode-geminicli-a2a] Resetting session context: ${maskedId}`);
+        }
         this.sessions.delete(sessionId);
     }
 
