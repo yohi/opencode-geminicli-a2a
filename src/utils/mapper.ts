@@ -422,8 +422,8 @@ export class A2AStreamMapper {
                         break;
                     case 'input-required':
                         // A2A の input-required は「エージェントがユーザー入力を待っている（ターン終了）」状態。
-                        // これを tool-calls にすると OpenCode が空のツール結果を送って無限ループになるため、stop 扱いにする。
-                        finishReason = 'stop';
+                        // タスク継続のシグナルを維持しつつ、生の状態をフラグとして付与して呼び出し元に伝える
+                        finishReason = 'tool-calls';
                         break;
                     case 'cancelled':
                     case 'timeout':
@@ -463,7 +463,8 @@ export class A2AStreamMapper {
                     type: 'finish',
                     finishReason,
                     usage,
-                });
+                    ...(result.status.state === 'input-required' ? { inputRequired: true, rawState: 'input-required' } : {})
+                } as any);
             }
         }
 

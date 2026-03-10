@@ -11,8 +11,8 @@ export interface OpenCodeProviderOptions {
 }
 
 // ユーティリティ: 文字列を正規化し、空、空白のみ、または "undefined"/"null" 文字列は undefined とする
-function getNormalizedValue(val: any): string | undefined {
-    if (typeof val !== 'string') return val === null ? undefined : val?.toString();
+function getNormalizedValue(val: any): any {
+    if (typeof val !== 'string') return val === null ? undefined : val;
     const trimmed = val.trim();
     if (trimmed === '' || trimmed === 'undefined' || trimmed === 'null') return undefined;
     return trimmed;

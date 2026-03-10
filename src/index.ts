@@ -2,25 +2,35 @@ import type { ProviderV1, EmbeddingModelV1 } from '@ai-sdk/provider';
 import { OpenCodeGeminiA2AProvider } from './provider';
 import { type OpenCodeProviderOptions } from './config';
 
-// ファイルが読み込まれた瞬間にログを出力（最優先）
-console.error('[opencode-geminicli-a2a] PLUGIN SCRIPT LOADED');
+if (process.env['NODE_ENV'] !== 'production' && process.env['DEBUG_OPENCODE']) {
+    console.debug('[opencode-geminicli-a2a] PLUGIN SCRIPT LOADED');
+}
 
 export { createGeminiA2AProvider, OpenCodeGeminiA2AProvider };
 
 /**
  * OpenCode Gemini CLI A2A Provider のインターフェース
  */
-export interface GeminiA2AProvider extends ProviderV1 {
+export interface GeminiA2AProvider extends Omit<ProviderV1, 'languageModel' | 'specificationVersion'> {
     providerId: string;
     providerID: string;
     id: string;
-    specificationVersion: 'v1';
+    specificationVersion: 'v2';
     languageModel: (modelId: string, settings?: any) => OpenCodeGeminiA2AProvider;
+    (modelId: string, settings?: any): OpenCodeGeminiA2AProvider;
+}
+
+function isGeminiA2AProvider(obj: any): obj is GeminiA2AProvider {
+    return obj !== null && typeof obj === 'function' && typeof obj.languageModel === 'function' && typeof obj.providerId === 'string';
 }
 
 function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2AProvider {
     try {
-        console.error(`[opencode-geminicli-a2a] Provider factory called with options: ${JSON.stringify(options)}`);
+        if (process.env['DEBUG_OPENCODE']) {
+            const safeOptions = { ...options };
+            if (safeOptions.token) safeOptions.token = '***REDACTED***';
+            console.debug(`[opencode-geminicli-a2a] Provider factory called with options: ${JSON.stringify(safeOptions)}`);
+        }
         
         const createModel = (modelId: string, settings?: any) => {
             const sanitizedSettings = Object.fromEntries(
@@ -46,7 +56,7 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
             providerId: 'opencode-geminicli-a2a',
             providerID: 'opencode-geminicli-a2a',
             id: 'opencode-geminicli-a2a',
-            specificationVersion: 'v1',
+            specificationVersion: 'v2',
             models,
             languageModel: createModel,
             textEmbeddingModel: (modelId: string) => {
@@ -72,8 +82,14 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
             enumerable: true,
         });
 
-        console.error('[opencode-geminicli-a2a] Provider instance created successfully');
-        return createModel as unknown as GeminiA2AProvider;
+        if (process.env['DEBUG_OPENCODE']) {
+            console.debug('[opencode-geminicli-a2a] Provider instance created successfully');
+        }
+        
+        if (!isGeminiA2AProvider(createModel)) {
+            throw new Error('Runtime type check failed: createModel does not satisfy GeminiA2AProvider');
+        }
+        return createModel;
     } catch (err) {
         console.error('[opencode-geminicli-error] CRITICAL ERROR IN FACTORY:', err);
         throw err;
@@ -84,6 +100,24 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
  * OpenCode 向けの互換エクスポート
  */
 export const createProvider = createGeminiA2AProvider;
-export const provider = createGeminiA2AProvider();
+
+let _providerInstance: GeminiA2AProvider | undefined;
+
+export function initProvider(config?: OpenCodeProviderOptions): GeminiA2AProvider {
+    if (!_providerInstance) {
+        _providerInstance = createGeminiA2AProvider(config);
+    }
+    return _providerInstance;
+}
+
+export const provider = new Proxy(Function.prototype as unknown as GeminiA2AProvider, {
+    get(_, prop) {
+        return (initProvider() as any)[prop];
+    },
+    apply(_, __, args) {
+        return (initProvider() as any)(...args);
+    }
+});
+
 export const opencodeGeminicliA2a = provider;
 export default createGeminiA2AProvider;

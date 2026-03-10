@@ -35,14 +35,16 @@ export class OpenCodeGeminiA2AProvider {
      */
     constructor(modelId: string, options?: OpenCodeProviderOptions) {
         try {
-            console.error(`[opencode-geminicli-a2a] Initializing model: ${modelId}`);
+            if (process.env['DEBUG_OPENCODE']) {
+                console.debug(`[opencode-geminicli-a2a] Initializing model: ${modelId}`);
+            }
             this.modelId = modelId;
             this.modelID = modelId;
             const config = resolveConfig(options);
             this.client = new A2AClient(config);
             this.sessionStore = options?.sessionStore ?? sharedSessionStore;
         } catch (err) {
-            console.error(`[opencode-geminicli-a2a] ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
+            console.error(`[opencode-geminicli-error] ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
             throw err;
         }
     }
@@ -74,7 +76,9 @@ export class OpenCodeGeminiA2AProvider {
      * 並行リクエスト時の状態の競合を避けるため、呼び出し元は必ず一意の sessionId を指定してください。
      */
     async doStream(options: LanguageModelV1CallOptions) {
-        console.error('[opencode-geminicli-a2a] doStream called for model:', this.modelId);
+        if (process.env['DEBUG_OPENCODE']) {
+            console.debug('[opencode-geminicli-a2a] doStream called for model:', this.modelId);
+        }
         let sessionId: string | undefined = undefined;
         const opencodeMetadata = options.providerMetadata?.opencode;
 
@@ -204,7 +208,10 @@ export class OpenCodeGeminiA2AProvider {
                                             type: 'finish',
                                             finishReason: part.finishReason,
                                             usage: part.usage,
-                                        });
+                                            ...('providerMetadata' in part ? { providerMetadata: (part as any).providerMetadata } : {}),
+                                            ...('inputRequired' in part ? { inputRequired: (part as any).inputRequired } : {}),
+                                            ...('rawState' in part ? { rawState: (part as any).rawState } : {})
+                                        } as any);
                                         break;
                                     }
                                     default:
@@ -245,11 +252,8 @@ export class OpenCodeGeminiA2AProvider {
                     }
 
                     if (!hasFinished) {
-                        controller.enqueue({
-                            type: 'finish',
-                            finishReason: 'stop',
-                            usage: { promptTokens: 0, completionTokens: 0 },
-                        });
+                        controller.error(new Error('A2A stream disconnected before sending final status-update.'));
+                        return;
                     }
                     controller.close();
                 } catch (error) {

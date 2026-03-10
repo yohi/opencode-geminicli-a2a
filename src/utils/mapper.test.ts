@@ -398,7 +398,7 @@ describe('mapper', () => {
             }
         });
 
-        it('should extract stop finish reason when state is input-required and final is true even with tool-calls', () => {
+        it('should extract tool-calls finish reason when state is input-required and final is true even with tool-calls', () => {
             const result: A2AResponseResult = {
                 kind: 'status-update',
                 taskId: 't1',
@@ -420,7 +420,9 @@ describe('mapper', () => {
             expect(parts[0].type).toBe('tool-call');
             expect(parts[1].type).toBe('finish');
             if (parts[1].type === 'finish') {
-                expect(parts[1].finishReason).toBe('stop');
+                expect(parts[1].finishReason).toBe('tool-calls');
+                expect((parts[1] as any).inputRequired).toBe(true);
+                expect((parts[1] as any).rawState).toBe('input-required');
             }
         });
 
@@ -829,7 +831,8 @@ describe('mapper', () => {
                 expect(finishParts.length).toBe(1);
                 expect(finishParts[0].type).toBe('finish');
                 if (finishParts[0].type === 'finish') {
-                    expect(finishParts[0].finishReason).toBe('stop');
+                    expect(finishParts[0].finishReason).toBe('tool-calls');
+                    expect((finishParts[0] as any).inputRequired).toBe(true);
                 }
             });
         });
