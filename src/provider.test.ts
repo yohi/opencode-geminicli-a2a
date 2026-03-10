@@ -176,7 +176,7 @@ describe('OpenCodeGeminiA2AProvider', () => {
         vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
 
         // Seed a session with context
-        await provider['sessionStore'].update('test-session-no-reset', { contextId: 'existing-ctx', taskId: 'existing-task' });
+        await provider['sessionStore'].update('test-session-no-reset', { contextId: 'existing-ctx', taskId: 'existing-task', lastFinishReason: 'tool-calls' });
 
         const { stream } = await provider.doStream({
             inputFormat: 'messages',

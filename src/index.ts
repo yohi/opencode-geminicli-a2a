@@ -4,6 +4,10 @@ import { OpenCodeGeminiA2AProvider } from './provider';
 import { InMemorySessionStore } from './session';
 import { type OpenCodeProviderOptions } from './config';
 
+/**
+ * @note これはプロセス内シングルトンであり、サーバレスやマルチプロセス環境では
+ * プロセス間で状態を共有しないため外部セッションストアを使う必要があります。
+ */
 export const sharedSessionStore = new InMemorySessionStore();
 
 function getAvailableModels(): Record<string, { id: string; name: string }> {

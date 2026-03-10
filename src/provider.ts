@@ -377,10 +377,12 @@ export class OpenCodeGeminiA2AProvider {
                         if ('inputRequired' in value) inputRequired = (value as any).inputRequired;
                         if ('rawState' in value) rawState = (value as any).rawState;
                         break;
-                    case 'file':
+                    case 'file': {
                         // マルチモーダルレスポンス: file パーツを蓄積
-                        files.push({ data: value.data, mimeType: value.mimeType });
+                        const filePart = value as import('./utils/mapper').FileStreamPart;
+                        files.push({ data: filePart.data, mimeType: filePart.mimeType });
                         break;
+                    }
                 }
             }
         } finally {
