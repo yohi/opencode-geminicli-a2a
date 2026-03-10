@@ -1,8 +1,15 @@
 {
-  "name": "opencode-geminicli-a2a-provider",
+  "name": "@yohi/opencode-geminicli-a2a-provider",
   "version": "0.1.3",
   "type": "module",
   "description": "OpenCode custom provider plugin that communicates with Gemini CLI via A2A protocol",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yohi/opencode-geminicli-a2a.git"
+  },
   "opencode": {
     "id": "opencode-geminicli-a2a",
     "type": "provider",
