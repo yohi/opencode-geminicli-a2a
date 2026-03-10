@@ -244,7 +244,7 @@ OpenCode との実機統合テストおよび A2A プロセスの互換性調査
 OpenCode の設定ファイル（`opencode.jsonc`）でプロバイダーをローカルパス（`file:///.../dist/index.js`）から直接読み込む場合、OpenCode 側は npm の依存解決を行いません。
 そのため、実行時の `Cannot find module` エラーを防ぐ目的で、本プロジェクトの `build` スクリプトは **`@ai-sdk/provider` などの軽量な依存パッケージを含め、すべて1つの `dist/index.js` / `dist/index.cjs` にバンドル** する設定になっています（esbuild の `--external` オプションを外しています）。
 
-現在は GitHub Packages にパッケージ（`@yohi/opencode-geminicli-a2a-provider`）として公開されており、`opencode.jsonc` でのパッケージ名指定による導入方式に移行済みです（Phase 3）。それに伴い、今後はこの「全部入りのビルド」設定を見直し、標準的な npm 依存関係の形へ移行してプラグインを軽量化することを検討しています。
+現在は GitHub Packages にパッケージ（`@yohi/opencode-geminicli-a2a-provider`）としての公開設定を整備済みであり、リリース作成後に `opencode.jsonc` でのパッケージ名指定による導入方式へ移行可能になります（Phase 3）。それに伴い、今後はこの「全部入りのビルド」設定を見直し、標準的な npm 依存関係の形へ移行してプラグインを軽量化することを検討しています。
 
 ### 前提条件
 
@@ -268,8 +268,8 @@ npm install
 
 現在のプロバイダーは Phase 2 (OpenCode との実機統合) までが完了し、コア機能（チャット、ストリーミング、ツール呼び出し、思考プロセスの可視化）が安定稼働する状態になっています。今後は以下の拡張を予定/検討しています。
 
-### Phase 3: レジストリ統合とデプロイメントの最適化 (対応済)
-- **GitHub Packages への公開設定**: GitHub Actions による CI/CD を整備し、パッケージビルドと GitHub Packages への公開を自動化しました。現在の配布方式では、`opencode.jsonc` に `@yohi/opencode-geminicli-a2a-provider` を指定して他環境から直接インストール可能です。
+### Phase 3: レジストリ統合とデプロイメントの最適化
+- **GitHub Packages への公開設定**: GitHub Actions (`release-please` および `publish.yml`) による CI/CD を整備しました。Release Please によってリリースが作成された後に GitHub Packages への公開が自動で実行されます。公開後は、`opencode.jsonc` に `@yohi/opencode-geminicli-a2a-provider` を指定して他環境からインストール可能になります。
 - **バンドル依存の段階的解除**: 現在の「すべてを1つのファイルにバンドルする」ビルド設定を見直し、標準的な npm 依存関係の形へ移行してプラグインをさらに軽量化する予定です。
 
 ### Phase 4: A2A 特有の高度なコンテキスト管理
