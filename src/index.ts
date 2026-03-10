@@ -29,10 +29,19 @@ function getAvailableModels(): Record<string, { id: string; name: string }> {
             const parsedModels: Record<string, { id: string; name: string }> = {};
             for (const [key, value] of Object.entries(modelsConfig)) {
                 if (value && typeof value === 'object' && 'id' in value && 'name' in value) {
-                    parsedModels[key] = {
-                        id: String((value as any).id),
-                        name: String((value as any).name)
-                    };
+                    const rawId = (value as any).id;
+                    const rawName = (value as any).name;
+                    if ((typeof rawId === 'string' || typeof rawId === 'number') &&
+                        (typeof rawName === 'string' || typeof rawName === 'number')) {
+                        const strId = String(rawId);
+                        const strName = String(rawName);
+                        if (strId && strName) {
+                            parsedModels[key] = {
+                                id: strId,
+                                name: strName
+                            };
+                        }
+                    }
                 }
             }
             if (Object.keys(parsedModels).length > 0) {
@@ -167,10 +176,16 @@ export function initProvider(config?: OpenCodeProviderOptions): GeminiA2AProvide
 
 export const provider = new Proxy(Function.prototype as unknown as GeminiA2AProvider, {
     get(_, prop) {
-        return (initProvider() as any)[prop];
+        if (!_providerInstance) {
+            throw new Error('Provider not initialized. Call initProvider(config) first.');
+        }
+        return (_providerInstance as any)[prop];
     },
     apply(_, __, args) {
-        return (initProvider() as any)(...args);
+        if (!_providerInstance) {
+            throw new Error('Provider not initialized. Call initProvider(config) first.');
+        }
+        return (_providerInstance as any)(...args);
     }
 });
 
