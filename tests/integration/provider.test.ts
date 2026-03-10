@@ -41,11 +41,9 @@ describe('Integration: Gemini CLI A2A Provider', () => {
                 // Simulating an SSE stream JSON-RPC format
                 res.write('data: {"jsonrpc":"2.0","id":"chat-1","result":{"kind":"status-update","taskId":"t1","status":{"state":"working","message":{"parts":[{"kind":"text","text":"Integration "}]}}}}\n\n');
 
-                setTimeout(() => {
-                    res.write('data: {"jsonrpc":"2.0","id":"chat-1","result":{"kind":"status-update","taskId":"t1","status":{"state":"working","message":{"parts":[{"kind":"text","text":"success!"}]}}}}\n\n');
-                    res.write('data: {"jsonrpc":"2.0","id":"chat-1","result":{"kind":"status-update","taskId":"t1","final":true,"status":{"state":"stop"}}}\n\n');
-                    res.end();
-                }, 50);
+                res.write('data: {"jsonrpc":"2.0","id":"chat-1","result":{"kind":"status-update","taskId":"t1","status":{"state":"working","message":{"parts":[{"kind":"text","text":"success!"}]}}}}\n\n');
+                res.write('data: {"jsonrpc":"2.0","id":"chat-1","result":{"kind":"status-update","taskId":"t1","final":true,"status":{"state":"stop"}}}\n\n');
+                res.end();
             });
         });
 

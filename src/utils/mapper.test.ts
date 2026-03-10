@@ -367,8 +367,8 @@ describe('mapper', () => {
             const parts = mapA2AResponseToStreamParts(result);
             const finishPart = parts.find(p => p.type === 'finish');
             if (finishPart && finishPart.type === 'finish') {
-                expect(Number.isNaN(finishPart.usage?.promptTokens)).toBe(true);
-                expect(Number.isNaN(finishPart.usage?.completionTokens)).toBe(true);
+                expect(finishPart.usage?.promptTokens).toBe(0);
+                expect(finishPart.usage?.completionTokens).toBe(0);
             }
         });
 
