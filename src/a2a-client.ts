@@ -46,11 +46,19 @@ export class A2AClient {
             if (isSecure || isLocalhost) {
                 headers['Authorization'] = `Bearer ${this.config.token}`;
             } else {
-                console.warn('A2AClient: Token is present but endpoint is not secure and not localhost. Authorization header will not be sent.');
+                throw new APICallError({
+                    message: 'A2AClient: Token cannot be sent over an insecure non-localhost connection.',
+                    url: this.endpoint,
+                    requestBodyValues: request,
+                    isRetryable: false,
+                });
             }
         }
 
         const retryCount = idempotencyKey ? 3 : 0;
+        if (process.env['DEBUG_OPENCODE']) {
+            console.log('[opencode-geminicli-a2a] Fetching URL:', this.endpoint, 'Method: POST');
+        }
 
         try {
             const response = await ofetch.raw(this.endpoint, {

@@ -280,3 +280,14 @@ export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResp
 * **エラーハンドリング**: Gemini CLI（ローカルサーバー）は起動していない可能性があります。`a2a-client.ts` における `ofetch` 呼び出し箇所、および初期化部分において、発生したエラーに応じて以下のように具体的なエラー型を明示して伝播させてください：
     * ネットワークエラー、タイムアウト、接続拒否などの `ofetch` 接続エラー時は、OpenCode が提供する `APICallError` などをスローし、内部に原始エラーメッセージ、HTTPステータス、URLを保持させること。
     * レスポンスの構造が想定外の場合（Zodスキーマ検証エラー等）は、`InvalidResponseDataError` などをスローし、レスポンスボディの抜粋など詳細な情報を含めること。
+
+## 8. Known Issues and Future Considerations
+
+### 8.1 CCPA Environment Rate Limits
+* **Issue**: `USE_CCPA=true` 環境下で提供される A2A サーバーを使用する場合、プレビュー版モデル (`gemini-3.1-pro-preview`, `gemini-3-flash-preview` 等) のクォータ上限が極めて低く設定されており、「You have exhausted your capacity on this model.」というエラーと共に数時間のレートリミットがかかることが確認されている。
+* **Current Mitigation**: ユーザーが手動で設定ファイル (`opencode.jsonc`) から `gemini-2.5-pro` などのクォータが潤沢なモデルへ切り替えることで回避する。
+* **Future Work**: HTTP 429 相当のエラーやペイロード内のクォータエラーメッセージを検知した際に、自動的に代替モデル（安定版等）へフォールバックする機構の導入を検討する。
+
+### 8.2 Multiple Agents Routing (Provider Level)
+* **Limitation**: 現在の A2A サーバーは起動時に利用モデルを決定しており（または単一のデフォルトモデルに依存）、かつ `opencode-geminicli-a2a-provider` は特定の1つのポートに向けた通信に固定されている。そのため、OpenCode 側から異なるモデル（軽量モデルと高性能モデルなど）を並行して要求・切り替えたい場合に、単一の A2A サーバーでは対応しきれない課題がある。
+* **Future Work**: 複数の A2A サーバーインスタンス（それぞれ異なるモデル向け、異なるポートで起動）を事前構成できるようにし、プロバイダー内でリクエストされたモデルIDに応じて適切なポートへルーティングする「マルチエージェント・ディスパッチ機能」の実装を検討する。

@@ -10,41 +10,44 @@ export interface OpenCodeProviderOptions {
     sessionStore?: SessionStore;
 }
 
-// ユーティリティ: 環境変数を正規化し、空または空白のみの文字列は undefined とする
-function getNormalizedEnv(key: string): string | undefined {
-    const val = process.env[key];
-    return val && val.trim() !== '' ? val.trim() : undefined;
+// ユーティリティ: 文字列を正規化し、空、空白のみ、または "undefined"/"null" 文字列は undefined とする
+function getNormalizedValue(val: any): any {
+    if (typeof val !== 'string') return val === null ? undefined : val;
+    const trimmed = val.trim();
+    if (trimmed === '' || trimmed === 'undefined' || trimmed === 'null') return undefined;
+    return trimmed;
 }
 
-export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig {
-    // 1. 環境変数の取得（文字列として取得されるが、空文字を undefined に正規化）
-    const envHost = getNormalizedEnv('GEMINI_A2A_HOST');
-    const envPortStr = getNormalizedEnv('GEMINI_A2A_PORT');
-    const envToken = getNormalizedEnv('GEMINI_A2A_TOKEN');
-    const envProtocol = getNormalizedEnv('GEMINI_A2A_PROTOCOL');
+// 4. Zod スキーマでパース（デフォルト値の適用と型変換）
+// coerce を使って port の文字列を数値に変換するスキーマを作成
+const parseSchema = z.object({
+    host: z.string().optional(),
+    port: z.coerce.number().int().refine(n => Number.isFinite(n) && n > 0 && n <= 65535, 'invalid port').optional(),
+    token: z.string().optional(),
+    protocol: z.enum(['http', 'https']).optional(),
+});
 
-    // 2. 引数によるオプションの取得
-    const optHost = options?.host;
-    const optPortStr = options?.port; // 文字列・数値の可能性を考慮
-    const optToken = options?.token;
-    const optProtocol = options?.protocol;
+export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig {
+    // 1. 環境変数の取得（空文字、"undefined" などを undefined に正規化）
+    const envHost = getNormalizedValue(process.env['GEMINI_A2A_HOST']);
+    const envPort = getNormalizedValue(process.env['GEMINI_A2A_PORT']);
+    const envToken = getNormalizedValue(process.env['GEMINI_A2A_TOKEN']);
+    const envProtocol = getNormalizedValue(process.env['GEMINI_A2A_PROTOCOL']);
+
+    // 2. 引数によるオプションの取得（同様に正規化）
+    const optHost = getNormalizedValue(options?.host);
+    const optPort = getNormalizedValue(options?.port);
+    const optToken = getNormalizedValue(options?.token);
+    const optProtocol = getNormalizedValue(options?.protocol);
 
     // 3. 優先順位（オプション > 環境変数）でマージ
     const mergedConfig = {
         host: optHost ?? envHost,
-        port: optPortStr ?? envPortStr,
+        port: optPort ?? envPort,
         token: optToken ?? envToken,
         protocol: optProtocol ?? (envProtocol as 'http' | 'https' | undefined),
     };
 
-    // 4. Zod スキーマでパース（デフォルト値の適用と型変換）
-    // coerce を使って port の文字列を数値に変換する一時的なスキーマを作成
-    const parseSchema = z.object({
-        host: z.string().optional(),
-        port: z.coerce.number().int().refine(n => Number.isFinite(n) && n > 0 && n <= 65535, 'invalid port').optional(),
-        token: z.string().optional(),
-        protocol: z.enum(['http', 'https']).optional(),
-    });
 
     const parsedData = parseSchema.parse(mergedConfig);
 

@@ -1,9 +1,10 @@
 {
   "name": "opencode-geminicli-a2a-provider",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "OpenCode custom provider plugin that communicates with Gemini CLI via A2A protocol",
   "opencode": {
+    "id": "opencode-geminicli-a2a",
     "type": "provider",
     "displayName": "Gemini CLI (A2A)",
     "description": "Gemini CLI A2A プロトコル経由のプロバイダー",
@@ -41,15 +42,8 @@
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    }
-  },
   "scripts": {
-    "build": "tsup",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=cjs --outfile=dist/index.cjs --footer:js=\"if (typeof module !== 'undefined' && module.exports) { const original = module.exports; const factory = original.default || original.createGeminiA2AProvider || original; if (typeof factory === 'function') { var _copy = function(src) { for (var _i = 0, _e = Object.entries(src); _i < _e.length; _i++) { var k = _e[_i][0], v = _e[_i][1]; if (k !== 'default') { try { Object.defineProperty(factory, k, { value: v, writable: true, configurable: true, enumerable: true }); } catch(_){} } } }; _copy(original); if (original.provider) { _copy(original.provider); } module.exports = factory; } }\" && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -63,6 +57,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "esbuild": "^0.24.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "tsx": "^4.21.0",

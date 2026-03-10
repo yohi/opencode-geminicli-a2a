@@ -6,6 +6,18 @@ import {
 import type { A2AJsonRpcRequest, A2AResponseResult, Tool } from '../schemas';
 import crypto from 'node:crypto';
 
+export interface ExtendedFinishPart {
+    type: 'finish';
+    finishReason: LanguageModelV1FinishReason;
+    usage: { promptTokens: number; completionTokens: number };
+    providerMetadata?: Record<string, unknown>;
+    inputRequired?: boolean;
+    rawState?: string;
+}
+
+export type ExtendedStreamPart = LanguageModelV1StreamPart | ExtendedFinishPart;
+
+
 interface ToolRequest {
     request: {
         callId?: string;
@@ -187,10 +199,12 @@ function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extr
         } else {
             // Validate that the string is a valid base64 (or base64url) payload.
             // This prevents incorrectly treating generic text or relative paths as binary data.
-            const isBase64 = /^[A-Za-z0-9+/]*={0,2}$/.test(str);
-            const isBase64Url = /^[A-Za-z0-9\-_]*={0,2}$/.test(str);
+            const isBase64 = str.length > 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(str);
+            const isBase64Url = str.length > 0 && /^[A-Za-z0-9\-_]+={0,2}$/.test(str);
+            
+            const isValidLength = str.length % 4 === 0 || (!str.endsWith('=') && str.length % 4 !== 1);
 
-            if ((isBase64 || isBase64Url) && (str.length % 4 === 0 || !str.endsWith('='))) {
+            if ((isBase64 || isBase64Url) && isValidLength) {
                 bytes = str;
             } else {
                 console.warn('[A2A mapper] Invalid base64 string provided for binary data. Part will be dropped.');
@@ -336,8 +350,8 @@ export class A2AStreamMapper {
     /**
      * A2A のレスポンス（各チャンク）を AI SDK のストリームパーツに変換する。
      */
-    mapResult(result: A2AResponseResult): LanguageModelV1StreamPart[] {
-        const parts: LanguageModelV1StreamPart[] = [];
+    mapResult(result: A2AResponseResult): ExtendedStreamPart[] {
+        const parts: ExtendedStreamPart[] = [];
 
         // contextId / taskId の抽出
         if (result.kind === 'task') {
@@ -401,6 +415,9 @@ export class A2AStreamMapper {
                         }
 
                         if (textDelta) {
+                            // v2 ストリーム形式では reasoning-start/reasoning-delta/reasoning-end
+                            // がサポートされている。provider.ts の v1→v2 変換レイヤーで
+                            // 適切な v2 ライフサイクルイベントに変換される。
                             parts.push({
                                 type: 'reasoning',
                                 textDelta,
@@ -418,6 +435,8 @@ export class A2AStreamMapper {
                         finishReason = 'error';
                         break;
                     case 'input-required':
+                        // A2A の input-required は「エージェントがユーザー入力を待っている（ターン終了）」状態。
+                        // タスク継続のシグナルを維持しつつ、生の状態をフラグとして付与して呼び出し元に伝える
                         finishReason = 'tool-calls';
                         break;
                     case 'cancelled':
@@ -437,25 +456,30 @@ export class A2AStreamMapper {
                         finishReason = 'tool-calls';
                         break;
                     case 'stop':
+                    case 'completed':
                         finishReason = 'stop';
                         break;
                     default:
-                        finishReason = 'other';
+                        // final=true で認識できない state の場合も stop 扱い
+                        // (OpenCode は stop 以外を「未完了」と判断してリトライする)
+                        console.warn(`[A2A mapper] Unexpected final status state: '${result.status.state}' for taskId: '${result.taskId}'. Treating as 'stop'.`);
+                        finishReason = 'stop';
                         break;
                 }
 
                 this._lastFinishReason = finishReason;
 
                 const usage = {
-                    promptTokens: result.usage?.promptTokens ?? Number.NaN,
-                    completionTokens: result.usage?.completionTokens ?? Number.NaN,
+                    promptTokens: result.usage?.promptTokens ?? 0,
+                    completionTokens: result.usage?.completionTokens ?? 0,
                 };
 
                 parts.push({
                     type: 'finish',
                     finishReason,
                     usage,
-                });
+                    ...(result.status.state === 'input-required' ? { inputRequired: true, rawState: 'input-required' } : {})
+                } as ExtendedFinishPart);
             }
         }
 
@@ -484,7 +508,7 @@ export class A2AStreamMapper {
  * 後方互換のためのステートレスラッパー関数。
  * 既存テストとの互換性を維持する。
  */
-export function mapA2AResponseToStreamParts(result: A2AResponseResult): LanguageModelV1StreamPart[] {
+export function mapA2AResponseToStreamParts(result: A2AResponseResult): ExtendedStreamPart[] {
     const mapper = new A2AStreamMapper();
     return mapper.mapResult(result);
 }
