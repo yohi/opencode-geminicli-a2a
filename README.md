@@ -212,6 +212,8 @@ runConversation().catch(console.error);
 
 > [!WARNING]
 > プロバイダー（`model` インスタンス）内で `contextId` や `taskId` の状態を保持している関係上、同一インスタンスで並行して `streamText` を呼び出すと状態の競合が発生します。複数セッションを並行実行する場合はそれぞれ別のインスタンスを生成してください。
+> 
+> また、デフォルトで利用される `sharedSessionStore` (および `InMemorySessionStore`) はプロセス内シングルトンです。サーバレスやマルチプロセス環境ではプロセス間で状態を共有できないため、外部セッションストアを使用する必要があります。その場合、プロバイダーの初期化時に `createGeminiA2AProvider({ sessionStore: myRedisStore })` のように設定を渡してください。
 
 ## 制限事項および残存課題 (Phase 2: OpenCode統合テスト・Phase 3: A2A互換性調査 より)
 
