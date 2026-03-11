@@ -80,6 +80,7 @@ export function isQuotaError(error: unknown, config?: FallbackConfig): boolean {
         const record = error as Record<string, unknown>;
         if (typeof record.message === 'string') message = record.message;
         if (typeof record.code === 'number') code = record.code;
+        if (record.isQuotaError === true) return true;
     } else if (typeof error === 'string') {
         message = error;
     }

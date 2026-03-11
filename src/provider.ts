@@ -79,6 +79,10 @@ export class OpenCodeGeminiA2AProvider {
 
             this.options = {
                 ...options,
+                host: finalConfig.host,
+                port: finalConfig.port,
+                token: finalConfig.token,
+                protocol: finalConfig.protocol,
                 sessionStore: this.sessionStore,
                 fallback: this.fallbackConfig,
             };
@@ -221,7 +225,61 @@ export class OpenCodeGeminiA2AProvider {
                     ...this.options,
                     sessionStore: this.sessionStore,
                 });
-                return await fallbackProvider._doStreamInternal(callOptions);
+                const result = await fallbackProvider._doStreamInternal(callOptions);
+                
+                let currentReader = result.stream.getReader();
+                let streamFallbackAttempted = false;
+                let streamStartEmitted = false;
+                const self = this;
+                
+                const proxyStream = new ReadableStream<any>({
+                    async pull(controller) {
+                        while (true) {
+                            try {
+                                const { done, value } = await currentReader.read();
+                                if (done) {
+                                    controller.close();
+                                    return;
+                                }
+
+                                if (value?.type === 'stream-start') {
+                                    if (streamStartEmitted) continue;
+                                    streamStartEmitted = true;
+                                }
+
+                                controller.enqueue(value);
+                                return;
+                            } catch (streamError) {
+                                if (!streamFallbackAttempted && isQuotaError(streamError, self.fallbackConfig)) {
+                                    streamFallbackAttempted = true;
+                                    if (process.env['DEBUG_OPENCODE']) {
+                                        console.warn(`[opencode-geminicli-a2a] Stream error on fallback model '${nextModelId}'. Attempting further fallback...`);
+                                    }
+                                    try {
+                                        const fallbackResult = await fallbackProvider._attemptFallback(callOptions, streamError);
+                                        currentReader.releaseLock();
+                                        currentReader = fallbackResult.stream.getReader();
+                                        continue;
+                                    } catch (furtherError) {
+                                        controller.error(furtherError);
+                                        return;
+                                    }
+                                } else {
+                                    controller.error(streamError);
+                                    return;
+                                }
+                            }
+                        }
+                    },
+                    cancel(reason) {
+                        currentReader.cancel(reason);
+                    }
+                });
+
+                return {
+                    ...result,
+                    stream: proxyStream,
+                };
             } catch (retryError) {
                 if (isQuotaError(retryError, this.fallbackConfig)) {
                     currentModelId = nextModelId;
@@ -410,12 +468,23 @@ export class OpenCodeGeminiA2AProvider {
                             }
                         } else if ('error' in chunk && chunk.error) {
                             const rpcError = new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`);
+                            
+                            const isQuota = isQuotaError({ code: chunk.error.code, message: chunk.error.message }, this.fallbackConfig);
                             Object.assign(rpcError, {
                                 code: chunk.error.code,
                                 data: (chunk.error as any).data,
                                 id: chunk.id,
+                                ...(isQuota ? { isQuotaError: true } : {})
                             });
-                            throw rpcError;
+
+                            if (sessionId) {
+                                const currentSession = await this.sessionStore.get(sessionId);
+                                if (currentSession && Object.keys(currentSession).length > 0) {
+                                    await this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+                                }
+                            }
+                            controller.error(rpcError);
+                            return;
                         }
                     }
 
