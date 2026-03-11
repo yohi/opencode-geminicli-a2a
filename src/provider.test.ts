@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { OpenCodeGeminiA2AProvider } from './provider';
-import { ofetch } from 'ofetch';
+import { ofetch, FetchError } from 'ofetch';
 import type { LanguageModelV1Prompt } from '@ai-sdk/provider';
 
 // Mock ofetch
@@ -199,5 +199,82 @@ describe('OpenCodeGeminiA2AProvider', () => {
         const parsedBody2 = typeof requestBody2 === 'string' ? JSON.parse(requestBody2) : requestBody2;
         expect(parsedBody2.params.contextId).toBe('existing-ctx');
         expect(parsedBody2.params.taskId).toBe('existing-task');
+    });
+
+    describe('自動フォールバックとマルチエージェントルーティング (5-C & 5-D)', () => {
+        it('クォータエラー時に代替モデルと別エンドポイントにフォールバックすること', async () => {
+            // agents と fallback 設定を持たせたプロバイダーを初期化
+            const routedProvider = new OpenCodeGeminiA2AProvider('gemini-3.1-pro-preview', {
+                host: '127.0.0.1',
+                port: 41242,
+                fallback: {
+                    enabled: true,
+                    fallbackChain: ['gemini-3.1-pro-preview', 'gemini-2.5-pro'],
+                },
+                agents: [
+                    {
+                        key: 'stable-server',
+                        host: '192.168.1.10',
+                        port: 8888,
+                        protocol: 'http',
+                        models: ['gemini-2.5-pro'],
+                    }
+                ]
+            });
+
+            // 1回目のリクエスト（元のモデル）は 429 エラーを返すようモック
+            const mockErrorResponse = {
+                ok: false,
+                status: 429,
+                statusText: 'Too Many Requests',
+                headers: new Headers(),
+                _data: '{"error": "Too Many Requests"}',
+                text: async () => '{"error": "Too Many Requests"}',
+            };
+
+            const sseChunks = [
+                'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "final":true, "status":{"state":"stop", "message":{"parts":[{"kind":"text", "text":"Fallback succeded!"}]}}}}\n\n',
+            ];
+
+            // 2回目のリクエスト（フォールバック）は成功するようモック
+            const mockSuccessResponse = {
+                ok: true,
+                status: 200,
+                headers: new Headers({ 'content-type': 'text/event-stream' }),
+                _data: createMockStream(sseChunks),
+            };
+
+            vi.mocked(ofetch.raw)
+                .mockResolvedValueOnce(mockErrorResponse as any)
+                .mockResolvedValueOnce(mockSuccessResponse as any);
+
+            const { stream } = await routedProvider.doStream({
+                inputFormat: 'messages',
+                mode: { type: 'regular' },
+                prompt,
+            });
+
+            const reader = stream.getReader();
+            const parts = [];
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                parts.push(value);
+            }
+
+            // ofetch() が 2回 呼ばれたことを確認 (1回目: エラー, 2回目: フォールバック)
+            expect(vi.mocked(ofetch.raw)).toHaveBeenCalledTimes(2);
+
+            // 1回目のリクエスト先（デフォルトURL）
+            const call1Url = vi.mocked(ofetch.raw).mock.calls[0][0];
+            expect(call1Url).toContain('http://127.0.0.1:41242');
+            
+            // 2回目のリクエスト先（フォールバックした別サーバーのURL）
+            const call2Url = vi.mocked(ofetch.raw).mock.calls[1][0];
+            expect(call2Url).toContain('http://192.168.1.10:8888');
+
+            // 最終的に成功レスポンスがストリームに流れていること
+            expect(parts[parts.length - 1]).toMatchObject({ type: 'finish', finishReason: 'stop' });
+        });
     });
 });

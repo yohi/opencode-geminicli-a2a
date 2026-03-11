@@ -1,6 +1,8 @@
 import { z } from 'zod';
-import { ConfigSchema, type A2AConfig } from './schemas';
+import { ConfigSchema, type A2AConfig, type AgentEndpoint } from './schemas';
 import type { SessionStore } from './session';
+import type { ModelRegistry } from './model-registry';
+import type { FallbackConfig } from './fallback';
 
 export interface OpenCodeProviderOptions {
     host?: string;
@@ -8,6 +10,12 @@ export interface OpenCodeProviderOptions {
     token?: string;
     protocol?: 'http' | 'https';
     sessionStore?: SessionStore;
+    /** カスタムモデルレジストリ。未指定時は StaticModelRegistry が使用される */
+    modelRegistry?: ModelRegistry;
+    /** エラー時自動フォールバック設定。未指定時はフォールバック無効 */
+    fallback?: Partial<FallbackConfig>;
+    /** マルチエージェント構成（5-D）。指定された場合、提供されたエンドポイントにルーティングする */
+    agents?: AgentEndpoint[];
 }
 
 // ユーティリティ: 文字列を正規化し、空、空白のみ、または "undefined"/"null" 文字列は undefined とする
