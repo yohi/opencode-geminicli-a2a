@@ -54,11 +54,21 @@ export class OpenCodeGeminiA2AProvider {
                     if (process.env['DEBUG_OPENCODE']) {
                         console.log(`[opencode-geminicli-a2a] Routing model '${modelId}' to endpoint '${endpoint.key}' (${endpoint.host}:${endpoint.port})`);
                     }
+
+                    const endpointProtocol = endpoint.protocol || config.protocol || 'http';
+                    const configProtocol = config.protocol || 'http';
+                    const endpointOrigin = `${endpointProtocol}://${endpoint.host}:${endpoint.port}`;
+                    const configOrigin = `${configProtocol}://${config.host}:${config.port}`;
+                    
+                    const token = endpoint.token !== undefined 
+                        ? endpoint.token 
+                        : (endpointOrigin === configOrigin ? config.token : undefined);
+
                     finalConfig = {
                         host: endpoint.host,
                         port: endpoint.port,
-                        token: endpoint.token || config.token,
-                        protocol: endpoint.protocol || config.protocol
+                        token: token,
+                        protocol: endpointProtocol as 'http' | 'https'
                     };
                 }
             }
@@ -66,6 +76,12 @@ export class OpenCodeGeminiA2AProvider {
             this.client = new A2AClient(finalConfig);
             this.sessionStore = options?.sessionStore ?? new InMemorySessionStore();
             this.fallbackConfig = resolveFallbackConfig(options?.fallback);
+
+            this.options = {
+                ...options,
+                sessionStore: this.sessionStore,
+                fallback: this.fallbackConfig,
+            };
         } catch (err) {
             console.error(`[opencode-geminicli-error] ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
             throw err;
@@ -99,8 +115,9 @@ export class OpenCodeGeminiA2AProvider {
      * 並行リクエスト時の状態の競合を避けるため、呼び出し元は必ず一意の sessionId を指定してください。
      */
     async doStream(options: LanguageModelV1CallOptions) {
+        let result: any;
         try {
-            return await this._doStreamInternal(options);
+            result = await this._doStreamInternal(options);
         } catch (error) {
             // フォールバック判定: クォータエラーの場合に別モデルで再試行
             if (this.fallbackConfig && isQuotaError(error, this.fallbackConfig)) {
@@ -108,6 +125,66 @@ export class OpenCodeGeminiA2AProvider {
             }
             throw error;
         }
+
+        const fallbackConfig = this.fallbackConfig;
+        if (!fallbackConfig) {
+            return result;
+        }
+
+        let currentReader = result.stream.getReader();
+        let fallbackAttempted = false;
+        let streamStartEmitted = false;
+        const self = this;
+
+        const proxyStream = new ReadableStream<any>({
+            async pull(controller) {
+                while (true) {
+                    try {
+                        const { done, value } = await currentReader.read();
+                        if (done) {
+                            controller.close();
+                            return;
+                        }
+
+                        // stream-start の重複送信を防ぐ
+                        if (value?.type === 'stream-start') {
+                            if (streamStartEmitted) continue;
+                            streamStartEmitted = true;
+                        }
+
+                        controller.enqueue(value);
+                        return;
+                    } catch (error) {
+                        if (!fallbackAttempted && isQuotaError(error, fallbackConfig)) {
+                            fallbackAttempted = true;
+                            if (process.env['DEBUG_OPENCODE']) {
+                                console.warn(`[opencode-geminicli-a2a] Stream error detected over A2A. Attempting fallback...`);
+                            }
+                            try {
+                                const fallbackResult = await self._attemptFallback(options, error);
+                                currentReader.releaseLock();
+                                currentReader = fallbackResult.stream.getReader();
+                                continue; // 新しいリーダーから読み取りを試行する
+                            } catch (fallbackError) {
+                                controller.error(fallbackError);
+                                return;
+                            }
+                        } else {
+                            controller.error(error);
+                            return;
+                        }
+                    }
+                }
+            },
+            cancel(reason) {
+                currentReader.cancel(reason);
+            }
+        });
+
+        return {
+            ...result,
+            stream: proxyStream,
+        };
     }
 
     /**

@@ -245,7 +245,7 @@ describe('OpenCodeGeminiA2AProvider', () => {
             };
 
             vi.mocked(ofetch.raw)
-                .mockRejectedValueOnce(new (FetchError as any)('429', mockErrorResponse))
+                .mockResolvedValueOnce(mockErrorResponse as any)
                 .mockResolvedValueOnce(mockSuccessResponse as any);
 
             const { stream } = await routedProvider.doStream({
