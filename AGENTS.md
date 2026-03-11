@@ -15,7 +15,7 @@ You are working on `opencode-geminicli-a2a-provider`. This is a plugin designed 
 </instructions>
 
 ## Current State
-- **Phase**: Core provider logic and A2A client are implemented and stabilized.
+- **Phase**: コアプロバイダーロジックに加え、動的モデルレジストリ、エラー時の自動フォールバック機構、マルチエージェントルーティング、およびネイティブマルチモーダル対応 (Phase 5) が実装完了し、安定稼働しています。
 - **Testing**: Core tests are green. The framework for streaming and tool calling is in place.
 
 ## Action Guidelines
@@ -23,4 +23,5 @@ You are working on `opencode-geminicli-a2a-provider`. This is a plugin designed 
 - When adding features, prioritize maintaining the direct A2A mapping.
 - If OpenCode API definitions are unclear, investigate `@ai-sdk/provider` interfaces first.
 - Refer to [SPEC.md](./SPEC.md) for project-specific architecture and the [dotfiles-guidelines persona definitions](file:///home/y_ohi/dotfiles/components/dotfiles-ai/agent-skills/dotfiles-guidelines/SKILL.md) for expert role guidance (e.g., @architect, @developer).
+- When modifying fallback or routing logic, do NOT break the existing dynamic design (e.g., `StaticModelRegistry`, `DefaultMultiAgentRouter`, `isQuotaError`).
 </instructions>
