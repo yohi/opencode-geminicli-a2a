@@ -17,7 +17,19 @@ export class DefaultMultiAgentRouter implements MultiAgentRouter {
     private endpoints: AgentEndpoint[];
 
     constructor(endpoints: AgentEndpoint[]) {
-        this.endpoints = endpoints;
+        const modelToEndpoint = new Map<string, string>();
+        for (let i = 0; i < endpoints.length; i++) {
+            const endpoint = endpoints[i];
+            const identity = endpoint.key || `index ${i}`;
+            for (const modelId of endpoint.models) {
+                if (modelToEndpoint.has(modelId)) {
+                    const conflictingIdentity = modelToEndpoint.get(modelId);
+                    throw new Error(`Duplicate model ID '${modelId}' found in endpoints '${conflictingIdentity}' and '${identity}'`);
+                }
+                modelToEndpoint.set(modelId, identity);
+            }
+        }
+        this.endpoints = [...endpoints];
     }
 
     resolve(modelId: string): AgentEndpoint | undefined {
@@ -30,6 +42,6 @@ export class DefaultMultiAgentRouter implements MultiAgentRouter {
     }
 
     getEndpoints(): AgentEndpoint[] {
-        return this.endpoints;
+        return [...this.endpoints];
     }
 }
