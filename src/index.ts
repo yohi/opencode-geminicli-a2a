@@ -1,8 +1,8 @@
 import type { ProviderV1, EmbeddingModelV1 } from '@ai-sdk/provider';
-import fs from 'node:fs';
 import { OpenCodeGeminiA2AProvider } from './provider';
 import { InMemorySessionStore } from './session';
 import { type OpenCodeProviderOptions } from './config';
+import { StaticModelRegistry, type ModelRegistry, type ModelInfo } from './model-registry';
 
 /**
  * @note これはプロセス内シングルトンであり、サーバレスやマルチプロセス環境では
@@ -10,65 +10,12 @@ import { type OpenCodeProviderOptions } from './config';
  */
 export const sharedSessionStore = new InMemorySessionStore();
 
-function getAvailableModels(): Record<string, { id: string; name: string }> {
-    const defaultModels = {
-        'gemini-3-pro-preview': { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview (A2A)' },
-        'gemini-3.1-pro-preview': { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview (A2A)' },
-        'gemini-3.1-pro-preview-customtools': { id: 'gemini-3.1-pro-preview-customtools', name: 'Gemini 3.1 Pro Preview Custom Tools (A2A)' },
-        'gemini-3-flash-preview': { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview (A2A)' },
-        'gemini-2.5-pro': { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (A2A)' },
-        'gemini-2.5-flash': { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (A2A)' },
-        'gemini-2.5-flash-lite': { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite (A2A)' },
-    };
-
-    try {
-        let modelsConfig: any;
-
-        if (process.env['OPENCODE_A2A_MODELS']) {
-            modelsConfig = JSON.parse(process.env['OPENCODE_A2A_MODELS']);
-        } else if (process.env['OPENCODE_A2A_MODELS_PATH']) {
-            if (fs.existsSync(process.env['OPENCODE_A2A_MODELS_PATH'])) {
-                modelsConfig = JSON.parse(fs.readFileSync(process.env['OPENCODE_A2A_MODELS_PATH'], 'utf8'));
-            }
-        }
-
-        if (modelsConfig && typeof modelsConfig === 'object') {
-            const parsedModels: Record<string, { id: string; name: string }> = {};
-            for (const [key, value] of Object.entries(modelsConfig)) {
-                if (value && typeof value === 'object' && 'id' in value && 'name' in value) {
-                    const rawId = (value as any).id;
-                    const rawName = (value as any).name;
-                    if ((typeof rawId === 'string' || typeof rawId === 'number') &&
-                        (typeof rawName === 'string' || typeof rawName === 'number')) {
-                        const strId = String(rawId);
-                        const strName = String(rawName);
-                        if (strId && strName) {
-                            parsedModels[key] = {
-                                id: strId,
-                                name: strName
-                            };
-                        }
-                    }
-                }
-            }
-            if (Object.keys(parsedModels).length > 0) {
-                return parsedModels;
-            }
-        }
-    } catch (err) {
-        if (process.env['DEBUG_OPENCODE']) {
-            console.error('[opencode-geminicli-a2a] Failed to load custom models configuration; using default models.', err);
-        }
-    }
-
-    return defaultModels;
-}
-
 if (process.env['NODE_ENV'] !== 'production' && process.env['DEBUG_OPENCODE']) {
     console.log('[opencode-geminicli-a2a] PLUGIN SCRIPT LOADED');
 }
 
 export { createGeminiA2AProvider, OpenCodeGeminiA2AProvider };
+export { StaticModelRegistry, type ModelRegistry, type ModelInfo } from './model-registry';
 
 /**
  * OpenCode Gemini CLI A2A Provider のインターフェース
@@ -99,8 +46,8 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
                 for (const [key, value] of Object.entries(options)) {
                     if (key === 'token') {
                         logPayload[key] = '***REDACTED***';
-                    } else if (key === 'sessionStore') {
-                        logPayload[key] = '<sessionStore>';
+                    } else if (key === 'sessionStore' || key === 'modelRegistry') {
+                        logPayload[key] = `<${key}>`;
                     } else if (typeof value !== 'object' && typeof value !== 'function') {
                         logPayload[key] = value;
                     }
@@ -110,6 +57,7 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
         }
         
         const sessionStore = options?.sessionStore ?? sharedSessionStore;
+        const modelRegistry = options?.modelRegistry ?? new StaticModelRegistry();
 
         const createModel = (modelId: string, settings?: any) => {
             const { sessionStore: modelSessionStore, ...restSettings } = settings ?? {};
@@ -122,7 +70,7 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
             return new OpenCodeGeminiA2AProvider(modelId, { ...options, sessionStore, ...sanitizedSettings });
         };
 
-        const models = getAvailableModels();
+        const models = modelRegistry.toRecord();
 
         // createModel を直接呼び出し可能なプロバイダー関数として使用し、
         // プロパティを付与して ProviderV1 互換にする。
