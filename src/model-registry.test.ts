@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { StaticModelRegistry, getDefaultModels, type ModelInfo } from './model-registry';
 
 describe('StaticModelRegistry', () => {
@@ -85,7 +85,6 @@ describe('StaticModelRegistry', () => {
     describe('refresh', () => {
         it('環境変数から再読み込みできる', () => {
             const registry = new StaticModelRegistry();
-            const initialCount = registry.listModels().length;
 
             process.env['OPENCODE_A2A_MODELS'] = JSON.stringify({
                 'new-model': { id: 'new-model', name: 'New Model' },
