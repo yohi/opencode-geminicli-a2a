@@ -15,7 +15,7 @@ You are working on `opencode-geminicli-a2a-provider`. This is a plugin designed 
 </instructions>
 
 ## Current State
-- **Phase**: Phase 5 (Dynamic Model Registry, Automatic Fallback, Multi-agent Routing, and Native Multimodal support) is fully implemented and stabilized, extending the core provider logic.
+- **Phase**: Core provider logic has been stabilized, along with model registry, automatic fallback on errors, multi-agent routing, and native multimodal support (Phase 5).
 - **Testing**: Core tests are green. The framework for streaming and tool calling is in place.
 
 ## Action Guidelines
