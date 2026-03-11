@@ -134,11 +134,16 @@ export class OpenCodeGeminiA2AProvider {
                 break;
             }
 
-            console.warn(`[opencode-geminicli-a2a] Quota error on model '${currentModelId}'. Falling back to '${nextModelId}'.`);
+            if (process.env['DEBUG_OPENCODE']) {
+                console.warn(`[opencode-geminicli-a2a] Quota error on model '${currentModelId}'. Falling back to '${nextModelId}'.`);
+            }
 
             try {
                 // フォールバック先のモデルで新しいプロバイダーインスタンスを生成
-                const fallbackProvider = new OpenCodeGeminiA2AProvider(nextModelId, this.options);
+                const fallbackProvider = new OpenCodeGeminiA2AProvider(nextModelId, {
+                    ...this.options,
+                    sessionStore: this.sessionStore,
+                });
                 return await fallbackProvider._doStreamInternal(callOptions);
             } catch (retryError) {
                 if (isQuotaError(retryError, this.fallbackConfig)) {
@@ -156,7 +161,7 @@ export class OpenCodeGeminiA2AProvider {
     }
 
     /** @internal ストリーミングの内部実装 */
-    async _doStreamInternal(options: LanguageModelV1CallOptions) {
+    private async _doStreamInternal(options: LanguageModelV1CallOptions) {
         if (process.env['DEBUG_OPENCODE']) {
             console.log('[opencode-geminicli-a2a] doStream called for model:', this.modelId);
         }
