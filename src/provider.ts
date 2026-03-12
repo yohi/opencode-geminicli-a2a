@@ -149,6 +149,10 @@ export class OpenCodeGeminiA2AProvider {
         if (session.contextId) {
             mapOptions.contextId = session.contextId;
         }
+        
+        if (session.processedMessagesCount !== undefined) {
+            mapOptions.processedMessagesCount = session.processedMessagesCount;
+        }
 
         // マルチターン: 前回が tool-calls で終了した場合、taskId も引き継いでタスク継続
         if (session.lastFinishReason === 'tool-calls' && session.taskId) {
@@ -579,6 +583,7 @@ export class OpenCodeGeminiA2AProvider {
                             ...(mapper.contextId !== undefined && { contextId: mapper.contextId }),
                             ...(mapper.taskId !== undefined && { taskId: mapper.taskId }),
                             lastFinishReason: mapper.lastFinishReason as any,
+                            processedMessagesCount: options.prompt.length,
                         });
                     }
 
