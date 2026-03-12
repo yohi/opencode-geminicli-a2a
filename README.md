@@ -234,6 +234,53 @@ async function runConversation() {
 runConversation().catch(console.error);
 ```
 
+### generationConfig のスコープと優先順位
+
+本プロバイダーでは、モデルの挙動を微調整する `generationConfig` (`temperature`, `topP`, `maxOutputTokens`, `stopSequences` 等) を以下の 3 つのレベルで柔軟に設定可能です。
+
+1.  **プロバイダーレベル (Provider Defaults)**:
+    `createGeminiA2AProvider({ generationConfig: { ... } })` の初期化時、または `opencode.jsonc` の `provider` オプションとして指定する共通のデフォルト設定です。
+2.  **モデルレベル (Model Config)**:
+    `opencode.jsonc` の `models` セクションにおいて、モデルごとに個別に定義する設定です。
+3.  **リクエストレベル (Request Overrides)**:
+    AI SDK の `streamText` や `generateText` を呼び出す際に、引数として直接渡す設定です。
+
+#### 優先順位（衝突ルール）
+
+設定が衝突した場合、以下の順序で優先（上書き）されます：
+
+**リクエストレベル (最優先)** > **モデルレベル** > **プロバイダーレベル** > **A2A サーバー / モデルの規定値**
+
+#### 設定と上書きの例
+
+プロバイダー全体で低い温度感 (`temperature: 0.1`) をデフォルトとしつつ、特定のリクエストで高い温度感 (`temperature: 0.9`) を指定してクリエイティブな回答を得る例：
+
+```typescript
+import { createGeminiA2AProvider } from "@yohi/opencode-geminicli-a2a-provider";
+import { streamText } from "ai";
+
+// 1. プロバイダーレベルでデフォルト値を設定
+const geminiA2A = createGeminiA2AProvider({
+  generationConfig: {
+    temperature: 0.1,      // デフォルトは堅実な回答
+    maxOutputTokens: 2048,
+  }
+});
+
+const model = geminiA2A("gemini-2.5-pro");
+
+// 2. リクエストレベルで個別に上書き
+const { textStream } = streamText({
+  model,
+  prompt: "独創的な物語を書いてください。",
+  temperature: 0.9,       // プロバイダーの 0.1 を 0.9 で上書き
+  maxTokens: 4096,        // maxOutputTokens を 4096 で上書き
+});
+```
+
+> [!TIP]
+> `opencode.jsonc` でのモデルごとの設定例については、[examples/opencode.jsonc](./examples/opencode.jsonc) を参照してください。
+
 > [!WARNING]
 > プロバイダー（`model` インスタンス）内で `contextId` や `taskId` の状態を保持している関係上、同一インスタンスで並行して `streamText` を呼び出すと状態の競合が発生します。複数セッションを並行実行する場合はそれぞれ別のインスタンスを生成してください。
 >

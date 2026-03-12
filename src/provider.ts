@@ -103,10 +103,6 @@ export class OpenCodeGeminiA2AProvider {
 
             this.options = {
                 ...options,
-                host: finalConfig.host,
-                port: finalConfig.port,
-                token: finalConfig.token,
-                protocol: finalConfig.protocol,
                 generationConfig: defaultGenerationConfig,
                 sessionStore: this.sessionStore,
                 fallback: this.fallbackConfig,
