@@ -27,7 +27,10 @@ const INTERNAL_TOOLS = new Set([
 export interface ExtendedFinishPart {
     type: 'finish';
     finishReason: LanguageModelV1FinishReason;
-    usage: { promptTokens: number; completionTokens: number };
+    usage: { 
+        inputTokens: { total: number }; 
+        outputTokens: { total: number };
+    };
     providerMetadata?: Record<string, any>;
     inputRequired?: boolean;
     rawState?: string;
@@ -37,10 +40,11 @@ export interface ExtendedFinishPart {
 
 export type ExtendedStreamPart = LanguageModelV1StreamPart | ExtendedFinishPart | FileStreamPart;
 
-// AI SDK v1 の LanguageModelV1StreamPart に含まれる file 型
+// AI SDK v3 の LanguageModelV3StreamPart に含まれる file 型
 export interface FileStreamPart {
     type: 'file';
-    mimeType: string;
+    mimeType: string; // V1/V2 互換用
+    mediaType: string; // V3 互換用
     data: string | Uint8Array;
 }
 
@@ -541,7 +545,11 @@ export class A2AStreamMapper {
                         if (!toolCallId) {
                             const fallbackKey = `${toolName}_${index}`;
                             if (!this.fallbackToolCallIds.has(fallbackKey)) {
-                                this.fallbackToolCallIds.set(fallbackKey, `call_${toolName}_${index}_${this._turnSequence}`);
+                                // 完全にランダムなUUIDだと、チャンクごとにIDが変わってバッファリングが効かなくなるため、
+                                // ターン内では安定したID（ただしUUID形式）を生成する
+                                const turnSeed = `${this._turnSequence}_${fallbackKey}`;
+                                const hash = crypto.createHash('md5').update(turnSeed).digest('hex');
+                                this.fallbackToolCallIds.set(fallbackKey, `call_${hash}`);
                             }
                             toolCallId = this.fallbackToolCallIds.get(fallbackKey)!;
                         }
@@ -579,6 +587,7 @@ export class A2AStreamMapper {
                             parts.push({
                                 type: 'file',
                                 mimeType,
+                                mediaType: mimeType,
                                 data,
                             } as FileStreamPart);
                         } else {
@@ -594,6 +603,7 @@ export class A2AStreamMapper {
                             parts.push({
                                 type: 'file',
                                 mimeType,
+                                mediaType: mimeType,
                                 data,
                             } as FileStreamPart);
                         } else {
@@ -620,12 +630,19 @@ export class A2AStreamMapper {
                     } else {
                         hasExposedTools = true;
                         if (!this.emittedToolCallIds.has(toolCallId)) {
+                            let argsStr = typeof toolInfo.args === 'string'
+                                ? toolInfo.args
+                                : JSON.stringify(toolInfo.args ?? {});
+                            if (!argsStr || argsStr === '""') argsStr = '{}';
+                            
+                            Logger.info(`Emitting tool call: ${toolInfo.toolName} (${toolCallId}) with args: ${argsStr}`);
+
                             parts.push({
                                 type: 'tool-call',
                                 toolCallType: 'function',
                                 toolCallId,
                                 toolName: toolInfo.toolName,
-                                args: JSON.stringify(toolInfo.args ?? {}),
+                                args: argsStr,
                             });
                             this.emittedToolCallIds.add(toolCallId);
                         }
@@ -684,8 +701,8 @@ export class A2AStreamMapper {
                 this._lastFinishReason = finishReason;
 
                 const usage = {
-                    promptTokens: result.usage?.promptTokens ?? 0,
-                    completionTokens: result.usage?.completionTokens ?? 0,
+                    inputTokens: { total: result.usage?.promptTokens ?? 0 },
+                    outputTokens: { total: result.usage?.completionTokens ?? 0 },
                 };
 
                 let coderAgentKindValue: string | undefined = undefined;
@@ -712,6 +729,8 @@ export class A2AStreamMapper {
                 // 発行が完了したらバッファをクリアして重複を防ぐ
                 this.bufferedTools.clear();
             }
+        } else if (result.kind === 'artifact-update') {
+            // artifact-update の場合はストリームパーツに変換しない
         } else {
             throw new Error(`Unexpected result kind: ${(result as any).kind}`);
         }

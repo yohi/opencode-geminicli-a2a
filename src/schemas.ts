@@ -153,6 +153,12 @@ export const A2AResponseResultSchema = z.union([
             promptTokens: z.number().optional(),
             completionTokens: z.number().optional()
         }).optional(),
+    }),
+    z.object({
+        kind: z.literal('artifact-update'),
+        taskId: z.string(),
+        contextId: z.string().optional(),
+        artifact: z.any().optional()
     })
 ]);
 
