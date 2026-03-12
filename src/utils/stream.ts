@@ -36,7 +36,7 @@ function parseChunkLine(chunkDataSync: string): A2AJsonRpcResponse | null {
     if (!validation.success) {
         throw new InvalidResponseDataError({
             data: parsedJson,
-            message: `Chunk validation failed: ${validation.error.message}. Received data: ${JSON.stringify(parsedJson)}`,
+            message: `Chunk validation failed: ${validation.error.message}`,
         });
     }
 

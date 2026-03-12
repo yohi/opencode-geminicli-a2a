@@ -143,12 +143,13 @@ export class ServerManager {
         const env: Record<string, string> = {
             ...process.env as Record<string, string>,
             CODER_AGENT_PORT: String(port),
+            CODER_AGENT_HOST: host,
             A2A_GEMINI_MODEL: modelId,
             ...config.env,
         };
 
         if (debug) {
-            console.log(`[ServerManager] Starting A2A server: node ${serverPath} (port=${port})`);
+            console.log(`[ServerManager] Starting A2A server: node ${serverPath} (port=${port}, host=${host})`);
         }
 
         const proc = spawn('node', [serverPath], {
@@ -164,13 +165,6 @@ export class ServerManager {
             proc.stderr.on('data', (d: Buffer) => process.stderr.write(`[A2A-${port}] ${d}`));
         }
 
-        proc.once('exit', (code) => {
-            if (debug) {
-                console.log(`[ServerManager] A2A server on port ${port} exited (code=${code})`);
-            }
-            this.servers.delete(port);
-        });
-
         const entry: ManagedServer = { proc, port, host, refCount: 1 };
         this.servers.set(port, entry);
         this.registerCleanup(debug);
@@ -179,13 +173,29 @@ export class ServerManager {
         const pollMs = config.pollIntervalMs ?? 200;
         const timeoutMs = config.startupTimeoutMs ?? 15000;
         try {
-            await waitForPort(port, host, timeoutMs, pollMs);
+            await Promise.race([
+                waitForPort(port, host, timeoutMs, pollMs),
+                new Promise<void>((_, reject) => {
+                    proc.on('error', (err) => reject(new Error(`A2A server spawn error: ${err.message}`)));
+                    proc.once('exit', (code) => {
+                        if (code !== 0 && code !== null) {
+                            reject(new Error(`A2A server exited early with code ${code}`));
+                        }
+                    });
+                })
+            ]);
         } catch (err) {
-            // タイムアウト: プロセスを終了させてエラーを再スロー
             proc.kill();
             this.servers.delete(port);
             throw err;
         }
+
+        proc.once('exit', (code) => {
+            if (debug) {
+                console.log(`[ServerManager] A2A server on port ${port} exited (code=${code})`);
+            }
+            this.servers.delete(port);
+        });
 
         if (debug) {
             console.log(`[ServerManager] A2A server on ${host}:${port} is ready.`);
@@ -212,25 +222,51 @@ export class ServerManager {
         };
     }
 
+    private cleanupHandlers: Array<{ event: string; handler: (...args: any[]) => void }> = [];
+
     private registerCleanup(debug: boolean) {
         if (this.cleanupRegistered) return;
         this.cleanupRegistered = true;
-        const cleanup = () => {
-            for (const [port, entry] of this.servers) {
-                if (debug) {
-                    console.log(`[ServerManager] Cleaning up A2A server on port ${port}`);
-                }
-                try { entry.proc.kill(); } catch { /* ignore */ }
+
+        const cleanupAndExit = (signal?: NodeJS.Signals) => {
+            this.dispose();
+            if (signal) {
+                process.kill(process.pid, signal);
             }
-            this.servers.clear();
         };
-        process.once('exit', cleanup);
-        process.once('SIGTERM', cleanup);
-        process.once('SIGINT', cleanup);
+
+        const exitHandler = () => this.dispose();
+        const termHandler = () => cleanupAndExit('SIGTERM');
+        const intHandler = () => cleanupAndExit('SIGINT');
+
+        process.once('exit', exitHandler);
+        process.once('SIGTERM', termHandler);
+        process.once('SIGINT', intHandler);
+
+        this.cleanupHandlers.push(
+            { event: 'exit', handler: exitHandler },
+            { event: 'SIGTERM', handler: termHandler },
+            { event: 'SIGINT', handler: intHandler }
+        );
+    }
+
+    public dispose() {
+        for (const [port, entry] of this.servers) {
+            try { entry.proc.kill(); } catch { /* ignore */ }
+        }
+        this.servers.clear();
+        this.cleanupRegistered = false;
+        for (const { event, handler } of this.cleanupHandlers) {
+            process.removeListener(event, handler);
+        }
+        this.cleanupHandlers = [];
     }
 
     /** テスト用: インスタンスをリセットする */
     static _reset() {
+        if (ServerManager.instance) {
+            ServerManager.instance.dispose();
+        }
         ServerManager.instance = undefined;
     }
 }

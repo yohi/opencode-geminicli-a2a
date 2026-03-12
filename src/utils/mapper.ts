@@ -150,6 +150,14 @@ export function mapPromptToA2AJsonRpcRequest(
             } else if (msg.role === 'system') {
                 historyText += `[System]\n${msg.content}\n\n`;
                 if (historyText) parts.push({ kind: 'text' as const, text: historyText.trim() });
+            } else if (msg.role === 'assistant') {
+                let text = '';
+                if (typeof msg.content === 'string') text = msg.content;
+                else if (Array.isArray(msg.content)) {
+                    text = (msg.content as any[]).filter(p => p.type === 'text').map(p => p.text).join('\n');
+                }
+                historyText += `[Assistant]\n${text}\n\n`;
+                if (historyText) parts.push({ kind: 'text' as const, text: historyText.trim() });
             }
         } else {
             // 過去のメッセージをテキストとして蓄積
@@ -201,13 +209,14 @@ export function buildConfirmationRequest(
     modelId?: string,
     confirmation: boolean = true
 ): A2AJsonRpcRequest {
+    const ts = Date.now();
     return {
         jsonrpc: '2.0',
-        id: `confirm_${Date.now()}`,
+        id: `confirm_${ts}`,
         method: 'message/stream',
         params: {
             message: {
-                messageId: `confirm_${Date.now()}`,
+                messageId: `confirm_${ts}`,
                 role: 'user',
                 parts: [{ kind: 'text', text: confirmation ? 'Proceed' : 'Cancel' }]
             },
@@ -415,6 +424,10 @@ export class A2AStreamMapper {
     private _taskId?: string;
     /** 発行済みのツール呼び出しID (taskId ごとにリセット) */
     private emittedToolCallIds = new Set<string>();
+    /** 現在のターン番号 (Turn boundary でインクリメント) */
+    private _turnSequence = 0;
+    /** req.callId が無い場合のフォールバックID管理。ツール名_インデックス -> ユニークID */
+    private fallbackToolCallIds = new Map<string, string>();
     /** 出力済みテキストの累計インデックス別マップ。スナップショット重複排除に使用 (taskId ごとにリセット) */
     private emittedTextByIndex = new Map<number, string>();
     /** 現在のチャンクの coderAgentKind */
@@ -429,6 +442,15 @@ export class A2AStreamMapper {
     /** 最後の finishReason を取得 */
     get lastFinishReason(): string | undefined { return this._lastFinishReason; }
 
+    /** ターン開始時のリセット処理 */
+    startNewTurn() {
+        this._turnSequence++;
+        this.emittedTextByIndex.clear();
+        this.emittedToolCallIds.clear();
+        this.fallbackToolCallIds.clear();
+        this.bufferedTools.clear();
+    }
+
     /**
      * A2A のレスポンス（各チャンク）を AI SDK のストリームパーツに変換する。
      */
@@ -442,6 +464,7 @@ export class A2AStreamMapper {
                 this._taskId = result.id;
                 this.emittedTextByIndex.clear();
                 this.emittedToolCallIds.clear();
+                this.fallbackToolCallIds.clear();
                 this.bufferedTools.clear();
                 this._lastFinishReason = undefined;
             }
@@ -454,6 +477,7 @@ export class A2AStreamMapper {
                 this._taskId = result.taskId;
                 this.emittedTextByIndex.clear();
                 this.emittedToolCallIds.clear();
+                this.fallbackToolCallIds.clear();
                 this.bufferedTools.clear();
                 this._lastFinishReason = undefined;
             }
@@ -486,7 +510,14 @@ export class A2AStreamMapper {
                         // ツール呼び出しの引数はストリーム中に徐々に構築されるため、
                         // 最終的な引数が確定するまでツールコールを emit せず、バッファに最新の引数を上書き保存する。
                         // final: true のタイミングでバッファされたツールコールを一括で emit する。
-                        const toolCallId = req.callId || `call_${toolName}_${index}`;
+                        let toolCallId = req.callId;
+                        if (!toolCallId) {
+                            const fallbackKey = `${toolName}_${index}`;
+                            if (!this.fallbackToolCallIds.has(fallbackKey)) {
+                                this.fallbackToolCallIds.set(fallbackKey, `call_${toolName}_${index}_${this._turnSequence}`);
+                            }
+                            toolCallId = this.fallbackToolCallIds.get(fallbackKey)!;
+                        }
                         this.bufferedTools.set(toolCallId, { toolName, args: req.args });
                     } else if (coderAgentKind === 'thought' && p.kind === 'data' && isThoughtData(p.data)) {
                         let textDelta = '';
@@ -630,6 +661,15 @@ export class A2AStreamMapper {
                     completionTokens: result.usage?.completionTokens ?? 0,
                 };
 
+                let coderAgentKindValue: string | undefined = undefined;
+                if (hasInternalTools && !isInternalToolConfirmation) {
+                    coderAgentKindValue = 'internal-tool-call';
+                } else if (this._currentCoderAgentKind) {
+                    coderAgentKindValue = this._currentCoderAgentKind;
+                } else if (isInternalToolConfirmation) {
+                    coderAgentKindValue = 'tool-call-confirmation';
+                }
+
                 parts.push({
                     type: 'finish',
                     finishReason,
@@ -638,13 +678,15 @@ export class A2AStreamMapper {
                     ...(result.status.state === 'input-required' || hasInternalTools ? { 
                         inputRequired: true, 
                         rawState: result.status.state,
-                        coderAgentKind: hasInternalTools && !isInternalToolConfirmation ? 'internal-tool-call' : (this._currentCoderAgentKind || 'tool-call-confirmation')
+                        ...(coderAgentKindValue !== undefined ? { coderAgentKind: coderAgentKindValue } : {})
                     } : {})
                 } as ExtendedFinishPart);
 
                 // 発行が完了したらバッファをクリアして重複を防ぐ
                 this.bufferedTools.clear();
             }
+        } else {
+            throw new Error(`Unexpected result kind: ${(result as any).kind}`);
         }
 
         return parts;

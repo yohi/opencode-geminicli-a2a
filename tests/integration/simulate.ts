@@ -12,9 +12,6 @@ async function main() {
     });
     
     console.log("Result 1 Finish Reason:", result1.finishReason);
-    let text1 = '';
-    // oh wait, doGenerate doesn't return text if stream is used?
-    // doGenerate actually consumes the stream and returns text!
     console.log("Result 1 Text:", result1.text);
 
     console.log("--- Turn 2 ---");
@@ -32,4 +29,7 @@ async function main() {
     console.log("Result 2 Text:", result2.text);
 }
 
-main().catch(console.error);
+main().catch(err => {
+    console.error(err);
+    process.exitCode = 1;
+});

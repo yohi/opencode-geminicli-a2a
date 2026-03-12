@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { createGeminiA2AProvider } from '../../src/index';
 
 async function main() {
@@ -12,6 +13,7 @@ async function main() {
     });
     
     console.log("Result 1 Finish Reason:", result1.finishReason);
+    assert.strictEqual(result1.finishReason, 'stop', 'Turn 1 should finish with "stop"');
 
     console.log("--- Turn 2 ---");
     let result2 = await model.doGenerate({
@@ -25,6 +27,14 @@ async function main() {
     });
 
     console.log("Result 2 Finish Reason:", result2.finishReason);
+    assert.strictEqual(result2.finishReason, 'stop', 'Turn 2 should finish with "stop"');
+    
+    const outputText = result2.text || '';
+    console.log("Result 2 Text:", outputText);
+    assert.ok(outputText.includes('25'), 'Result 2 text should contain "25"');
 }
 
-main().catch(console.error);
+main().catch(err => {
+    console.error(err);
+    process.exit(1);
+});
