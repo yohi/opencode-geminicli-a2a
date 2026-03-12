@@ -1,6 +1,7 @@
 import { ofetch, FetchError } from 'ofetch';
 import { APICallError } from '@ai-sdk/provider';
 import type { A2AConfig, A2AJsonRpcRequest } from './schemas';
+import { Logger } from './utils/logger';
 
 const RETRY_STATUS_CODES = [408, 409, 425, 429, 500, 502, 503, 504];
 
@@ -57,9 +58,7 @@ export class A2AClient {
 
         const retryCount = idempotencyKey ? 3 : 0;
         
-        if (process.env['DEBUG_OPENCODE']) {
-            console.log(`[opencode-geminicli-a2a] Request to ${this.endpoint}:`, JSON.stringify(request, null, 2));
-        }
+        Logger.debug(`Request to ${this.endpoint}:`, JSON.stringify(request, null, 2));
 
         try {
             const response = await ofetch.raw(this.endpoint, {
@@ -75,9 +74,7 @@ export class A2AClient {
                 responseType: 'stream',
             });
 
-            if (process.env['DEBUG_OPENCODE']) {
-                console.log(`[opencode-geminicli-a2a] Response status: ${response.status} ${response.statusText}`);
-            }
+            Logger.debug(`Response status: ${response.status} ${response.statusText}`);
 
             if (!response.ok) {
                 throw new APICallError({
@@ -112,9 +109,7 @@ export class A2AClient {
                 try {
                     responseBody = await error.response?.text();
                 } catch (e) {
-                    if (process.env['DEBUG_OPENCODE']) {
-                        console.error(`A2AClient: Failed to read response body for ${error.response?.url ?? this.endpoint} (status: ${statusCode}):`, e);
-                    }
+                    Logger.error(`Failed to read response body for ${error.response?.url ?? this.endpoint} (status: ${statusCode}):`, e);
                     responseBody = undefined;
                 }
             }

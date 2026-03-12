@@ -206,9 +206,9 @@ describe('mapper', () => {
             const req = mapPromptToA2AJsonRpcRequest(prompt);
             expect(req.params.message.parts.length).toBe(1);
             expect((req.params.message.parts[0] as any).kind).toBe('text');
-            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Unsupported image format'));
-            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Malformed data URI format.'));
-            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid base64 string provided for binary data.'));
+            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Unsupported image format'));
+            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Malformed data URI format.'));
+            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Invalid base64 string provided for binary data.'));
             consoleSpy.mockRestore();
         });
 
@@ -1043,7 +1043,7 @@ describe('mapper', () => {
 
                 const parts = mapper.mapResult(result);
                 expect(parts.length).toBe(0);
-                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Received image part without bytes or uri'));
+                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Received image part without bytes or uri. Skipping.'));
                 consoleSpy.mockRestore();
             });
 
@@ -1067,7 +1067,7 @@ describe('mapper', () => {
 
                 const parts = mapper.mapResult(result);
                 expect(parts.length).toBe(0);
-                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Received file part without fileWithBytes or uri'));
+                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Received file part without fileWithBytes or uri. Skipping.'));
                 consoleSpy.mockRestore();
             });
 

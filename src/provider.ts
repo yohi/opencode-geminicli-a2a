@@ -19,6 +19,7 @@ import type { A2AJsonRpcRequest, A2AConfig } from './schemas';
 import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
 import { isQuotaError, getNextFallbackModel, resolveFallbackConfig, type FallbackConfig } from './fallback';
 import { DefaultMultiAgentRouter } from './router';
+import { Logger } from './utils/logger';
 
 
 function isAutoConfirmTarget(part: ExtendedFinishPart | undefined): boolean {
@@ -52,9 +53,7 @@ export class OpenCodeGeminiA2AProvider {
      */
     constructor(modelId: string, options?: OpenCodeProviderOptions) {
         try {
-            if (process.env['DEBUG_OPENCODE']) {
-                console.log(`[opencode-geminicli-a2a] Initializing model: ${modelId}`);
-            }
+            Logger.info(`Initializing model: ${modelId}`);
             this.modelId = modelId;
             this.modelID = modelId;
             this.options = options;
@@ -70,9 +69,7 @@ export class OpenCodeGeminiA2AProvider {
                     const endpoint = resolvedResult.endpoint;
                     const modelConfig = resolvedResult.config;
 
-                    if (process.env['DEBUG_OPENCODE']) {
-                        console.log(`[opencode-geminicli-a2a] Routing model '${modelId}' to endpoint '${endpoint.key}' (${endpoint.host}:${endpoint.port})`);
-                    }
+                    Logger.info(`Routing model '${modelId}' to endpoint '${endpoint.key}' (${endpoint.host}:${endpoint.port})`);
 
                     // モデル固有の設定があれば上書き
                     if (modelConfig?.options?.generationConfig) {
@@ -118,9 +115,7 @@ export class OpenCodeGeminiA2AProvider {
                 fallback: this.fallbackConfig,
             };
         } catch (err) {
-            if (process.env['DEBUG_OPENCODE']) {
-                console.error(`[opencode-geminicli-error] ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
-            }
+            Logger.error(`ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
             throw err;
         }
     }
@@ -354,9 +349,7 @@ export class OpenCodeGeminiA2AProvider {
 
     /** @internal ストリーミングの内部実装 */
     private async _doStreamInternal(options: LanguageModelV1CallOptions) {
-        if (process.env['DEBUG_OPENCODE']) {
-            console.log('[opencode-geminicli-a2a] doStream called for model:', this.modelId);
-        }
+        Logger.debug('doStream called for model:', this.modelId);
         let sessionId: string | undefined = undefined;
         const opencodeMetadata = options.providerMetadata?.opencode;
 
@@ -366,14 +359,10 @@ export class OpenCodeGeminiA2AProvider {
                 if (trimmed !== '') {
                     sessionId = trimmed;
                 } else {
-                    if (process.env['DEBUG_OPENCODE']) {
-                        console.warn(`[opencode-geminicli-a2a] Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
-                    }
+                    Logger.warn(`Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
                 }
             } else {
-                if (process.env['DEBUG_OPENCODE']) {
-                    console.warn(`[opencode-geminicli-a2a] Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
-                }
+                Logger.warn(`Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
             }
         }
 
@@ -393,7 +382,7 @@ export class OpenCodeGeminiA2AProvider {
             delete session.lastFinishReason;
             if (process.env['DEBUG_OPENCODE']) {
                 const maskedId = sessionId.length > 8 ? `${sessionId.substring(0, 4)}...${sessionId.substring(sessionId.length - 4)}` : '***';
-                console.log(`[opencode-geminicli-a2a] Context reset for session: ${maskedId}`);
+                Logger.debug(`Context reset for session: ${maskedId}`);
             }
         }
 
@@ -575,9 +564,7 @@ export class OpenCodeGeminiA2AProvider {
                             mapper.taskId) {
                             
                             autoConfirmCount++;
-                            if (process.env['DEBUG_OPENCODE']) {
-                                console.log(`[opencode-geminicli-a2a] Auto-confirming tool call (count: ${autoConfirmCount}) for taskId: ${mapper.taskId}`);
-                            }
+                            Logger.info(`Auto-confirming tool call (count: ${autoConfirmCount}) for taskId: ${mapper.taskId}`);
                             currentRequest = buildConfirmationRequest(mapper.taskId, this.modelId);
                             // ループ継続して次を取得
                             continue;
