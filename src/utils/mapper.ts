@@ -78,6 +78,8 @@ export interface MapPromptOptions {
     contextId?: string;
     /** 前回レスポンスから取得した taskId。タスク継続（input-required 状態）に使用 */
     taskId?: string;
+    /** リクエストで使用するモデルID。A2Aサーバー起動時のデフォルトモデルを上書きする */
+    modelId?: string;
 }
 
 /**
@@ -97,10 +99,10 @@ export function mapPromptToA2AJsonRpcRequest(
         ? { tools: optionsOrTools }
         : (optionsOrTools ?? {});
 
-    const { tools, contextId, taskId } = options;
+    const { tools, contextId, taskId, modelId } = options;
 
     if (prompt.length === 0) {
-        return buildRequest('(empty prompt)', { tools, contextId, taskId });
+        return buildRequest('(empty prompt)', { tools, contextId, taskId, modelId });
     }
 
     // prompt 末尾が tool ロールの場合: ツール結果をテキスト化
@@ -121,7 +123,7 @@ export function mapPromptToA2AJsonRpcRequest(
             ...(toolResultText ? [{ kind: 'text' as const, text: toolResultText }] : [])
         ];
 
-        return buildRequest(finalParts.length > 0 ? finalParts : '(empty prompt)', { tools, contextId, taskId });
+        return buildRequest(finalParts.length > 0 ? finalParts : '(empty prompt)', { tools, contextId, taskId, modelId });
     }
 
     // 通常の処理: 末尾から user/system メッセージを探す
@@ -147,7 +149,7 @@ export function mapPromptToA2AJsonRpcRequest(
         parts = [{ kind: 'text' as const, text: '(empty prompt)' }];
     }
 
-    return buildRequest(parts, { tools, contextId, taskId });
+    return buildRequest(parts, { tools, contextId, taskId, modelId });
 }
 
 /**
@@ -297,9 +299,9 @@ function formatToolResults(content: Array<{ type: 'tool-result'; toolCallId: str
  */
 function buildRequest(
     content: string | A2AJsonRpcRequest['params']['message']['parts'],
-    options: { tools?: Tool[]; contextId?: string; taskId?: string }
+    options: { tools?: Tool[]; contextId?: string; taskId?: string; modelId?: string }
 ): A2AJsonRpcRequest {
-    const { tools, contextId, taskId } = options;
+    const { tools, contextId, taskId, modelId } = options;
     const parts = typeof content === 'string'
         ? [{ kind: 'text' as const, text: content }]
         : content;
@@ -318,6 +320,7 @@ function buildRequest(
                 blocking: false,
                 ...(tools && tools.length > 0 ? { tools } : {})
             },
+            ...(modelId ? { model: modelId } : {}),
             ...(contextId ? { contextId } : {}),
             ...(taskId ? { taskId } : {}),
         }

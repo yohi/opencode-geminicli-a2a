@@ -100,6 +100,9 @@ export class OpenCodeGeminiA2AProvider {
 
         const mapOptions: MapPromptOptions = { tools };
 
+        // リクエスト単位でモデルIDを指定（A2Aサーバーの動的モデル変更をサポート）
+        mapOptions.modelId = this.modelId;
+
         // マルチターン: contextId を引き継ぐ
         if (session.contextId) {
             mapOptions.contextId = session.contextId;
