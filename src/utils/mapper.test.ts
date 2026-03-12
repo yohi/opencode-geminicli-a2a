@@ -1,9 +1,13 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mapPromptToA2AJsonRpcRequest, mapA2AResponseToStreamParts, A2AStreamMapper } from './mapper';
 import type { LanguageModelV1Prompt } from '@ai-sdk/provider';
 import type { A2AResponseResult } from '../schemas';
 
 describe('mapper', () => {
+    beforeEach(() => {
+        process.env['DEBUG_OPENCODE'] = '1';
+    });
+    
     describe('mapPromptToA2AJsonRpcRequest', () => {
         it('should map empty prompt', () => {
             const req = mapPromptToA2AJsonRpcRequest([]);
@@ -202,9 +206,9 @@ describe('mapper', () => {
             const req = mapPromptToA2AJsonRpcRequest(prompt);
             expect(req.params.message.parts.length).toBe(1);
             expect((req.params.message.parts[0] as any).kind).toBe('text');
-            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Unsupported image format'));
-            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Malformed data URI format.'));
-            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid base64 string provided for binary data.'));
+            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Unsupported image format'));
+            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Malformed data URI format.'));
+            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Invalid base64 string provided for binary data.'));
             consoleSpy.mockRestore();
         });
 
@@ -247,6 +251,18 @@ describe('mapper', () => {
             const req = mapPromptToA2AJsonRpcRequest(prompt);
             expect(req.params.contextId).toBeUndefined();
             expect(req.params.taskId).toBeUndefined();
+        });
+
+        it('should include generationConfig when provided via options', () => {
+            const prompt: LanguageModelV1Prompt = [
+                { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
+            ];
+            const generationConfig = {
+                temperature: 0.5,
+                topP: 0.9,
+            };
+            const req = mapPromptToA2AJsonRpcRequest(prompt, { generationConfig });
+            expect(req.params.generationConfig).toEqual(generationConfig);
         });
 
         it('should maintain backward compatibility with tools array as second argument', () => {
@@ -1027,7 +1043,7 @@ describe('mapper', () => {
 
                 const parts = mapper.mapResult(result);
                 expect(parts.length).toBe(0);
-                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Received image part without bytes or uri'));
+                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Received image part without bytes or uri. Skipping.'));
                 consoleSpy.mockRestore();
             });
 
@@ -1051,7 +1067,7 @@ describe('mapper', () => {
 
                 const parts = mapper.mapResult(result);
                 expect(parts.length).toBe(0);
-                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Received file part without fileWithBytes or uri'));
+                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Received file part without fileWithBytes or uri. Skipping.'));
                 consoleSpy.mockRestore();
             });
 

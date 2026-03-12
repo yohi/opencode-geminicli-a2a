@@ -10,6 +10,18 @@ export interface OpenCodeProviderOptions {
     token?: string;
     protocol?: 'http' | 'https';
     sessionStore?: SessionStore;
+    /** モデルの挙動を微調整する設定（温度感など） */
+    generationConfig?: {
+        temperature?: number;
+        topP?: number;
+        topK?: number;
+        maxOutputTokens?: number;
+        stopSequences?: string[];
+        presencePenalty?: number;
+        frequencyPenalty?: number;
+        seed?: number;
+        responseFormat?: any;
+    };
     /** カスタムモデルレジストリ。未指定時は StaticModelRegistry が使用される */
     modelRegistry?: ModelRegistry;
     /** エラー時自動フォールバック設定。未指定時はフォールバック無効 */
@@ -35,9 +47,20 @@ const parseSchema = z.object({
     port: z.coerce.number().int().refine(n => Number.isFinite(n) && n > 0 && n <= 65535, 'invalid port').optional(),
     token: z.string().optional(),
     protocol: z.enum(['http', 'https']).optional(),
+    generationConfig: z.object({
+        temperature: z.coerce.number().optional(),
+        topP: z.coerce.number().optional(),
+        topK: z.coerce.number().optional(),
+        maxOutputTokens: z.coerce.number().int().optional(),
+        stopSequences: z.array(z.string()).optional(),
+        presencePenalty: z.coerce.number().optional(),
+        frequencyPenalty: z.coerce.number().optional(),
+        seed: z.coerce.number().int().optional(),
+        responseFormat: z.any().optional(),
+    }).optional(),
 });
 
-export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig {
+export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & { generationConfig?: OpenCodeProviderOptions['generationConfig'] } {
     // 1. 環境変数の取得（空文字、"undefined" などを undefined に正規化）
     const envHost = getNormalizedValue(process.env['GEMINI_A2A_HOST']);
     const envPort = getNormalizedValue(process.env['GEMINI_A2A_PORT']);
@@ -56,11 +79,16 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig {
         port: optPort ?? envPort,
         token: optToken ?? envToken,
         protocol: optProtocol ?? (envProtocol as 'http' | 'https' | undefined),
+        generationConfig: options?.generationConfig,
     };
 
 
     const parsedData = parseSchema.parse(mergedConfig);
 
     // 最終的な ConfigSchema で検証とデフォルト値適用
-    return ConfigSchema.parse(parsedData);
+    const baseConfig = ConfigSchema.parse(parsedData);
+    return {
+        ...baseConfig,
+        generationConfig: parsedData.generationConfig,
+    };
 }

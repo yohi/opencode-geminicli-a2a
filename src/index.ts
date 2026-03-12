@@ -4,15 +4,16 @@ import { InMemorySessionStore } from './session';
 import { type OpenCodeProviderOptions } from './config';
 import { StaticModelRegistry, type ModelRegistry, type ModelInfo } from './model-registry';
 import { ServerManager } from './server-manager';
+import { Logger } from './utils/logger';
 
 /**
  * @note これはプロセス内シングルトンであり、サーバレスやマルチプロセス環境では
- * プロセス間で状態を共有しないため外部セッションストアを使う必要があります。
+...
  */
 export const sharedSessionStore = new InMemorySessionStore();
 
-if (process.env['NODE_ENV'] !== 'production' && process.env['DEBUG_OPENCODE']) {
-    console.log('[opencode-geminicli-a2a] PLUGIN SCRIPT LOADED');
+if (process.env['NODE_ENV'] !== 'production') {
+    Logger.debug('PLUGIN SCRIPT LOADED');
 }
 
 export { createGeminiA2AProvider, OpenCodeGeminiA2AProvider };
@@ -42,21 +43,19 @@ function isGeminiA2AProvider(obj: any): obj is GeminiA2AProvider {
 
 function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2AProvider {
     try {
-        if (process.env['DEBUG_OPENCODE']) {
-            const logPayload: Record<string, any> = {};
-            if (options) {
-                for (const [key, value] of Object.entries(options)) {
-                    if (key === 'token') {
-                        logPayload[key] = '***REDACTED***';
-                    } else if (key === 'sessionStore' || key === 'modelRegistry') {
-                        logPayload[key] = `<${key}>`;
-                    } else if (typeof value !== 'object' && typeof value !== 'function') {
-                        logPayload[key] = value;
-                    }
+        const logPayload: Record<string, any> = {};
+        if (options) {
+            for (const [key, value] of Object.entries(options)) {
+                if (key === 'token') {
+                    logPayload[key] = '***REDACTED***';
+                } else if (key === 'sessionStore' || key === 'modelRegistry') {
+                    logPayload[key] = `<${key}>`;
+                } else if (typeof value !== 'object' && typeof value !== 'function') {
+                    logPayload[key] = value;
                 }
             }
-            console.log(`[opencode-geminicli-a2a] Provider factory called with options: ${JSON.stringify(logPayload)}`);
         }
+        Logger.info(`Provider factory called with options: ${JSON.stringify(logPayload)}`);
         
         const sessionStore = options?.sessionStore ?? sharedSessionStore;
         const modelRegistry = options?.modelRegistry ?? new StaticModelRegistry();
@@ -81,9 +80,7 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
                 const resolvedPort = providerOpts.options?.port ?? options.port ?? 41242;
 
                 // サーバー起動は非同期なので Promise としてプロバイダーに持たせる
-                if (debug) {
-                    console.log(`[opencode-geminicli-a2a] AutoStart configured for model '${modelId}' on ${resolvedHost}:${resolvedPort}`);
-                }
+                Logger.debug(`AutoStart configured for model '${modelId}' on ${resolvedHost}:${resolvedPort}`);
                 (providerInstance as any)._serverReady = manager.ensureRunning(
                     resolvedPort,
                     resolvedHost,
@@ -91,7 +88,7 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
                     options.autoStart,
                     debug
                 ).catch((err: unknown) => {
-                    console.error(`[opencode-geminicli-a2a] Failed to auto-start server for model '${modelId}' on ${resolvedHost}:${resolvedPort}`, err);
+                    Logger.error(`Failed to auto-start server for model '${modelId}' on ${resolvedHost}:${resolvedPort}`, err);
                     throw err;
                 });
             }
@@ -137,16 +134,14 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
             enumerable: true,
         });
 
-        if (process.env['DEBUG_OPENCODE']) {
-            console.log('[opencode-geminicli-a2a] Provider instance created successfully');
-        }
+        Logger.info('Provider instance created successfully');
         
         if (!isGeminiA2AProvider(createModel)) {
             throw new Error('Runtime type check failed: createModel does not satisfy GeminiA2AProvider');
         }
         return createModel;
     } catch (err) {
-        console.error('[opencode-geminicli-error] CRITICAL ERROR IN FACTORY:', err);
+        Logger.error('CRITICAL ERROR IN FACTORY:', err);
         throw err;
     }
 }
@@ -166,8 +161,8 @@ let _providerInstance: GeminiA2AProvider | undefined;
 export function initProvider(config?: OpenCodeProviderOptions): GeminiA2AProvider {
     if (!_providerInstance) {
         _providerInstance = createGeminiA2AProvider(config);
-    } else if (config !== undefined && !!process.env['DEBUG_OPENCODE']) {
-        console.warn('[opencode-geminicli-a2a] initProvider called with new config while _providerInstance already exists. The new config will be ignored.');
+    } else if (config !== undefined) {
+        Logger.warn('initProvider called with new config while _providerInstance already exists. The new config will be ignored.');
     }
     return _providerInstance;
 }
