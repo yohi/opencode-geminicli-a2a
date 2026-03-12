@@ -249,6 +249,18 @@ describe('mapper', () => {
             expect(req.params.taskId).toBeUndefined();
         });
 
+        it('should include generationConfig when provided via options', () => {
+            const prompt: LanguageModelV1Prompt = [
+                { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
+            ];
+            const generationConfig = {
+                temperature: 0.5,
+                topP: 0.9,
+            };
+            const req = mapPromptToA2AJsonRpcRequest(prompt, { generationConfig });
+            expect(req.params.generationConfig).toEqual(generationConfig);
+        });
+
         it('should maintain backward compatibility with tools array as second argument', () => {
             const prompt: LanguageModelV1Prompt = [
                 { role: 'user', content: [{ type: 'text', text: 'Hello' }] }

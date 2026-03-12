@@ -304,4 +304,5 @@ export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResp
     }
   }
   ```
-* **Future Work**: `generationConfig`（`temperature`, `topP` 等）の動的指定も A2A サーバーがサポートしている可能性があるが、現在の AI SDK (`LanguageModelV1CallOptions`) にはそれに対応する設定フィールドがないため、将来の拡張課題として残す。
+* **Generation Configuration**: `generationConfig`（`temperature`, `topP`, `maxOutputTokens` 等）の動的指定を A2A サーバーのリクエストパラメータとしてサポート。
+* **Dynamic Model Selection**: リクエスト単位で `model` ID を指定し、サーバー側のデフォルトモデルを上書き可能（Phase 5-C）。
