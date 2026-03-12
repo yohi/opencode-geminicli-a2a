@@ -273,6 +273,54 @@ describe('OpenCodeGeminiA2AProvider', () => {
         });
     });
 
+    it('should use model-specific generationConfig from agents option', async () => {
+        const routedProvider = new OpenCodeGeminiA2AProvider('model-x', {
+            host: '127.0.0.1',
+            port: 41242,
+            agents: [
+                {
+                    key: 'special-server',
+                    host: '10.0.0.1',
+                    port: 9999,
+                    models: {
+                        'model-x': {
+                            options: {
+                                generationConfig: { temperature: 0.1 }
+                            }
+                        }
+                    }
+                }
+            ]
+        });
+
+        const sseChunks = [
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "final":true, "status":{"state":"stop"}}}\n\n',
+        ];
+
+        const mockResponse = {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'text/event-stream' }),
+            _data: createMockStream(sseChunks),
+        };
+        vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
+
+        await routedProvider.doStream({
+            inputFormat: 'messages',
+            mode: { type: 'regular' },
+            prompt,
+        });
+
+        const requestBody = vi.mocked(ofetch.raw).mock.calls[0][1]?.body as any;
+        const parsedBody = typeof requestBody === 'string' ? JSON.parse(requestBody) : requestBody;
+        
+        expect(parsedBody.params.generationConfig).toEqual({
+            temperature: 0.1,
+        });
+        // Check if routed to correct host
+        expect(vi.mocked(ofetch.raw).mock.calls[0][0]).toContain('10.0.0.1:9999');
+    });
+
     describe('自動フォールバックとマルチエージェントルーティング (5-C & 5-D)', () => {
         it('クォータエラー時に代替モデルと別エンドポイントにフォールバックすること', async () => {
             // agents と fallback 設定を持たせたプロバイダーを初期化
