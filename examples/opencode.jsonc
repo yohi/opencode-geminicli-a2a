@@ -24,20 +24,32 @@
                 "host": "127.0.0.1",
                 "port": 41242,
                 "protocol": "http"
-                // ※トークンによる認証を追加する場合は、コメントアウトを外して設定してください。
-                // ただし、設定ファイルへの平文でのトークン記述は推奨されません。
-                // 可能な限り、実行環境の環境変数 `GEMINI_A2A_TOKEN` を使用してください。
-                // , "token": "your-secret-token"
             },
             "models": {
                 "gemini-3.1-pro-preview": {},
-                "gemini-3.1-pro-preview-customtools": {},
-                "gemini-3-pro-preview": {},
-                "gemini-3-flash-preview": {},
                 "gemini-2.5-pro": {},
                 "gemini-2.5-flash": {},
                 "gemini-2.5-flash-lite": {}
             }
+            // ---------------------------------------------------------
+            // ※ 動的モデル変更 (Dynamic Model Switching)
+            // ---------------------------------------------------------
+            // 現在のバージョンでは、A2A サーバー側で動的モデル変更がサポートされているため、
+            // 単一の A2A サーバー (例: 41242 ポート) ですべてのモデルを処理可能です。
+            // サーバーを複数起動して使い分ける必要がある場合のみ、以下の "agents" を設定してください。
+            //
+            // "agents": [
+            //     {
+            //         "key": "pro-server",
+            //         "port": 41242,
+            //         "models": ["gemini-3.1-pro-preview", "gemini-2.5-pro"]
+            //     },
+            //     {
+            //         "key": "flash-server",
+            //         "port": 41243,
+            //         "models": ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+            //     }
+            // ]
         }
     },
     // ---------------------------------------------------------

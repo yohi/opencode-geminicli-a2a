@@ -64,6 +64,8 @@ export const A2AJsonRpcRequestSchema = z.object({
             blocking: z.boolean().default(false),
             tools: z.array(ToolSchema).optional()
         }).optional(),
+        // dynamic model: リクエスト単位でモデルIDを指定（サーバー起動時のデフォルトを上書き）
+        model: z.string().optional(),
         // multi-turn: コンテキスト継続時に使用
         contextId: z.string().optional(),
         // multi-turn: 既存タスクの継続時に使用
@@ -82,12 +84,12 @@ export const metadataSchema = z.object({
     }).optional()
 }).passthrough().optional();
 
-export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
+export const A2AResponseResultSchema = z.union([
     z.object({
         kind: z.literal('task'),
         id: z.string(),
         contextId: z.string(),
-        status: z.object({ state: z.enum(STATUS_STATES) }),
+        status: z.object({ state: z.union([z.enum(STATUS_STATES), z.string()]) }),
         history: z.array(z.any()).optional(),
         metadata: metadataSchema,
         artifacts: z.array(z.any()).optional(),
@@ -97,7 +99,7 @@ export const A2AResponseResultSchema = z.discriminatedUnion('kind', [
         taskId: z.string(),
         contextId: z.string().optional(),
         status: z.object({
-            state: z.enum(STATUS_STATES),
+            state: z.union([z.enum(STATUS_STATES), z.string()]),
             message: z.object({
                 parts: z.array(z.object({
                     kind: z.string(),

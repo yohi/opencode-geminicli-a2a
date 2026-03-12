@@ -56,8 +56,9 @@ export class A2AClient {
         }
 
         const retryCount = idempotencyKey ? 3 : 0;
+        
         if (process.env['DEBUG_OPENCODE']) {
-            console.log('[opencode-geminicli-a2a] Fetching URL:', this.endpoint, 'Method: POST');
+            console.log(`[opencode-geminicli-a2a] Request to ${this.endpoint}:`, JSON.stringify(request, null, 2));
         }
 
         try {
@@ -73,6 +74,10 @@ export class A2AClient {
                 ignoreResponseError: true,
                 responseType: 'stream',
             });
+
+            if (process.env['DEBUG_OPENCODE']) {
+                console.log(`[opencode-geminicli-a2a] Response status: ${response.status} ${response.statusText}`);
+            }
 
             if (!response.ok) {
                 throw new APICallError({

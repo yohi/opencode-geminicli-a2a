@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type {
     LanguageModelV1CallOptions,
     LanguageModelV1StreamPart,
@@ -6,13 +7,26 @@ import type {
 } from '@ai-sdk/provider';
 import { resolveConfig, type OpenCodeProviderOptions } from './config';
 import { A2AClient } from './a2a-client';
-import { mapPromptToA2AJsonRpcRequest, A2AStreamMapper, type MapPromptOptions, type ExtendedFinishPart } from './utils/mapper';
+import { 
+    mapPromptToA2AJsonRpcRequest, 
+    A2AStreamMapper, 
+    buildConfirmationRequest,
+    type MapPromptOptions, 
+    type ExtendedFinishPart 
+} from './utils/mapper';
 import { parseA2AStream } from './utils/stream';
 import type { A2AJsonRpcRequest, A2AConfig } from './schemas';
 import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
 import { isQuotaError, getNextFallbackModel, resolveFallbackConfig, type FallbackConfig } from './fallback';
 import { DefaultMultiAgentRouter } from './router';
 
+
+function isAutoConfirmTarget(part: ExtendedFinishPart | undefined): boolean {
+    if (!part) return false;
+    return part.inputRequired === true && 
+           part.hasExposedTools !== true &&
+           (part.coderAgentKind === 'tool-call-confirmation' || part.coderAgentKind === 'internal-tool-call');
+}
 
 export class OpenCodeGeminiA2AProvider {
     readonly specificationVersion = 'v2' as const;
@@ -99,6 +113,9 @@ export class OpenCodeGeminiA2AProvider {
         }
 
         const mapOptions: MapPromptOptions = { tools };
+
+        // リクエスト単位でモデルIDを指定（A2Aサーバーの動的モデル変更をサポート）
+        mapOptions.modelId = this.modelId;
 
         // マルチターン: contextId を引き継ぐ
         if (session.contextId) {
@@ -316,7 +333,12 @@ export class OpenCodeGeminiA2AProvider {
             }
         }
 
-        const session = sessionId ? await this.sessionStore.get(sessionId) || {} : {};
+        // Gemini CLI 等、メタデータを渡さないクライアントのためのフォールバック
+        if (!sessionId) {
+            sessionId = `cli-session-${crypto.randomUUID()}`;
+        }
+
+        const session = await this.sessionStore.get(sessionId) || {};
 
         // resetContext フラグの検出: 新規チャットスレッド開始時等にコンテキストをリセット
         if (opencodeMetadata?.resetContext === true && sessionId) {
@@ -355,7 +377,6 @@ export class OpenCodeGeminiA2AProvider {
             throw error;
         }
 
-        const chunkGenerator = parseA2AStream(responseStream);
         const mapper = new A2AStreamMapper();
 
         // v2 ストリーム変換: v1 の LanguageModelV1StreamPart を
@@ -368,124 +389,158 @@ export class OpenCodeGeminiA2AProvider {
 
         const stream = new ReadableStream<any>({
             start: async (controller) => {
+                let currentRequest = request;
+                let autoConfirmCount = 0;
+                const MAX_AUTO_CONFIRM = 10;
+                let firstResponse: { stream: any, headers: Record<string, string> } | undefined = { stream: responseStream, headers: headers || {} };
+
                 try {
                     // stream-start を送信
                     controller.enqueue({ type: 'stream-start' });
 
-                    let hasFinished = false;
-                    for await (const chunk of chunkGenerator) {
-                        if ('result' in chunk && chunk.result) {
-                            const parts = mapper.mapResult(chunk.result);
-                            for (const part of parts) {
-                                switch (part.type) {
-                                    case 'text-delta': {
-                                        // text-start を送信（初回またはテキストパーツが変わった場合）
-                                        if (activeTextId === undefined) {
-                                            activeTextId = `text-${textPartCounter++}`;
-                                            controller.enqueue({ type: 'text-start', id: activeTextId });
-                                        }
-                                        controller.enqueue({
-                                            type: 'text-delta',
-                                            id: activeTextId,
-                                            delta: part.textDelta,
-                                        });
-                                        break;
-                                    }
-                                    case 'reasoning': {
-                                        // テキストパーツが開いていれば閉じる
-                                        if (activeTextId !== undefined) {
-                                            controller.enqueue({ type: 'text-end', id: activeTextId });
-                                            activeTextId = undefined;
-                                        }
-                                        // v2 reasoning ライフサイクル: start → delta → end
-                                        const reasoningId = `reasoning-${reasoningPartCounter++}`;
-                                        controller.enqueue({ type: 'reasoning-start', id: reasoningId });
-                                        controller.enqueue({
-                                            type: 'reasoning-delta',
-                                            id: reasoningId,
-                                            delta: part.textDelta,
-                                        });
-                                        controller.enqueue({ type: 'reasoning-end', id: reasoningId });
-                                        break;
-                                    }
-                                    case 'tool-call': {
-                                        // テキストパーツを閉じる
-                                        if (activeTextId !== undefined) {
-                                            controller.enqueue({ type: 'text-end', id: activeTextId });
-                                            activeTextId = undefined;
-                                        }
-                                        const toolId = `tool-${toolCallCounter++}`;
-                                        controller.enqueue({
-                                            type: 'tool-input-start',
-                                            id: toolId,
-                                            toolCallId: part.toolCallId,
-                                            toolName: part.toolName,
-                                        });
-                                        controller.enqueue({
-                                            type: 'tool-input-delta',
-                                            id: toolId,
-                                            delta: part.args,
-                                        });
-                                        controller.enqueue({
-                                            type: 'tool-input-end',
-                                            id: toolId,
-                                        });
-                                        break;
-                                    }
-                                    case 'file': {
-                                        // テキストパーツを閉じる
-                                        if (activeTextId !== undefined) {
-                                            controller.enqueue({ type: 'text-end', id: activeTextId });
-                                            activeTextId = undefined;
-                                        }
-                                        // マルチモーダルレスポンス: file パーツをそのまま転送
-                                        controller.enqueue(part);
-                                        break;
-                                    }
-                                    case 'finish': {
-                                        hasFinished = true;
-                                        // テキストパーツを閉じる
-                                        if (activeTextId !== undefined) {
-                                            controller.enqueue({ type: 'text-end', id: activeTextId });
-                                            activeTextId = undefined;
-                                        }
-                                        const finishPart = part as ExtendedFinishPart;
-                                        controller.enqueue({
-                                            type: 'finish',
-                                            finishReason: finishPart.finishReason,
-                                            usage: finishPart.usage,
-                                            ...(finishPart.providerMetadata !== undefined ? { providerMetadata: finishPart.providerMetadata } : {}),
-                                            ...(finishPart.inputRequired !== undefined ? { inputRequired: finishPart.inputRequired } : {}),
-                                            ...(finishPart.rawState !== undefined ? { rawState: finishPart.rawState } : {})
-                                        });
-                                        break;
-                                    }
-                                    default:
-                                        // 未知のパーツタイプはそのまま転送
-                                        controller.enqueue(part);
-                                        break;
-                                }
-                            }
-                        } else if ('error' in chunk && chunk.error) {
-                            const rpcError = new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`);
-                            
-                            const isQuota = isQuotaError({ code: chunk.error.code, message: chunk.error.message }, this.fallbackConfig);
-                            Object.assign(rpcError, {
-                                code: chunk.error.code,
-                                data: (chunk.error as any).data,
-                                id: chunk.id,
-                                ...(isQuota ? { isQuotaError: true } : {})
+                    while (autoConfirmCount < MAX_AUTO_CONFIRM) {
+                        let hasFinished = false;
+                        let lastFinishPart: ExtendedFinishPart | undefined;
+                        
+                        let response;
+                        if (firstResponse) {
+                            response = firstResponse;
+                            firstResponse = undefined;
+                        } else {
+                            response = await this.client.chatStream({
+                                request: currentRequest,
+                                idempotencyKey: undefined,
+                                abortSignal: options.abortSignal,
                             });
+                        }
 
-                            if (sessionId) {
-                                const currentSession = await this.sessionStore.get(sessionId);
-                                if (currentSession && Object.keys(currentSession).length > 0) {
-                                    await this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+                        mapper.startNewTurn();
+                        const chunkGenerator = parseA2AStream(response.stream);
+
+                        for await (const chunk of chunkGenerator) {
+                            if ('result' in chunk && chunk.result) {
+                                const parts = mapper.mapResult(chunk.result);
+                                for (const part of parts) {
+                                    switch (part.type) {
+                                        case 'text-delta': {
+                                            if (activeTextId === undefined) {
+                                                activeTextId = `text-${textPartCounter++}`;
+                                                controller.enqueue({ type: 'text-start', id: activeTextId });
+                                            }
+                                            controller.enqueue({
+                                                type: 'text-delta',
+                                                id: activeTextId,
+                                                delta: part.textDelta,
+                                            });
+                                            break;
+                                        }
+                                        case 'reasoning': {
+                                            if (activeTextId !== undefined) {
+                                                controller.enqueue({ type: 'text-end', id: activeTextId });
+                                                activeTextId = undefined;
+                                            }
+                                            const reasoningId = `reasoning-${reasoningPartCounter++}`;
+                                            controller.enqueue({ type: 'reasoning-start', id: reasoningId });
+                                            controller.enqueue({
+                                                type: 'reasoning-delta',
+                                                id: reasoningId,
+                                                delta: part.textDelta,
+                                            });
+                                            controller.enqueue({ type: 'reasoning-end', id: reasoningId });
+                                            break;
+                                        }
+                                        case 'tool-call': {
+                                            if (activeTextId !== undefined) {
+                                                controller.enqueue({ type: 'text-end', id: activeTextId });
+                                                activeTextId = undefined;
+                                            }
+                                            const toolId = `tool-${toolCallCounter++}`;
+                                            controller.enqueue({
+                                                type: 'tool-input-start',
+                                                id: toolId,
+                                                toolCallId: part.toolCallId,
+                                                toolName: part.toolName,
+                                            });
+                                            controller.enqueue({
+                                                type: 'tool-input-delta',
+                                                id: toolId,
+                                                delta: part.args,
+                                            });
+                                            controller.enqueue({
+                                                type: 'tool-input-end',
+                                                id: toolId,
+                                            });
+                                            break;
+                                        }
+                                        case 'file': {
+                                            if (activeTextId !== undefined) {
+                                                controller.enqueue({ type: 'text-end', id: activeTextId });
+                                                activeTextId = undefined;
+                                            }
+                                            controller.enqueue(part);
+                                            break;
+                                        }
+                                        case 'finish': {
+                                            hasFinished = true;
+                                            if (activeTextId !== undefined) {
+                                                controller.enqueue({ type: 'text-end', id: activeTextId });
+                                                activeTextId = undefined;
+                                            }
+                                            const finishPart = part as ExtendedFinishPart;
+                                            lastFinishPart = finishPart;
+
+                                            // 自動承認が必要な状態でなければ、OpenCodeに finish を流して終了判定する
+                                            if (!isAutoConfirmTarget(finishPart)) {
+                                                controller.enqueue({
+                                                    type: 'finish',
+                                                    finishReason: finishPart.finishReason,
+                                                    usage: finishPart.usage,
+                                                    ...(finishPart.providerMetadata !== undefined ? { providerMetadata: finishPart.providerMetadata } : {}),
+                                                });
+                                            }
+                                            break;
+                                        }
+                                        default:
+                                            controller.enqueue(part);
+                                            break;
+                                    }
                                 }
+                            } else if ('error' in chunk && chunk.error) {
+                                // エラー時は以前と同様に処理
+                                const rpcError = new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`);
+                                const isQuota = isQuotaError({ code: chunk.error.code, message: chunk.error.message }, this.fallbackConfig);
+                                Object.assign(rpcError, { 
+                                    code: chunk.error.code, 
+                                    data: (chunk.error as any).data,
+                                    id: chunk.id, 
+                                    ...(isQuota ? { isQuotaError: true } : {}) 
+                                });
+                                if (sessionId) await this.sessionStore.update(sessionId, { lastFinishReason: undefined });
+                                controller.error(rpcError);
+                                return;
                             }
-                            controller.error(rpcError);
+                        }
+
+                        if (!hasFinished) {
+                            controller.error(new Error('A2A stream disconnected before sending final status-update.'));
                             return;
                         }
+
+                        // 自動承認ロジック: 内部ツール確認中の場合は次のリクエストを自動送信
+                        if (isAutoConfirmTarget(lastFinishPart) && 
+                            mapper.taskId) {
+                            
+                            autoConfirmCount++;
+                            if (process.env['DEBUG_OPENCODE']) {
+                                console.log(`[opencode-geminicli-a2a] Auto-confirming tool call (count: ${autoConfirmCount}) for taskId: ${mapper.taskId}`);
+                            }
+                            currentRequest = buildConfirmationRequest(mapper.taskId, this.modelId);
+                            // ループ継続して次を取得
+                            continue;
+                        }
+
+                        // 通常終了
+                        break;
                     }
 
                     // テキストパーツが開いていれば閉じる
@@ -494,23 +549,13 @@ export class OpenCodeGeminiA2AProvider {
                         activeTextId = undefined;
                     }
 
-                    if (!hasFinished) {
-                        controller.error(new Error('A2A stream disconnected before sending final status-update.'));
-                        return;
-                    }
-
-                    // マルチターン: mapper から contextId / taskId / finishReason を抽出して保存
+                    // マルチターン情報の保存
                     if (sessionId) {
-                        const hasUpdate = mapper.contextId !== undefined || mapper.taskId !== undefined || mapper.lastFinishReason !== undefined;
-                        const existingSession = await this.sessionStore.get(sessionId);
-                        const hasExisting = existingSession !== undefined && Object.keys(existingSession).length > 0;
-                        if (hasUpdate || hasExisting) {
-                            await this.sessionStore.update(sessionId, {
-                                ...(mapper.contextId !== undefined && { contextId: mapper.contextId }),
-                                ...(mapper.taskId !== undefined && { taskId: mapper.taskId }),
-                                lastFinishReason: mapper.lastFinishReason,
-                            });
-                        }
+                        await this.sessionStore.update(sessionId, {
+                            ...(mapper.contextId !== undefined && { contextId: mapper.contextId }),
+                            ...(mapper.taskId !== undefined && { taskId: mapper.taskId }),
+                            lastFinishReason: mapper.lastFinishReason as any,
+                        });
                     }
 
                     controller.close();
