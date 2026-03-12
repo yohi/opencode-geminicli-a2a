@@ -60,15 +60,26 @@ export class OpenCodeGeminiA2AProvider {
             this.options = options;
             const resolved = resolveConfig(options);
             const config: A2AConfig = resolved;
-            const defaultGenerationConfig = resolved.generationConfig;
+            let defaultGenerationConfig = resolved.generationConfig;
             
             let finalConfig: A2AConfig = config;
             if (options?.agents && options.agents.length > 0) {
                 const router = new DefaultMultiAgentRouter(options.agents);
-                const endpoint = router.resolve(modelId);
-                if (endpoint) {
+                const resolvedResult = router.resolve(modelId);
+                if (resolvedResult) {
+                    const endpoint = resolvedResult.endpoint;
+                    const modelConfig = resolvedResult.config;
+
                     if (process.env['DEBUG_OPENCODE']) {
                         console.log(`[opencode-geminicli-a2a] Routing model '${modelId}' to endpoint '${endpoint.key}' (${endpoint.host}:${endpoint.port})`);
+                    }
+
+                    // モデル固有の設定があれば上書き
+                    if (modelConfig?.options?.generationConfig) {
+                        defaultGenerationConfig = {
+                            ...defaultGenerationConfig,
+                            ...modelConfig.options.generationConfig
+                        };
                     }
 
                     const endpointProtocol = endpoint.protocol || config.protocol || 'http';

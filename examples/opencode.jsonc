@@ -23,23 +23,30 @@
                 // A2A サーバーのアクセス先を指定 (デフォルトは 127.0.0.1:41242)
                 "host": "127.0.0.1",
                 "port": 41242,
-                "protocol": "http",
-                // ---------------------------------------------------------
-                // ※ 推論パラメータの動的指定 (generationConfig)
-                // ---------------------------------------------------------
-                // 全モデルのデフォルトとして温度感 (temperature) などを設定可能です。
-                // 設定しない場合はサーバー側のデフォルト値が使用されます。
-                "generationConfig": {
-                    "temperature": 0.2,
-                    "topP": 0.95,
-                    "maxOutputTokens": 8192
-                }
+                "protocol": "http"
             },
             "models": {
-                "gemini-3.1-pro-preview": {},
-                "gemini-2.5-pro": {},
-                "gemini-2.5-flash": {},
-                "gemini-2.5-flash-lite": {}
+                // ---------------------------------------------------------
+                // ※ モデルごとの個別設定 (OpenCode スキーマ準拠)
+                // ---------------------------------------------------------
+                // 各モデルの options.generationConfig で、個別に温度感などを指定可能です。
+                "gemini-3.1-pro-preview": {
+                    "options": {
+                        "generationConfig": {
+                            "temperature": 0.2,
+                            "maxOutputTokens": 8192
+                        }
+                    }
+                },
+                "gemini-2.5-pro": {
+                    "options": {
+                        "generationConfig": {
+                            "temperature": 0.7
+                        }
+                    }
+                },
+                "gemini-2.5-flash": true, // boolean での有効化も引き続きサポート
+                "gemini-2.5-flash-lite": true
             }
             // ---------------------------------------------------------
             // ※ 動的モデル変更 (Dynamic Model Switching)

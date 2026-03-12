@@ -51,21 +51,46 @@ describe('DefaultMultiAgentRouter', () => {
         it('モデルIDにマッチするエンドポイントを返す', () => {
             const router = new DefaultMultiAgentRouter(mockEndpoints);
             
-            const endpoint1 = router.resolve('gemini-2.5-pro');
-            expect(endpoint1).toBeDefined();
-            expect(endpoint1?.key).toBe('server-1');
+            const res1 = router.resolve('gemini-2.5-pro');
+            expect(res1?.endpoint.key).toBe('server-1');
 
-            const endpoint2 = router.resolve('gemini-3.1-pro-preview');
-            expect(endpoint2).toBeDefined();
-            expect(endpoint2?.key).toBe('server-2');
+            const res2 = router.resolve('gemini-3.1-pro-preview');
+            expect(res2?.endpoint.key).toBe('server-2');
+        });
+
+        it('モデル固有の設定（options）を正しく解決する', () => {
+            const endpointsWithConfig: AgentEndpoint[] = [
+                {
+                    key: 'config-server',
+                    host: '127.0.0.1',
+                    port: 8080,
+                    models: {
+                        'model-with-opt': {
+                            options: {
+                                generationConfig: { temperature: 0.1 }
+                            }
+                        },
+                        'model-boolean': true
+                    }
+                }
+            ];
+            const router = new DefaultMultiAgentRouter(endpointsWithConfig);
+            
+            const res1 = router.resolve('model-with-opt');
+            expect(res1?.endpoint.key).toBe('config-server');
+            expect(res1?.config?.options?.generationConfig?.temperature).toBe(0.1);
+
+            const res2 = router.resolve('model-boolean');
+            expect(res2?.endpoint.key).toBe('config-server');
+            expect(res2?.config).toBeUndefined();
         });
 
         it('複数のモデルを持つエンドポイントでも正しくマッチする', () => {
             const router = new DefaultMultiAgentRouter(mockEndpoints);
             
-            const endpoint = router.resolve('gemini-2.5-flash');
-            expect(endpoint).toBeDefined();
-            expect(endpoint?.key).toBe('server-1');
+            const res = router.resolve('gemini-2.5-flash');
+            expect(res).toBeDefined();
+            expect(res?.endpoint.key).toBe('server-1');
         });
 
         it('マッチするモデルがない場合は undefined を返す', () => {
