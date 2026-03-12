@@ -112,7 +112,27 @@ export class OpenCodeGeminiA2AProvider {
             tools = options.mode.tools;
         }
 
+        // generationConfig の抽出
+        const generationConfig = {
+            temperature: options.temperature,
+            topP: options.topP,
+            topK: options.topK,
+            maxOutputTokens: options.maxTokens,
+            stopSequences: options.stopSequences,
+            presencePenalty: options.presencePenalty,
+            frequencyPenalty: options.frequencyPenalty,
+            seed: options.seed,
+        };
+        // undefined の値を除去
+        const filteredConfig = Object.fromEntries(
+            Object.entries(generationConfig).filter(([_, v]) => v !== undefined)
+        );
+
         const mapOptions: MapPromptOptions = { tools };
+
+        if (Object.keys(filteredConfig).length > 0) {
+            mapOptions.generationConfig = filteredConfig;
+        }
 
         // リクエスト単位でモデルIDを指定（A2Aサーバーの動的モデル変更をサポート）
         mapOptions.modelId = this.modelId;

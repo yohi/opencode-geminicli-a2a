@@ -99,6 +99,18 @@ export interface MapPromptOptions {
     taskId?: string;
     /** リクエストで使用するモデルID。A2Aサーバー起動時のデフォルトモデルを上書きする */
     modelId?: string;
+    /** モデルの挙動を微調整する設定（温度感など） */
+    generationConfig?: {
+        temperature?: number;
+        topP?: number;
+        topK?: number;
+        maxOutputTokens?: number;
+        stopSequences?: string[];
+        presencePenalty?: number;
+        frequencyPenalty?: number;
+        seed?: number;
+        responseFormat?: any;
+    };
 }
 
 /**
@@ -118,10 +130,10 @@ export function mapPromptToA2AJsonRpcRequest(
         ? { tools: optionsOrTools }
         : (optionsOrTools ?? {});
 
-    const { tools, contextId, taskId, modelId } = options;
+    const { tools, contextId, taskId, modelId, generationConfig } = options;
 
     if (prompt.length === 0) {
-        return buildRequest('(empty prompt)', { tools, contextId, taskId, modelId });
+        return buildRequest('(empty prompt)', options);
     }
 
     // 履歴を含めてメッセージを処理する
@@ -198,7 +210,7 @@ export function mapPromptToA2AJsonRpcRequest(
         }
     }
 
-    return buildRequest(parts, { tools, contextId, taskId, modelId });
+    return buildRequest(parts, options);
 }
 
 /**
@@ -376,9 +388,9 @@ function formatToolResults(content: Array<{ type: 'tool-result'; toolCallId: str
  */
 function buildRequest(
     content: string | A2AJsonRpcRequest['params']['message']['parts'],
-    options: { tools?: Tool[]; contextId?: string; taskId?: string; modelId?: string }
+    options: MapPromptOptions
 ): A2AJsonRpcRequest {
-    const { tools, contextId, taskId, modelId } = options;
+    const { tools, contextId, taskId, modelId, generationConfig } = options;
     const parts = typeof content === 'string'
         ? [{ kind: 'text' as const, text: content }]
         : content;
@@ -397,6 +409,7 @@ function buildRequest(
                 blocking: false,
                 ...(tools && tools.length > 0 ? { tools } : {})
             },
+            ...(generationConfig ? { generationConfig } : {}),
             ...(modelId ? { model: modelId } : {}),
             ...(contextId ? { contextId } : {}),
             ...(taskId ? { taskId } : {}),
