@@ -57,7 +57,9 @@ export class A2AClient {
 
         const retryCount = idempotencyKey ? 3 : 0;
         
-        console.log(`[opencode-geminicli-a2a] Request to ${this.endpoint}:`, JSON.stringify(request, null, 2));
+        if (process.env['DEBUG_OPENCODE']) {
+            console.log(`[opencode-geminicli-a2a] Request to ${this.endpoint}:`, JSON.stringify(request, null, 2));
+        }
 
         try {
             const response = await ofetch.raw(this.endpoint, {
@@ -73,7 +75,9 @@ export class A2AClient {
                 responseType: 'stream',
             });
 
-            console.log(`[opencode-geminicli-a2a] Response status: ${response.status} ${response.statusText}`);
+            if (process.env['DEBUG_OPENCODE']) {
+                console.log(`[opencode-geminicli-a2a] Response status: ${response.status} ${response.statusText}`);
+            }
 
             if (!response.ok) {
                 throw new APICallError({
