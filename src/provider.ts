@@ -45,7 +45,7 @@ export class OpenCodeGeminiA2AProvider {
     constructor(modelId: string, options?: OpenCodeProviderOptions) {
         try {
             if (process.env['DEBUG_OPENCODE']) {
-                console.log(`[opencode-geminicli-a2a] Initializing model: ${modelId}`);
+                console.error(`[opencode-geminicli-a2a] Initializing model: ${modelId}`);
             }
             this.modelId = modelId;
             this.modelID = modelId;
@@ -58,7 +58,7 @@ export class OpenCodeGeminiA2AProvider {
                 const endpoint = router.resolve(modelId);
                 if (endpoint) {
                     if (process.env['DEBUG_OPENCODE']) {
-                        console.log(`[opencode-geminicli-a2a] Routing model '${modelId}' to endpoint '${endpoint.key}' (${endpoint.host}:${endpoint.port})`);
+                        console.error(`[opencode-geminicli-a2a] Routing model '${modelId}' to endpoint '${endpoint.key}' (${endpoint.host}:${endpoint.port})`);
                     }
 
                     const endpointProtocol = endpoint.protocol || config.protocol || 'http';
@@ -307,7 +307,7 @@ export class OpenCodeGeminiA2AProvider {
     /** @internal ストリーミングの内部実装 */
     private async _doStreamInternal(options: LanguageModelV1CallOptions) {
         if (process.env['DEBUG_OPENCODE']) {
-            console.log('[opencode-geminicli-a2a] doStream called for model:', this.modelId);
+            console.error('[opencode-geminicli-a2a] doStream called for model:', this.modelId);
         }
         let sessionId: string | undefined = undefined;
         const opencodeMetadata = options.providerMetadata?.opencode;
@@ -325,7 +325,12 @@ export class OpenCodeGeminiA2AProvider {
             }
         }
 
-        const session = sessionId ? await this.sessionStore.get(sessionId) || {} : {};
+        // Gemini CLI 等、メタデータを渡さないクライアントのためのフォールバック
+        if (!sessionId) {
+            sessionId = 'default-cli-session';
+        }
+
+        const session = await this.sessionStore.get(sessionId) || {};
 
         // resetContext フラグの検出: 新規チャットスレッド開始時等にコンテキストをリセット
         if (opencodeMetadata?.resetContext === true && sessionId) {
@@ -336,7 +341,7 @@ export class OpenCodeGeminiA2AProvider {
             delete session.lastFinishReason;
             if (process.env['DEBUG_OPENCODE']) {
                 const maskedId = sessionId.length > 8 ? `${sessionId.substring(0, 4)}...${sessionId.substring(sessionId.length - 4)}` : '***';
-                console.log(`[opencode-geminicli-a2a] Context reset for session: ${maskedId}`);
+                console.error(`[opencode-geminicli-a2a] Context reset for session: ${maskedId}`);
             }
         }
 
@@ -522,7 +527,7 @@ export class OpenCodeGeminiA2AProvider {
                             
                             autoConfirmCount++;
                             if (process.env['DEBUG_OPENCODE']) {
-                                console.log(`[opencode-geminicli-a2a] Auto-confirming tool call (count: ${autoConfirmCount}) for taskId: ${mapper.taskId}`);
+                                console.error(`[opencode-geminicli-a2a] Auto-confirming tool call (count: ${autoConfirmCount}) for taskId: ${mapper.taskId}`);
                             }
                             currentRequest = buildConfirmationRequest(mapper.taskId, this.modelId);
                             // ループ継続して次を取得
