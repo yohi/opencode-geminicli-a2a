@@ -44,7 +44,7 @@ describe('mapper', () => {
             const req = mapPromptToA2AJsonRpcRequest(prompt);
             const part = req.params.message.parts[0] as any;
             expect(part.kind).toBe('text');
-            expect(part.text).toBe('You are a helpful assistant.');
+            expect(part.text).toBe('[System]\nYou are a helpful assistant.');
         });
 
         it('should format tool results when prompt ends with tool role', () => {
@@ -214,9 +214,13 @@ describe('mapper', () => {
                 { role: 'user', content: [{ type: 'text', text: 'Second question' }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
-            expect(part.kind).toBe('text');
-            expect(part.text).toBe('Second question');
+            expect(req.params.message.parts).toHaveLength(2);
+            const part0 = req.params.message.parts[0] as any;
+            const part1 = req.params.message.parts[1] as any;
+            expect(part0.kind).toBe('text');
+            expect(part0.text).toBe('[Conversation History]\n[User]\nFirst question\n\n[Current Request]\n');
+            expect(part1.kind).toBe('text');
+            expect(part1.text).toBe('Second question');
             expect(req.params.message.role).toBe('user');
         });
 
@@ -376,6 +380,7 @@ describe('mapper', () => {
             const result: A2AResponseResult = {
                 kind: 'status-update',
                 taskId: 't1',
+                final: true,
                 status: {
                     state: 'working',
                     message: {
@@ -389,12 +394,18 @@ describe('mapper', () => {
                 }
             };
             const parts = mapA2AResponseToStreamParts(result);
-            expect(parts.length).toBe(1);
-            expect(parts[0].type).toBe('tool-call');
-            if (parts[0].type === 'tool-call') {
-                expect(parts[0].toolCallId).toBe('call-123');
-                expect(parts[0].toolName).toBe('getWeather');
-                expect(parts[0].args).toBe(JSON.stringify({ location: 'Tokyo' }));
+            expect(parts.length).toBeGreaterThanOrEqual(1);
+            const toolCall = parts.find(p => p.type === 'tool-call');
+            expect(toolCall).toBeDefined();
+            if (toolCall && toolCall.type === 'tool-call') {
+                expect(toolCall.toolCallId).toBe('call-123');
+                expect(toolCall.toolName).toBe('getWeather');
+                expect(toolCall.args).toBe(JSON.stringify({ location: 'Tokyo' }));
+            } else {
+                // If not emitted because of buffering, we might need to adjust mapResult logic
+                // for the stateless wrapper to always emit if final is not present?
+                // But generally, the provider uses the stateful mapper.
+                throw new Error('Tool call was not emitted. Ensure final: true is set or mapping logic is correct.');
             }
         });
 
@@ -430,6 +441,7 @@ describe('mapper', () => {
             const result: A2AResponseResult = {
                 kind: 'status-update',
                 taskId: 't1',
+                final: true,
                 status: {
                     state: 'working',
                     message: {
@@ -441,10 +453,12 @@ describe('mapper', () => {
                 }
             };
             const parts = mapA2AResponseToStreamParts(result);
-            expect(parts.length).toBe(1);
-            if (parts[0].type === 'tool-call') {
-                expect(parts[0].toolCallId).toBeDefined();
-                expect(parts[0].toolCallId.length).toBeGreaterThan(0);
+            expect(parts.length).toBeGreaterThanOrEqual(1);
+            const toolCall = parts.find(p => p.type === 'tool-call');
+            expect(toolCall).toBeDefined();
+            if (toolCall && toolCall.type === 'tool-call') {
+                expect(toolCall.toolCallId).toBeDefined();
+                expect(toolCall.toolCallId.length).toBeGreaterThan(0);
             }
         });
 
@@ -581,11 +595,12 @@ describe('mapper', () => {
             it('should deduplicate tool calls with same callId', () => {
                 const mapper = new A2AStreamMapper();
 
-                const makeUpdate = (): A2AResponseResult => ({
+                const makeUpdate = (final: boolean = true): A2AResponseResult => ({
                     kind: 'status-update',
                     taskId: 't1',
+                    final,
                     status: {
-                        state: 'working',
+                        state: final ? 'stop' : 'working',
                         message: {
                             parts: [{
                                 kind: 'data',
@@ -607,11 +622,12 @@ describe('mapper', () => {
             it('should deduplicate tool calls over snapshots but preserve multiple same-arg calls in the same snapshot', () => {
                 const mapper = new A2AStreamMapper();
 
-                const makeUpdate = (toolReqs: any[]): A2AResponseResult => ({
+                const makeUpdate = (toolReqs: any[], final: boolean = true): A2AResponseResult => ({
                     kind: 'status-update',
                     taskId: 't1',
+                    final,
                     status: {
-                        state: 'working',
+                        state: final ? 'stop' : 'working',
                         message: {
                             parts: toolReqs.map(req => ({
                                 kind: 'data',
@@ -645,11 +661,12 @@ describe('mapper', () => {
             it('should reset per-task dedup state when taskId changes', () => {
                 const mapper = new A2AStreamMapper();
 
-                const makeUpdate = (taskId: string, toolReqs: any[]): A2AResponseResult => ({
+                const makeUpdate = (taskId: string, toolReqs: any[], final: boolean = true): A2AResponseResult => ({
                     kind: 'status-update',
                     taskId,
+                    final,
                     status: {
-                        state: 'working',
+                        state: final ? 'stop' : 'working',
                         message: {
                             parts: toolReqs.map(req => ({
                                 kind: 'data',
@@ -759,6 +776,7 @@ describe('mapper', () => {
                             ]
                         }
                     },
+                    final: true,
                     metadata: { coderAgent: { kind: 'thought' } }
                 };
 
@@ -831,7 +849,7 @@ describe('mapper', () => {
                 expect(finishParts.length).toBe(1);
                 expect(finishParts[0].type).toBe('finish');
                 if (finishParts[0].type === 'finish') {
-                    expect(finishParts[0].finishReason).toBe('tool-calls');
+                    expect(finishParts[0].finishReason).toBe('stop');
                     expect((finishParts[0] as any).inputRequired).toBe(true);
                 }
             });
@@ -1061,6 +1079,78 @@ describe('mapper', () => {
                 if (parts[1].type === 'file') {
                     expect(parts[1].mimeType).toBe('image/jpeg');
                     expect(parts[1].data).toBe('/9j/4AAQ==');
+                }
+            });
+        });
+
+        describe('tool call buffering', () => {
+            it('should buffer tool call arguments and emit only when final is true', () => {
+                const mapper = new A2AStreamMapper();
+
+                const update1: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'working',
+                        message: {
+                            parts: [{
+                                kind: 'data',
+                                data: { request: { callId: 'c1', name: 'search', args: { q: 'A' } } }
+                            }]
+                        }
+                    }
+                };
+
+                const parts1 = mapper.mapResult(update1);
+                expect(parts1.filter(p => p.type === 'tool-call').length).toBe(0);
+
+                const update2: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    final: true,
+                    status: {
+                        state: 'stop',
+                        message: {
+                            parts: [{
+                                kind: 'data',
+                                data: { request: { callId: 'c1', name: 'search', args: { q: 'AB' } } }
+                            }]
+                        }
+                    }
+                };
+
+                const parts2 = mapper.mapResult(update2);
+                const toolCall = parts2.find(p => p.type === 'tool-call');
+                expect(toolCall).toBeDefined();
+                if (toolCall && toolCall.type === 'tool-call') {
+                    expect(toolCall.toolName).toBe('search');
+                    expect(toolCall.args).toBe(JSON.stringify({ q: 'AB' }));
+                }
+            });
+
+            it('should emit tools even without final if state is input-required', () => {
+                const mapper = new A2AStreamMapper();
+
+                const result: A2AResponseResult = {
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'input-required',
+                        message: {
+                            parts: [{
+                                kind: 'data',
+                                data: { request: { callId: 'c1', name: 'tool1', args: { x: 1 } } }
+                            }]
+                        }
+                    }
+                };
+
+                const parts = mapper.mapResult(result);
+                expect(parts.find(p => p.type === 'tool-call')).toBeDefined();
+                const finish = parts.find(p => p.type === 'finish');
+                expect(finish).toBeDefined();
+                if (finish && finish.type === 'finish') {
+                    expect(finish.finishReason).toBe('tool-calls');
                 }
             });
         });

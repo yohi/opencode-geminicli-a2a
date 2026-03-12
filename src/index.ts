@@ -3,6 +3,7 @@ import { OpenCodeGeminiA2AProvider } from './provider';
 import { InMemorySessionStore } from './session';
 import { type OpenCodeProviderOptions } from './config';
 import { StaticModelRegistry, type ModelRegistry, type ModelInfo } from './model-registry';
+import { ServerManager } from './server-manager';
 
 /**
  * @note これはプロセス内シングルトンであり、サーバレスやマルチプロセス環境では
@@ -16,6 +17,7 @@ if (process.env['NODE_ENV'] !== 'production' && process.env['DEBUG_OPENCODE']) {
 
 export { createGeminiA2AProvider, OpenCodeGeminiA2AProvider };
 export { StaticModelRegistry, type ModelRegistry, type ModelInfo } from './model-registry';
+export { ServerManager, type AutoStartConfig } from './server-manager';
 
 /**
  * OpenCode Gemini CLI A2A Provider のインターフェース
@@ -67,7 +69,34 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
             const sanitizedSettings = Object.fromEntries(
                 Object.entries(restSettings).filter(([_, v]) => v !== undefined)
             );
-            return new OpenCodeGeminiA2AProvider(modelId, { ...options, sessionStore, ...sanitizedSettings });
+            const providerInstance = new OpenCodeGeminiA2AProvider(modelId, { ...options, sessionStore, ...sanitizedSettings });
+
+            if (options?.autoStart) {
+                const manager = ServerManager.getInstance();
+                const debug = !!process.env['DEBUG_OPENCODE'];
+                
+                // プロバイダー内で解決された最終的な接続先を取得
+                const providerOpts = providerInstance as unknown as { options?: { host?: string; port?: number } };
+                const resolvedHost = providerOpts.options?.host ?? options.host ?? 'localhost';
+                const resolvedPort = providerOpts.options?.port ?? options.port ?? 41242;
+
+                // サーバー起動は非同期なので Promise としてプロバイダーに持たせる
+                if (debug) {
+                    console.log(`[opencode-geminicli-a2a] AutoStart configured for model '${modelId}' on ${resolvedHost}:${resolvedPort}`);
+                }
+                (providerInstance as any)._serverReady = manager.ensureRunning(
+                    resolvedPort,
+                    resolvedHost,
+                    modelId,
+                    options.autoStart,
+                    debug
+                ).catch((err: unknown) => {
+                    console.error(`[opencode-geminicli-a2a] Failed to auto-start server for model '${modelId}' on ${resolvedHost}:${resolvedPort}`, err);
+                    throw err;
+                });
+            }
+
+            return providerInstance;
         };
 
         const models = modelRegistry.toRecord();
@@ -138,7 +167,7 @@ export function initProvider(config?: OpenCodeProviderOptions): GeminiA2AProvide
     if (!_providerInstance) {
         _providerInstance = createGeminiA2AProvider(config);
     } else if (config !== undefined && !!process.env['DEBUG_OPENCODE']) {
-        console.log('[opencode-geminicli-a2a] initProvider called with new config while _providerInstance already exists. The new config will be ignored.');
+        console.warn('[opencode-geminicli-a2a] initProvider called with new config while _providerInstance already exists. The new config will be ignored.');
     }
     return _providerInstance;
 }
