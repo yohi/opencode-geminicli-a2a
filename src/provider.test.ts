@@ -201,6 +201,176 @@ describe('OpenCodeGeminiA2AProvider', () => {
         expect(parsedBody2.params.taskId).toBe('existing-task');
     });
 
+    it('should pass generationConfig to the A2A request', async () => {
+        const sseChunks = [
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "final":true, "status":{"state":"stop"}}}\n\n',
+        ];
+
+        const mockResponse = {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'text/event-stream' }),
+            _data: createMockStream(sseChunks),
+        };
+        vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
+
+        await provider.doStream({
+            inputFormat: 'messages',
+            mode: { type: 'regular' },
+            prompt,
+            temperature: 0.1,
+            topP: 0.95,
+            maxTokens: 1024,
+            stopSequences: ['\n'],
+        });
+
+        expect(vi.mocked(ofetch.raw)).toHaveBeenCalledTimes(1);
+        const requestBody = vi.mocked(ofetch.raw).mock.calls[0][1]?.body as any;
+        const parsedBody = typeof requestBody === 'string' ? JSON.parse(requestBody) : requestBody;
+        
+        expect(parsedBody.params.generationConfig).toEqual({
+            temperature: 0.1,
+            topP: 0.95,
+            maxOutputTokens: 1024,
+            stopSequences: ['\n'],
+        });
+    });
+
+    it('should use default generationConfig from provider options', async () => {
+        const providerWithConfig = new OpenCodeGeminiA2AProvider(mockModelId, {
+            host: '127.0.0.1',
+            port: 8080,
+            generationConfig: {
+                temperature: 0.7,
+                topK: 40,
+            }
+        });
+
+        const sseChunks = [
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "final":true, "status":{"state":"stop"}}}\n\n',
+        ];
+
+        const mockResponse = {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'text/event-stream' }),
+            _data: createMockStream(sseChunks),
+        };
+        vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
+
+        await providerWithConfig.doStream({
+            inputFormat: 'messages',
+            mode: { type: 'regular' },
+            prompt,
+        });
+
+        const requestBody = vi.mocked(ofetch.raw).mock.calls[0][1]?.body as any;
+        const parsedBody = typeof requestBody === 'string' ? JSON.parse(requestBody) : requestBody;
+        
+        expect(parsedBody.params.generationConfig).toEqual({
+            temperature: 0.7,
+            topK: 40,
+        });
+    });
+
+    it('should use model-specific generationConfig from agents option', async () => {
+        const routedProvider = new OpenCodeGeminiA2AProvider('model-x', {
+            host: '127.0.0.1',
+            port: 41242,
+            agents: [
+                {
+                    key: 'special-server',
+                    host: '10.0.0.1',
+                    port: 9999,
+                    models: {
+                        'model-x': {
+                            options: {
+                                generationConfig: { temperature: 0.1 }
+                            }
+                        }
+                    }
+                }
+            ]
+        });
+
+        const sseChunks = [
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "final":true, "status":{"state":"stop"}}}\n\n',
+        ];
+
+        const mockResponse = {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'text/event-stream' }),
+            _data: createMockStream(sseChunks),
+        };
+        vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
+
+        await routedProvider.doStream({
+            inputFormat: 'messages',
+            mode: { type: 'regular' },
+            prompt,
+        });
+
+        const requestBody = vi.mocked(ofetch.raw).mock.calls[0][1]?.body as any;
+        const parsedBody = typeof requestBody === 'string' ? JSON.parse(requestBody) : requestBody;
+        
+        expect(parsedBody.params.generationConfig).toEqual({
+            temperature: 0.1,
+        });
+        // Check if routed to correct host
+        expect(vi.mocked(ofetch.raw).mock.calls[0][0]).toContain('10.0.0.1:9999');
+    });
+
+    it('should prioritize model-specific generationConfig over provider-level defaults', async () => {
+        const routedProvider = new OpenCodeGeminiA2AProvider('model-y', {
+            host: '127.0.0.1',
+            port: 41242,
+            generationConfig: { temperature: 0.5, topP: 0.9 }, // Provider defaults
+            agents: [
+                {
+                    key: 'special-server',
+                    host: '10.0.0.1',
+                    port: 9999,
+                    models: {
+                        'model-y': {
+                            options: {
+                                generationConfig: { temperature: 0.1, topK: 40 } // Model-specific overrides
+                            }
+                        }
+                    }
+                }
+            ]
+        });
+
+        const sseChunks = [
+            'data: {"jsonrpc":"2.0", "id":"1", "result": {"kind":"status-update", "taskId":"t1", "final":true, "status":{"state":"stop"}}}\n\n',
+        ];
+
+        const mockResponse = {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'text/event-stream' }),
+            _data: createMockStream(sseChunks),
+        };
+        vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
+
+        await routedProvider.doStream({
+            inputFormat: 'messages',
+            mode: { type: 'regular' },
+            prompt,
+        });
+
+        const requestBody = vi.mocked(ofetch.raw).mock.calls[0][1]?.body as any;
+        const parsedBody = typeof requestBody === 'string' ? JSON.parse(requestBody) : requestBody;
+        
+        // Should prioritize model-specific (0.1) and merge with provider defaults (topP: 0.9)
+        expect(parsedBody.params.generationConfig).toEqual({
+            temperature: 0.1,
+            topP: 0.9,
+            topK: 40,
+        });
+    });
+
     describe('自動フォールバックとマルチエージェントルーティング (5-C & 5-D)', () => {
         it('クォータエラー時に代替モデルと別エンドポイントにフォールバックすること', async () => {
             // agents と fallback 設定を持たせたプロバイダーを初期化

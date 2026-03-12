@@ -3,6 +3,7 @@ import { createConnection } from 'node:net';
 import { existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
+import { Logger } from './utils/logger';
 
 export interface AutoStartConfig {
     /** サーバーの .mjs ファイルへの絶対パス。未指定時は自動検出を試みる。 */
@@ -120,9 +121,7 @@ export class ServerManager {
     ): Promise<() => void> {
         // 既に外部プロセスがリッスンしているか確認
         if (await probePort(port, host)) {
-            if (debug) {
-                console.log(`[ServerManager] Port ${host}:${port} already listening. Skipping auto-start.`);
-            }
+            Logger.info(`Port ${host}:${port} already listening. Skipping auto-start.`);
             // 外部プロセスなので管理しない（リリース時にも何もしない）
             return () => {};
         }
@@ -132,9 +131,7 @@ export class ServerManager {
         const existing = this.servers.get(port);
         if (existing) {
             existing.refCount++;
-            if (debug) {
-                console.log(`[ServerManager] Reusing managed server on ${host}:${port} (refCount=${existing.refCount})`);
-            }
+            Logger.info(`Reusing managed server on ${host}:${port} (refCount=${existing.refCount})`);
             return this.makeReleaseFn(port, debug);
         }
 
@@ -148,9 +145,7 @@ export class ServerManager {
             ...config.env,
         };
 
-        if (debug) {
-            console.log(`[ServerManager] Starting A2A server: node ${serverPath} (port=${port}, host=${host})`);
-        }
+        Logger.info(`Starting A2A server: node ${serverPath} (port=${port}, host=${host})`);
 
         const proc = spawn('node', [serverPath], {
             env,
@@ -191,15 +186,11 @@ export class ServerManager {
         }
 
         proc.once('exit', (code) => {
-            if (debug) {
-                console.log(`[ServerManager] A2A server on port ${port} exited (code=${code})`);
-            }
+            Logger.info(`A2A server on port ${port} exited (code=${code})`);
             this.servers.delete(port);
         });
 
-        if (debug) {
-            console.log(`[ServerManager] A2A server on ${host}:${port} is ready.`);
-        }
+        Logger.info(`A2A server on ${host}:${port} is ready.`);
 
         return this.makeReleaseFn(port, debug);
     }
@@ -212,9 +203,7 @@ export class ServerManager {
             const entry = this.servers.get(port);
             if (!entry) return;
             entry.refCount--;
-            if (debug) {
-                console.log(`[ServerManager] Released server on port ${port} (refCount=${entry.refCount})`);
-            }
+            Logger.debug(`Released server on port ${port} (refCount=${entry.refCount})`);
             if (entry.refCount <= 0) {
                 entry.proc.kill();
                 this.servers.delete(port);

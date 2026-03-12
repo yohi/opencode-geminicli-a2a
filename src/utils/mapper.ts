@@ -5,6 +5,7 @@ import {
 } from '@ai-sdk/provider';
 import type { A2AJsonRpcRequest, A2AResponseResult, Tool } from '../schemas';
 import crypto from 'node:crypto';
+import { Logger } from './logger';
 
 /**
  * Gemini CLI A2A サーバーの内部ツールリスト。
@@ -99,6 +100,18 @@ export interface MapPromptOptions {
     taskId?: string;
     /** リクエストで使用するモデルID。A2Aサーバー起動時のデフォルトモデルを上書きする */
     modelId?: string;
+    /** モデルの挙動を微調整する設定（温度感など） */
+    generationConfig?: {
+        temperature?: number;
+        topP?: number;
+        topK?: number;
+        maxOutputTokens?: number;
+        stopSequences?: string[];
+        presencePenalty?: number;
+        frequencyPenalty?: number;
+        seed?: number;
+        responseFormat?: any;
+    };
 }
 
 /**
@@ -118,10 +131,10 @@ export function mapPromptToA2AJsonRpcRequest(
         ? { tools: optionsOrTools }
         : (optionsOrTools ?? {});
 
-    const { tools, contextId, taskId, modelId } = options;
+    const { tools, contextId, taskId, modelId, generationConfig } = options;
 
     if (prompt.length === 0) {
-        return buildRequest('(empty prompt)', { tools, contextId, taskId, modelId });
+        return buildRequest('(empty prompt)', options);
     }
 
     // 履歴を含めてメッセージを処理する
@@ -198,7 +211,7 @@ export function mapPromptToA2AJsonRpcRequest(
         }
     }
 
-    return buildRequest(parts, { tools, contextId, taskId, modelId });
+    return buildRequest(parts, options);
 }
 
 /**
@@ -277,7 +290,7 @@ function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extr
                         bytes = btoa(Array.from(u8, b => String.fromCharCode(b)).join(''));
                     }
                 } else {
-                    console.warn('[A2A mapper] Malformed data URI format.');
+                    Logger.warn('Malformed data URI format.');
                 }
             }
         } else if (str.startsWith('http://') || str.startsWith('https://')) {
@@ -293,7 +306,7 @@ function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extr
             if ((isBase64 || isBase64Url) && isValidLength) {
                 bytes = str;
             } else {
-                console.warn('[A2A mapper] Invalid base64 string provided for binary data. Part will be dropped.');
+                Logger.warn('Invalid base64 string provided for binary data. Part will be dropped.');
             }
         }
     }
@@ -318,7 +331,7 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
             const extracted = extractBinaryOrUri(part.image);
 
             if (extracted.bytes === undefined && !extracted.uri) {
-                console.warn('[A2A mapper] Unsupported image format: could not extract bytes or uri from image part. Part will be dropped.');
+                Logger.warn('Unsupported image format: could not extract bytes or uri from image part. Part will be dropped.');
                 return null;
             }
 
@@ -336,7 +349,7 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
             const extracted = extractBinaryOrUri(part.data);
 
             if (extracted.bytes === undefined && !extracted.uri) {
-                console.warn('[A2A mapper] Unsupported file format: could not extract bytes or uri from file part. Part will be dropped.');
+                Logger.warn('Unsupported file format: could not extract bytes or uri from file part. Part will be dropped.');
                 return null;
             }
 
@@ -376,9 +389,9 @@ function formatToolResults(content: Array<{ type: 'tool-result'; toolCallId: str
  */
 function buildRequest(
     content: string | A2AJsonRpcRequest['params']['message']['parts'],
-    options: { tools?: Tool[]; contextId?: string; taskId?: string; modelId?: string }
+    options: MapPromptOptions
 ): A2AJsonRpcRequest {
-    const { tools, contextId, taskId, modelId } = options;
+    const { tools, contextId, taskId, modelId, generationConfig } = options;
     const parts = typeof content === 'string'
         ? [{ kind: 'text' as const, text: content }]
         : content;
@@ -397,6 +410,7 @@ function buildRequest(
                 blocking: false,
                 ...(tools && tools.length > 0 ? { tools } : {})
             },
+            ...(generationConfig ? { generationConfig } : {}),
             ...(modelId ? { model: modelId } : {}),
             ...(contextId ? { contextId } : {}),
             ...(taskId ? { taskId } : {}),
@@ -555,7 +569,7 @@ export class A2AStreamMapper {
                                 data,
                             } as FileStreamPart);
                         } else {
-                            console.warn('[A2A mapper] Received image part without bytes or uri. Skipping.');
+                            Logger.warn('Received image part without bytes or uri. Skipping.');
                         }
                     } else if (p.kind === 'file') {
                         // 画像と同様に、マルチモーダルパーツは working 状態以外でも処理する。
@@ -570,7 +584,7 @@ export class A2AStreamMapper {
                                 data,
                             } as FileStreamPart);
                         } else {
-                            console.warn('[A2A mapper] Received file part without fileWithBytes or uri. Skipping.');
+                            Logger.warn('Received file part without fileWithBytes or uri. Skipping.');
                         }
                     }
                 }
@@ -649,7 +663,7 @@ export class A2AStreamMapper {
                             finishReason = 'stop';
                         }
                         if (!hasTools) {
-                            console.warn(`[A2A mapper] Unexpected final status state: '${result.status.state}' for taskId: '${result.taskId}'. Treating as 'stop'.`);
+                            Logger.warn(`Unexpected final status state: '${result.status.state}' for taskId: '${result.taskId}'. Treating as 'stop'.`);
                         }
                         break;
                 }

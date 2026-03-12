@@ -19,6 +19,7 @@ import type { A2AJsonRpcRequest, A2AConfig } from './schemas';
 import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
 import { isQuotaError, getNextFallbackModel, resolveFallbackConfig, type FallbackConfig } from './fallback';
 import { DefaultMultiAgentRouter } from './router';
+import { Logger } from './utils/logger';
 
 
 function isAutoConfirmTarget(part: ExtendedFinishPart | undefined): boolean {
@@ -52,21 +53,30 @@ export class OpenCodeGeminiA2AProvider {
      */
     constructor(modelId: string, options?: OpenCodeProviderOptions) {
         try {
-            if (process.env['DEBUG_OPENCODE']) {
-                console.log(`[opencode-geminicli-a2a] Initializing model: ${modelId}`);
-            }
+            Logger.info(`Initializing model: ${modelId}`);
             this.modelId = modelId;
             this.modelID = modelId;
             this.options = options;
-            const config = resolveConfig(options);
+            const resolved = resolveConfig(options);
+            const config: A2AConfig = resolved;
+            let defaultGenerationConfig = resolved.generationConfig;
             
             let finalConfig: A2AConfig = config;
             if (options?.agents && options.agents.length > 0) {
                 const router = new DefaultMultiAgentRouter(options.agents);
-                const endpoint = router.resolve(modelId);
-                if (endpoint) {
-                    if (process.env['DEBUG_OPENCODE']) {
-                        console.log(`[opencode-geminicli-a2a] Routing model '${modelId}' to endpoint '${endpoint.key}' (${endpoint.host}:${endpoint.port})`);
+                const resolvedResult = router.resolve(modelId);
+                if (resolvedResult) {
+                    const endpoint = resolvedResult.endpoint;
+                    const modelConfig = resolvedResult.config;
+
+                    Logger.info(`Routing model '${modelId}' to endpoint '${endpoint.key}' (${endpoint.host}:${endpoint.port})`);
+
+                    // モデル固有の設定があれば上書き
+                    if (modelConfig?.options?.generationConfig) {
+                        defaultGenerationConfig = {
+                            ...defaultGenerationConfig,
+                            ...modelConfig.options.generationConfig
+                        };
                     }
 
                     const endpointProtocol = endpoint.protocol || config.protocol || 'http';
@@ -93,15 +103,12 @@ export class OpenCodeGeminiA2AProvider {
 
             this.options = {
                 ...options,
-                host: finalConfig.host,
-                port: finalConfig.port,
-                token: finalConfig.token,
-                protocol: finalConfig.protocol,
+                generationConfig: defaultGenerationConfig,
                 sessionStore: this.sessionStore,
                 fallback: this.fallbackConfig,
             };
         } catch (err) {
-            console.error(`[opencode-geminicli-error] ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
+            Logger.error(`ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
             throw err;
         }
     }
@@ -112,7 +119,28 @@ export class OpenCodeGeminiA2AProvider {
             tools = options.mode.tools;
         }
 
+        // generationConfig の抽出（インスタンスのデフォルト設定と呼び出し時の設定をマージ）
+        const mergedGenerationConfig = {
+            ...this.options?.generationConfig,
+            ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+            ...(options.topP !== undefined ? { topP: options.topP } : {}),
+            ...(options.topK !== undefined ? { topK: options.topK } : {}),
+            ...(options.maxTokens !== undefined ? { maxOutputTokens: options.maxTokens } : {}),
+            ...(options.stopSequences !== undefined ? { stopSequences: options.stopSequences } : {}),
+            ...(options.presencePenalty !== undefined ? { presencePenalty: options.presencePenalty } : {}),
+            ...(options.frequencyPenalty !== undefined ? { frequencyPenalty: options.frequencyPenalty } : {}),
+            ...(options.seed !== undefined ? { seed: options.seed } : {}),
+        };
+        // undefined の値を除去
+        const filteredConfig = Object.fromEntries(
+            Object.entries(mergedGenerationConfig).filter(([_, v]) => v !== undefined)
+        );
+
         const mapOptions: MapPromptOptions = { tools };
+
+        if (Object.keys(filteredConfig).length > 0) {
+            mapOptions.generationConfig = filteredConfig;
+        }
 
         // リクエスト単位でモデルIDを指定（A2Aサーバーの動的モデル変更をサポート）
         mapOptions.modelId = this.modelId;
@@ -314,9 +342,7 @@ export class OpenCodeGeminiA2AProvider {
 
     /** @internal ストリーミングの内部実装 */
     private async _doStreamInternal(options: LanguageModelV1CallOptions) {
-        if (process.env['DEBUG_OPENCODE']) {
-            console.log('[opencode-geminicli-a2a] doStream called for model:', this.modelId);
-        }
+        Logger.debug('doStream called for model:', this.modelId);
         let sessionId: string | undefined = undefined;
         const opencodeMetadata = options.providerMetadata?.opencode;
 
@@ -326,10 +352,10 @@ export class OpenCodeGeminiA2AProvider {
                 if (trimmed !== '') {
                     sessionId = trimmed;
                 } else {
-                    console.warn(`[opencode-geminicli-a2a] Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
+                    Logger.warn(`Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
                 }
             } else {
-                console.warn(`[opencode-geminicli-a2a] Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
+                Logger.warn(`Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
             }
         }
 
@@ -349,7 +375,7 @@ export class OpenCodeGeminiA2AProvider {
             delete session.lastFinishReason;
             if (process.env['DEBUG_OPENCODE']) {
                 const maskedId = sessionId.length > 8 ? `${sessionId.substring(0, 4)}...${sessionId.substring(sessionId.length - 4)}` : '***';
-                console.log(`[opencode-geminicli-a2a] Context reset for session: ${maskedId}`);
+                Logger.debug(`Context reset for session: ${maskedId}`);
             }
         }
 
@@ -531,9 +557,7 @@ export class OpenCodeGeminiA2AProvider {
                             mapper.taskId) {
                             
                             autoConfirmCount++;
-                            if (process.env['DEBUG_OPENCODE']) {
-                                console.log(`[opencode-geminicli-a2a] Auto-confirming tool call (count: ${autoConfirmCount}) for taskId: ${mapper.taskId}`);
-                            }
+                            Logger.info(`Auto-confirming tool call (count: ${autoConfirmCount}) for taskId: ${mapper.taskId}`);
                             currentRequest = buildConfirmationRequest(mapper.taskId, this.modelId);
                             // ループ継続して次を取得
                             continue;

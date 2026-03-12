@@ -112,4 +112,27 @@ describe('resolveConfig', () => {
             protocol: 'https',
         });
     });
+
+    it('should include generationConfig from options', () => {
+        const generationConfig = {
+            temperature: 0.8,
+            topP: 0.9,
+        };
+        const config = resolveConfig({ generationConfig });
+        expect(config.generationConfig).toEqual(generationConfig);
+    });
+
+    it('should coerce string values in generationConfig to numbers', () => {
+        const options = {
+            generationConfig: {
+                temperature: '0.5',
+                maxOutputTokens: '100',
+            }
+        } as any;
+        const config = resolveConfig(options);
+        expect(config.generationConfig).toEqual({
+            temperature: 0.5,
+            maxOutputTokens: 100,
+        });
+    });
 });
