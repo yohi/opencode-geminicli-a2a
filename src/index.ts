@@ -12,7 +12,7 @@ import { ServerManager } from './server-manager';
 export const sharedSessionStore = new InMemorySessionStore();
 
 if (process.env['NODE_ENV'] !== 'production' && process.env['DEBUG_OPENCODE']) {
-    console.error('[opencode-geminicli-a2a] PLUGIN SCRIPT LOADED');
+    console.log('[opencode-geminicli-a2a] PLUGIN SCRIPT LOADED');
 }
 
 export { createGeminiA2AProvider, OpenCodeGeminiA2AProvider };
@@ -55,7 +55,7 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
                     }
                 }
             }
-            console.error(`[opencode-geminicli-a2a] Provider factory called with options: ${JSON.stringify(logPayload)}`);
+            console.log(`[opencode-geminicli-a2a] Provider factory called with options: ${JSON.stringify(logPayload)}`);
         }
         
         const sessionStore = options?.sessionStore ?? sharedSessionStore;
@@ -79,12 +79,11 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
                 const resolvedHost = (providerInstance as any).options?.host ?? options.host ?? 'localhost';
                 const resolvedPort = (providerInstance as any).options?.port ?? options.port ?? 41242;
 
-                // サーバー起動は非同期なので Promise としてプロバイダーに持たせる
-                if (debug) {
-                    console.error(`[opencode-geminicli-a2a] AutoStart configured for model '${modelId}' on ${resolvedHost}:${resolvedPort}`);
-                }
-                (providerInstance as any)._serverReady = manager.ensureRunning(
-                    resolvedPort,
+// サーバー起動は非同期なので Promise としてプロバイダーに持たせる
+if (debug) {
+    console.log(`[opencode-geminicli-a2a] AutoStart configured for model '${modelId}' on ${resolvedHost}:${resolvedPort}`);
+}
+(providerInstance as any)._serverReady = manager.ensureRunning(                    resolvedPort,
                     resolvedHost,
                     modelId,
                     options.autoStart,
@@ -134,7 +133,7 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
         });
 
         if (process.env['DEBUG_OPENCODE']) {
-            console.error('[opencode-geminicli-a2a] Provider instance created successfully');
+            console.log('[opencode-geminicli-a2a] Provider instance created successfully');
         }
         
         if (!isGeminiA2AProvider(createModel)) {
@@ -163,7 +162,7 @@ export function initProvider(config?: OpenCodeProviderOptions): GeminiA2AProvide
     if (!_providerInstance) {
         _providerInstance = createGeminiA2AProvider(config);
     } else if (config !== undefined && !!process.env['DEBUG_OPENCODE']) {
-        console.error('[opencode-geminicli-a2a] initProvider called with new config while _providerInstance already exists. The new config will be ignored.');
+        console.warn('[opencode-geminicli-a2a] initProvider called with new config while _providerInstance already exists. The new config will be ignored.');
     }
     return _providerInstance;
 }

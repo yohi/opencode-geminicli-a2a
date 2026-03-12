@@ -113,7 +113,7 @@ export class InMemorySessionStore implements SessionStore {
     async resetSession(sessionId: string): Promise<void> {
         if (process.env['DEBUG_OPENCODE']) {
             const maskedId = sessionId.length > 8 ? `${sessionId.substring(0, 4)}...${sessionId.substring(sessionId.length - 4)}` : '***';
-            console.error(`[opencode-geminicli-a2a] Resetting session context: ${maskedId}`);
+            console.log(`[opencode-geminicli-a2a] Resetting session context: ${maskedId}`);
         }
         this.sessions.delete(sessionId);
     }
