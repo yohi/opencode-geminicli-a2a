@@ -357,7 +357,7 @@ describe('OpenCodeGeminiA2AProvider', () => {
         await routedProvider.doStream({
             inputFormat: 'messages',
             mode: { type: 'regular' },
-            prompt: 'test prompt',
+            prompt,
         });
 
         const requestBody = vi.mocked(ofetch.raw).mock.calls[0][1]?.body as any;
