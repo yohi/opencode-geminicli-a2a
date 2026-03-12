@@ -6,6 +6,23 @@ import {
 import type { A2AJsonRpcRequest, A2AResponseResult, Tool } from '../schemas';
 import crypto from 'node:crypto';
 
+/**
+ * Gemini CLI A2A サーバーの内部ツールリスト。
+ * これらは OpenCode 側には露出させず、プロバイダー層で自動承認（auto-confirm）する。
+ */
+const INTERNAL_TOOLS = new Set([
+    'activate_skill',
+    'load_skill',
+    'search_skills',
+    'search_skills_by_id',
+    'search_skills_by_name',
+    'sequentialthinking',
+    'save_memory',
+    'cli_help',
+    'codebase_investigator',
+    'generalist'
+]);
+
 export interface ExtendedFinishPart {
     type: 'finish';
     finishReason: LanguageModelV1FinishReason;
@@ -14,6 +31,7 @@ export interface ExtendedFinishPart {
     inputRequired?: boolean;
     rawState?: string;
     coderAgentKind?: string;
+    hasExposedTools?: boolean;
 }
 
 export type ExtendedStreamPart = LanguageModelV1StreamPart | ExtendedFinishPart | FileStreamPart;
@@ -511,11 +529,16 @@ export class A2AStreamMapper {
             if (isFinal) {
                 const isInternalToolConfirmation = result.status.state === 'input-required' && coderAgentKind === 'tool-call-confirmation';
 
-                // A2A内部ツールの確認要求の場合は、OpenCodeにツールコールを露出しない
-                if (!isInternalToolConfirmation) {
-                    // final のタイミングで、バッファされている最終状態のツール呼び出しを一括で emit する
-                    // これにより、引数が完全に構築された状態でのみツール呼び出しが行われる
-                    for (const [toolCallId, toolInfo] of this.bufferedTools.entries()) {
+                // A2A内部ツールの確認要求、または既知の内部ツール呼び出しの場合は、OpenCodeに露出しない
+                let hasExposedTools = false;
+                let hasInternalTools = false;
+
+                for (const [toolCallId, toolInfo] of this.bufferedTools.entries()) {
+                    const isInternalTool = INTERNAL_TOOLS.has(toolInfo.toolName);
+                    if (isInternalTool || isInternalToolConfirmation) {
+                        hasInternalTools = true;
+                    } else {
+                        hasExposedTools = true;
                         if (!this.emittedToolCallIds.has(toolCallId)) {
                             parts.push({
                                 type: 'tool-call',
@@ -530,8 +553,11 @@ export class A2AStreamMapper {
                 }
 
                 let finishReason: LanguageModelV1FinishReason = 'stop';
+                const hasTools = this.bufferedTools.size > 0;
+
                 switch (result.status.state) {
                     case 'error':
+                    case 'failed':
                         finishReason = 'error';
                         break;
                     case 'input-required':
@@ -539,7 +565,7 @@ export class A2AStreamMapper {
                         // ツールコールが存在しないのに 'tool-calls' を返すとOpenCodeが空のツール実行を試みて無限ループするため、
                         // 実際にツールが発行された場合のみ 'tool-calls'、それ以外は 'stop' とし、別途 inputRequired フラグを付与する。
                         // ただし内部ツールの場合は OpenCode 側にはストップとして見せる（実際には provider が auto-confirm して握り潰す）
-                        finishReason = (!isInternalToolConfirmation && this.bufferedTools.size > 0) ? 'tool-calls' : 'stop';
+                        finishReason = (hasExposedTools && hasTools) ? 'tool-calls' : 'stop';
                         break;
                     case 'cancelled':
                     case 'timeout':
@@ -555,17 +581,23 @@ export class A2AStreamMapper {
                         finishReason = 'content-filter';
                         break;
                     case 'tool_calls':
-                        finishReason = 'tool-calls';
+                        finishReason = hasExposedTools ? 'tool-calls' : 'stop';
                         break;
                     case 'stop':
                     case 'completed':
-                        finishReason = 'stop';
+                        finishReason = hasExposedTools ? 'tool-calls' : 'stop';
                         break;
                     default:
-                        // final=true で認識できない state の場合も stop 扱い
-                        // (OpenCode は stop 以外を「未完了」と判断してリトライする)
-                        console.warn(`[A2A mapper] Unexpected final status state: '${result.status.state}' for taskId: '${result.taskId}'. Treating as 'stop'.`);
-                        finishReason = 'stop';
+                        // final=true で認識できない state (working 等) の場合
+                        // 露出ツールがあれば tool-calls、なければ stop 扱いとする
+                        finishReason = hasExposedTools ? 'tool-calls' : 'stop';
+                        if (!hasExposedTools && hasInternalTools) {
+                            // すべて内部ツールの場合は stop (provider が内部で回す)
+                            finishReason = 'stop';
+                        }
+                        if (!hasTools) {
+                            console.warn(`[A2A mapper] Unexpected final status state: '${result.status.state}' for taskId: '${result.taskId}'. Treating as 'stop'.`);
+                        }
                         break;
                 }
 
@@ -580,10 +612,11 @@ export class A2AStreamMapper {
                     type: 'finish',
                     finishReason,
                     usage,
-                    ...(result.status.state === 'input-required' ? { 
+                    hasExposedTools,
+                    ...(result.status.state === 'input-required' || hasInternalTools ? { 
                         inputRequired: true, 
-                        rawState: 'input-required',
-                        coderAgentKind: this._currentCoderAgentKind
+                        rawState: result.status.state,
+                        coderAgentKind: hasInternalTools && !isInternalToolConfirmation ? 'internal-tool-call' : (this._currentCoderAgentKind || 'tool-call-confirmation')
                     } : {})
                 } as ExtendedFinishPart);
 

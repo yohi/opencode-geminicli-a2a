@@ -477,8 +477,10 @@ export class OpenCodeGeminiA2AProvider {
                                             lastFinishPart = finishPart;
 
                                             // 自動承認が必要な状態でなければ、OpenCodeに finish を流して終了判定する
-                                            const isAutoConfirmTarget = finishPart.rawState === 'input-required' && 
-                                                                       finishPart.coderAgentKind === 'tool-call-confirmation';
+                                            const isAutoConfirmTarget = finishPart.inputRequired === true && 
+                                                                       finishPart.hasExposedTools !== true &&
+                                                                       (finishPart.coderAgentKind === 'tool-call-confirmation' || 
+                                                                        finishPart.coderAgentKind === 'internal-tool-call');
                                             
                                             if (!isAutoConfirmTarget) {
                                                 controller.enqueue({
@@ -512,8 +514,10 @@ export class OpenCodeGeminiA2AProvider {
                         }
 
                         // 自動承認ロジック: 内部ツール確認中の場合は次のリクエストを自動送信
-                        if (lastFinishPart?.rawState === 'input-required' && 
-                            lastFinishPart?.coderAgentKind === 'tool-call-confirmation' && 
+                        if (lastFinishPart?.inputRequired === true && 
+                            lastFinishPart?.hasExposedTools !== true &&
+                            (lastFinishPart?.coderAgentKind === 'tool-call-confirmation' || 
+                             lastFinishPart?.coderAgentKind === 'internal-tool-call') && 
                             mapper.taskId) {
                             
                             autoConfirmCount++;
