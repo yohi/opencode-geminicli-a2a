@@ -107,10 +107,7 @@ export class OpenCodeGeminiA2AProvider {
                 port: finalConfig.port,
                 token: finalConfig.token,
                 protocol: finalConfig.protocol,
-                generationConfig: {
-                    ...defaultGenerationConfig,
-                    ...options?.generationConfig,
-                },
+                generationConfig: defaultGenerationConfig,
                 sessionStore: this.sessionStore,
                 fallback: this.fallbackConfig,
             };
