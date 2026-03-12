@@ -121,7 +121,7 @@ export class ServerManager {
         // 既に外部プロセスがリッスンしているか確認
         if (await probePort(port, host)) {
             if (debug) {
-                console.log(`[ServerManager] Port ${host}:${port} already listening. Skipping auto-start.`);
+                console.error(`[ServerManager] Port ${host}:${port} already listening. Skipping auto-start.`);
             }
             // 外部プロセスなので管理しない（リリース時にも何もしない）
             return () => {};
@@ -133,7 +133,7 @@ export class ServerManager {
         if (existing) {
             existing.refCount++;
             if (debug) {
-                console.log(`[ServerManager] Reusing managed server on ${host}:${port} (refCount=${existing.refCount})`);
+                console.error(`[ServerManager] Reusing managed server on ${host}:${port} (refCount=${existing.refCount})`);
             }
             return this.makeReleaseFn(port, debug);
         }
@@ -148,7 +148,7 @@ export class ServerManager {
         };
 
         if (debug) {
-            console.log(`[ServerManager] Starting A2A server: node ${serverPath} (port=${port})`);
+            console.error(`[ServerManager] Starting A2A server: node ${serverPath} (port=${port})`);
         }
 
         const proc = spawn('node', [serverPath], {
@@ -166,7 +166,7 @@ export class ServerManager {
 
         proc.once('exit', (code) => {
             if (debug) {
-                console.log(`[ServerManager] A2A server on port ${port} exited (code=${code})`);
+                console.error(`[ServerManager] A2A server on port ${port} exited (code=${code})`);
             }
             this.servers.delete(port);
         });
@@ -188,7 +188,7 @@ export class ServerManager {
         }
 
         if (debug) {
-            console.log(`[ServerManager] A2A server on ${host}:${port} is ready.`);
+            console.error(`[ServerManager] A2A server on ${host}:${port} is ready.`);
         }
 
         return this.makeReleaseFn(port, debug);
@@ -203,7 +203,7 @@ export class ServerManager {
             if (!entry) return;
             entry.refCount--;
             if (debug) {
-                console.log(`[ServerManager] Released server on port ${port} (refCount=${entry.refCount})`);
+                console.error(`[ServerManager] Released server on port ${port} (refCount=${entry.refCount})`);
             }
             if (entry.refCount <= 0) {
                 entry.proc.kill();
@@ -218,7 +218,7 @@ export class ServerManager {
         const cleanup = () => {
             for (const [port, entry] of this.servers) {
                 if (debug) {
-                    console.log(`[ServerManager] Cleaning up A2A server on port ${port}`);
+                    console.error(`[ServerManager] Cleaning up A2A server on port ${port}`);
                 }
                 try { entry.proc.kill(); } catch { /* ignore */ }
             }

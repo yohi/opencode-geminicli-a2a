@@ -44,7 +44,7 @@ describe('mapper', () => {
             const req = mapPromptToA2AJsonRpcRequest(prompt);
             const part = req.params.message.parts[0] as any;
             expect(part.kind).toBe('text');
-            expect(part.text).toBe('You are a helpful assistant.');
+            expect(part.text).toBe('[System]\nYou are a helpful assistant.');
         });
 
         it('should format tool results when prompt ends with tool role', () => {
@@ -214,9 +214,13 @@ describe('mapper', () => {
                 { role: 'user', content: [{ type: 'text', text: 'Second question' }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
-            expect(part.kind).toBe('text');
-            expect(part.text).toBe('Second question');
+            expect(req.params.message.parts).toHaveLength(2);
+            const part0 = req.params.message.parts[0] as any;
+            const part1 = req.params.message.parts[1] as any;
+            expect(part0.kind).toBe('text');
+            expect(part0.text).toBe('[Conversation History]\n[User]\nFirst question\n\n[Current Request]\n');
+            expect(part1.kind).toBe('text');
+            expect(part1.text).toBe('Second question');
             expect(req.params.message.role).toBe('user');
         });
 

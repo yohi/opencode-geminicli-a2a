@@ -124,48 +124,70 @@ export function mapPromptToA2AJsonRpcRequest(
         return buildRequest('(empty prompt)', { tools, contextId, taskId, modelId });
     }
 
-    // prompt 末尾が tool ロールの場合: ツール結果をテキスト化
+    // 履歴を含めてメッセージを処理する
+    let parts: A2AJsonRpcRequest['params']['message']['parts'] = [];
+    let historyText = '';
+    let toolResultText = '';
+
+    // 末尾が tool の場合はツール結果を取得し、通常のメッセージループから除外
     const lastMessage = prompt[prompt.length - 1];
-    if (lastMessage.role === 'tool') {
-        const toolResultText = formatToolResults(lastMessage.content);
-        // user メッセージも含める（もしあれば）
-        let userParts: A2AJsonRpcRequest['params']['message']['parts'] = [];
-        for (let i = prompt.length - 1; i >= 0; i--) {
-            if (prompt[i].role === 'user') {
-                userParts = extractUserParts(prompt[i]);
-                break;
+    const isLastMessageTool = lastMessage.role === 'tool';
+    const effectivePrompt = isLastMessageTool ? prompt.slice(0, -1) : prompt;
+
+    if (isLastMessageTool) {
+        toolResultText = formatToolResults(lastMessage.content);
+    }
+
+    for (let i = 0; i < effectivePrompt.length; i++) {
+        const msg = effectivePrompt[i];
+        
+        // 最後の(ユーザー)メッセージはパーツとして抽出
+        // toolで終わる場合はeffectivePromptの最後の要素をhistoryとしてではなく、リクエスト本体として扱う
+        if (i === effectivePrompt.length - 1 && !isLastMessageTool) {
+            if (msg.role === 'user') {
+                if (historyText) parts.push({ kind: 'text' as const, text: `[Conversation History]\n${historyText.trim()}\n\n[Current Request]\n` });
+                parts.push(...extractUserParts(msg));
+            } else if (msg.role === 'system') {
+                historyText += `[System]\n${msg.content}\n\n`;
+                if (historyText) parts.push({ kind: 'text' as const, text: historyText.trim() });
+            }
+        } else {
+            // 過去のメッセージをテキストとして蓄積
+            if (msg.role === 'system') {
+                historyText += `[System]\n${msg.content}\n\n`;
+            } else if (msg.role === 'user') {
+                let text = '';
+                if (typeof msg.content === 'string') text = msg.content;
+                else if (Array.isArray(msg.content)) {
+                    text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
+                }
+                historyText += `[User]\n${text}\n\n`;
+            } else if (msg.role === 'assistant') {
+                let text = '';
+                if (typeof msg.content === 'string') text = msg.content;
+                else if (Array.isArray(msg.content)) {
+                    text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
+                }
+                historyText += `[Assistant]\n${text}\n\n`;
+            } else if (msg.role === 'tool') {
+                historyText += `[Tool Result]\n${formatToolResults(msg.content)}\n\n`;
             }
         }
-
-        const finalParts: A2AJsonRpcRequest['params']['message']['parts'] = [
-            ...userParts,
-            ...(toolResultText ? [{ kind: 'text' as const, text: toolResultText }] : [])
-        ];
-
-        return buildRequest(finalParts.length > 0 ? finalParts : '(empty prompt)', { tools, contextId, taskId, modelId });
     }
 
-    // 通常の処理: 末尾から user/system メッセージを探す
-    let targetMessage: LanguageModelV1Prompt[number] | undefined;
-    for (let i = prompt.length - 1; i >= 0; i--) {
-        if (prompt[i].role === 'user' || prompt[i].role === 'system') {
-            targetMessage = prompt[i];
-            break;
+    if (isLastMessageTool) {
+        if (historyText) {
+            parts.push({ kind: 'text' as const, text: `[Conversation History]\n${historyText.trim()}\n\n[Current Request]\n` });
         }
-    }
-
-    let parts: A2AJsonRpcRequest['params']['message']['parts'] = [];
-
-    if (targetMessage) {
-        if (targetMessage.role === 'user') {
-            parts = extractUserParts(targetMessage);
-        } else if (targetMessage.role === 'system') {
-            parts = [{ kind: 'text' as const, text: targetMessage.content }];
-        }
+        parts.push({ kind: 'text' as const, text: toolResultText });
     }
 
     if (parts.length === 0) {
-        parts = [{ kind: 'text' as const, text: '(empty prompt)' }];
+        if (historyText) {
+            parts = [{ kind: 'text' as const, text: historyText.trim() }];
+        } else {
+            parts = [{ kind: 'text' as const, text: '(empty prompt)' }];
+        }
     }
 
     return buildRequest(parts, { tools, contextId, taskId, modelId });
