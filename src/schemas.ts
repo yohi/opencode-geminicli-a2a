@@ -10,20 +10,22 @@ export const ConfigSchema = z.object({
 
 export type A2AConfig = z.infer<typeof ConfigSchema>;
 
+export const GenerationConfigSchema = z.object({
+    temperature: z.number().optional(),
+    topP: z.number().optional(),
+    topK: z.number().optional(),
+    maxOutputTokens: z.number().optional(),
+    stopSequences: z.array(z.string()).optional(),
+    presencePenalty: z.number().optional(),
+    frequencyPenalty: z.number().optional(),
+    seed: z.number().optional(),
+    responseFormat: z.any().optional(),
+});
+
 // Agent Endpoint Schema (Phase 5-D)
 export const ModelConfigSchema = z.object({
     options: z.object({
-        generationConfig: z.object({
-            temperature: z.number().optional(),
-            topP: z.number().optional(),
-            topK: z.number().optional(),
-            maxOutputTokens: z.number().optional(),
-            stopSequences: z.array(z.string()).optional(),
-            presencePenalty: z.number().optional(),
-            frequencyPenalty: z.number().optional(),
-            seed: z.number().optional(),
-            responseFormat: z.any().optional(),
-        }).optional(),
+        generationConfig: GenerationConfigSchema.optional(),
     }).passthrough().optional(),
 }).passthrough();
 
@@ -86,17 +88,7 @@ export const A2AJsonRpcRequestSchema = z.object({
             tools: z.array(ToolSchema).optional()
         }).optional(),
         // generationConfig: モデルの挙動を微調整する設定（温度感など）
-        generationConfig: z.object({
-            temperature: z.number().optional(),
-            topP: z.number().optional(),
-            topK: z.number().optional(),
-            maxOutputTokens: z.number().optional(),
-            stopSequences: z.array(z.string()).optional(),
-            presencePenalty: z.number().optional(),
-            frequencyPenalty: z.number().optional(),
-            seed: z.number().optional(),
-            responseFormat: z.any().optional(),
-        }).optional(),
+        generationConfig: GenerationConfigSchema.optional(),
         // dynamic model: リクエスト単位でモデルIDを指定（サーバー起動時のデフォルトを上書き）
         model: z.string().optional(),
         // multi-turn: コンテキスト継続時に使用

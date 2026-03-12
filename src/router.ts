@@ -37,7 +37,9 @@ export class DefaultMultiAgentRouter implements MultiAgentRouter {
         if (Array.isArray(endpoint.models)) {
             return endpoint.models;
         }
-        return Object.keys(endpoint.models);
+        return Object.entries(endpoint.models)
+            .filter(([_, value]) => value !== false)
+            .map(([key]) => key);
     }
 
     resolve(modelId: string): { endpoint: AgentEndpoint; config?: ModelConfig } | undefined {
@@ -50,7 +52,11 @@ export class DefaultMultiAgentRouter implements MultiAgentRouter {
                 const modelEntry = endpoint.models[modelId];
                 if (modelEntry !== undefined) {
                     if (typeof modelEntry === 'boolean') {
-                        return modelEntry ? { endpoint } : undefined;
+                        if (modelEntry === true) {
+                            return { endpoint };
+                        }
+                        // If modelEntry is false, continue to next endpoint
+                        continue;
                     }
                     return { endpoint, config: modelEntry };
                 }
