@@ -221,6 +221,7 @@ export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResp
     * **コンテキスト継続**: 2回目以降のリクエストでは、保持している場合に `contextId` を自動的に `params.contextId` に付与してサーバーへ送信し、サーバー側でコンテキストを維持します。
     * **タスクの継続**: 前回のタスクの `finishReason === 'tool-calls'` かつ保持している `taskId` がある場合に、`taskId` を `params.taskId` に付与して A2A サーバーにおける `input-required` 状態のタスクを再開できます。
     * **ツール結果の送信 (AI SDK → A2A)**: AI SDK が渡してくる `prompt` 履歴の末尾が `role: "tool"` (ツール結果) の場合、A2A サーバーが理解可能な形式（`[Tool Result: {toolName} ({toolCallId})]\n{result}`）にテキスト化され、直近のユーザーメッセージに結合されて送信されます。
+    * **動的モデル指定**: プロバイダーは毎リクエストに `params.model` フィールドを付与し、A2A サーバーがリクエスト単位でモデルを切り替えられるようにします。これにより、マルチエージェント構成における同一サーバーでのモデルスイッチが可能です。
     * **⚠️ 警告: 状態の競合について**: 
       プロバイダーインスタンスが `contextId` や `taskId` といったステートフルなプロパティを内部で保持する設計上、**同一のプロバイダーインスタンスに対して `doStream` を並行して呼び出すと激しい状態競合（Race condition）が発生します**。
       並行して別々の会話セッションを進行させる必要がある場合は、並行セッションごとに別々のプロバイダーインスタンスを生成してください（例: リクエストごとに `createGeminiA2AProvider` を呼び出して新規インスタンスを作る）。
@@ -288,6 +289,19 @@ export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResp
 * **Current Mitigation**: ユーザーが手動で設定ファイル (`opencode.jsonc`) から `gemini-2.5-pro` などのクォータが潤沢なモデルへ切り替えることで回避する。
 * **Future Work**: HTTP 429 相当のエラーやペイロード内のクォータエラーメッセージを検知した際に、自動的に代替モデル（安定版等）へフォールバックする機構の導入を検討する。
 
-### 8.2 Multiple Agents Routing (Provider Level)
-* **Limitation**: 現在の A2A サーバーは起動時に利用モデルを決定しており（または単一のデフォルトモデルに依存）、かつ `opencode-geminicli-a2a-provider` は特定の1つのポートに向けた通信に固定されている。そのため、OpenCode 側から異なるモデル（軽量モデルと高性能モデルなど）を並行して要求・切り替えたい場合に、単一の A2A サーバーでは対応しきれない課題がある。
-* **Future Work**: 複数の A2A サーバーインスタンス（それぞれ異なるモデル向け、異なるポートで起動）を事前構成できるようにし、プロバイダー内でリクエストされたモデルIDに応じて適切なポートへルーティングする「マルチエージェント・ディスパッチ機能」の実装を検討する。
+### 8.2 Dynamic Model Switching
+* **Status**: **Implemented (Phase 6)**。プロバイダーは毎リクエストの JSON-RPC ペイロードに `params.model` フィールドを付与し、A2A サーバーがリクエスト単位でモデルを動的に切り替えられるよう対応済み。
+* **Behavior**: `OpenCodeGeminiA2AProvider` のインスタンス生成時に指定した `modelId`（例: `gemini-2.5-pro`）が、各 A2A リクエストの `params.model` に自動的に含まれる。A2A サーバー側の `modelConfigService.makeResolvedModelConfig` がこのフィールドを参照して、サーバー起動時のデフォルトモデルを上書きする。
+* **Request Format**:
+  ```json
+  {
+    "jsonrpc": "2.0",
+    "method": "message/stream",
+    "params": {
+      "message": { "..." },
+      "model": "gemini-2.5-pro",
+      "contextId": "..."
+    }
+  }
+  ```
+* **Future Work**: `generationConfig`（`temperature`, `topP` 等）の動的指定も A2A サーバーがサポートしている可能性があるが、現在の AI SDK (`LanguageModelV1CallOptions`) にはそれに対応する設定フィールドがないため、将来の拡張課題として残す。

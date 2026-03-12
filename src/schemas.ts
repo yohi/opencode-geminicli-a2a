@@ -64,6 +64,8 @@ export const A2AJsonRpcRequestSchema = z.object({
             blocking: z.boolean().default(false),
             tools: z.array(ToolSchema).optional()
         }).optional(),
+        // dynamic model: リクエスト単位でモデルIDを指定（サーバー起動時のデフォルトを上書き）
+        model: z.string().optional(),
         // multi-turn: コンテキスト継続時に使用
         contextId: z.string().optional(),
         // multi-turn: 既存タスクの継続時に使用

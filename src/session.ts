@@ -2,6 +2,7 @@ export interface A2ASession {
     contextId?: string;
     taskId?: string;
     lastFinishReason?: string;
+    lastModelId?: string;
 }
 
 export interface SessionStore {

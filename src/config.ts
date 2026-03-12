@@ -16,6 +16,8 @@ export interface OpenCodeProviderOptions {
     fallback?: Partial<FallbackConfig>;
     /** マルチエージェント構成（5-D）。指定された場合、提供されたエンドポイントにルーティングする */
     agents?: AgentEndpoint[];
+    /** A2A サーバーの自動起動設定 */
+    autoStart?: Partial<import('./server-manager').AutoStartConfig>;
 }
 
 // ユーティリティ: 文字列を正規化し、空、空白のみ、または "undefined"/"null" 文字列は undefined とする
