@@ -10,9 +10,10 @@ export interface ExtendedFinishPart {
     type: 'finish';
     finishReason: LanguageModelV1FinishReason;
     usage: { promptTokens: number; completionTokens: number };
-    providerMetadata?: Record<string, unknown>;
+    providerMetadata?: Record<string, any>;
     inputRequired?: boolean;
     rawState?: string;
+    coderAgentKind?: string;
 }
 
 export type ExtendedStreamPart = LanguageModelV1StreamPart | ExtendedFinishPart | FileStreamPart;
@@ -150,6 +151,33 @@ export function mapPromptToA2AJsonRpcRequest(
     }
 
     return buildRequest(parts, { tools, contextId, taskId, modelId });
+}
+
+/**
+ * 内部ツール承認などの継続リクエスト（confirmation）を構築する
+ */
+export function buildConfirmationRequest(
+    taskId: string,
+    modelId?: string,
+    confirmation: boolean = true
+): A2AJsonRpcRequest {
+    return {
+        jsonrpc: '2.0',
+        id: `confirm_${Date.now()}`,
+        method: 'message/stream',
+        params: {
+            message: {
+                messageId: `confirm_${Date.now()}`,
+                role: 'user',
+                parts: [{ kind: 'text', text: confirmation ? 'Proceed' : 'Cancel' }]
+            },
+            configuration: {
+                blocking: false
+            },
+            taskId,
+            ...(modelId ? { model: modelId } : {})
+        }
+    };
 }
 
 /**
@@ -340,13 +368,17 @@ function buildRequest(
  */
 export class A2AStreamMapper {
     /** 出力済みテキストの累計インデックス別マップ。スナップショット重複排除に使用 */
-    private emittedTextByIndex = new Map<number, string>();
-    /** 出力済みツールコール ID の Set。重複排除に使用 */
-    private emittedToolCallIds = new Set<string>();
+    private bufferedTools = new Map<string, { toolName: string; args: any }>();
     /** レスポンスから抽出した contextId */
     private _contextId?: string;
     /** レスポンスから抽出した taskId */
     private _taskId?: string;
+    /** 発行済みのツール呼び出しID (taskId ごとにリセット) */
+    private emittedToolCallIds = new Set<string>();
+    /** 出力済みテキストの累計インデックス別マップ。スナップショット重複排除に使用 (taskId ごとにリセット) */
+    private emittedTextByIndex = new Map<number, string>();
+    /** 現在のチャンクの coderAgentKind */
+    private _currentCoderAgentKind?: string;
     /** 最後の finishReason */
     private _lastFinishReason?: string;
 
@@ -370,6 +402,7 @@ export class A2AStreamMapper {
                 this._taskId = result.id;
                 this.emittedTextByIndex.clear();
                 this.emittedToolCallIds.clear();
+                this.bufferedTools.clear();
                 this._lastFinishReason = undefined;
             }
             return parts;
@@ -381,14 +414,20 @@ export class A2AStreamMapper {
                 this._taskId = result.taskId;
                 this.emittedTextByIndex.clear();
                 this.emittedToolCallIds.clear();
+                this.bufferedTools.clear();
                 this._lastFinishReason = undefined;
             }
 
             const msg = result.status.message;
             const metadata = result.metadata as Record<string, any> | undefined;
             const coderAgentKind = metadata?.coderAgent?.kind as string | undefined;
+            this._currentCoderAgentKind = coderAgentKind;
 
-            const shouldProcessParts = result.status.state === 'working' || result.status.state === 'input-required' || result.status.state === 'tool_calls';
+            const shouldProcessParts = result.status.state === 'working' || 
+                                       result.status.state === 'input-required' || 
+                                       result.status.state === 'tool_calls' ||
+                                       result.status.state === 'stop' ||
+                                       result.status.state === 'completed';
             if (shouldProcessParts && msg && msg.parts) {
                 for (const [index, p] of msg.parts.entries()) {
                     if (p.kind === 'text' && p.text && result.status.state === 'working') {
@@ -403,17 +442,12 @@ export class A2AStreamMapper {
                         const req = p.data.request;
                         const toolName = req.name;
 
-                        const toolCallId = req.callId || `call_${crypto.createHash('sha256').update(toolName + JSON.stringify(req.args ?? {})).digest('hex').substring(0, 16)}_${index}`;
-                        if (this.emittedToolCallIds.has(toolCallId)) continue;
-                        this.emittedToolCallIds.add(toolCallId);
-
-                        parts.push({
-                            type: 'tool-call',
-                            toolCallType: 'function',
-                            toolCallId,
-                            toolName,
-                            args: JSON.stringify(req.args ?? {}),
-                        });
+                        // A2A側から callId が無い場合は toolName と index で一意に決定 (引数が変化してもIDが変わらないようにする)
+                        // ツール呼び出しの引数はストリーム中に徐々に構築されるため、
+                        // 最終的な引数が確定するまでツールコールを emit せず、バッファに最新の引数を上書き保存する。
+                        // final: true のタイミングでバッファされたツールコールを一括で emit する。
+                        const toolCallId = req.callId || `call_${toolName}_${index}`;
+                        this.bufferedTools.set(toolCallId, { toolName, args: req.args });
                     } else if (coderAgentKind === 'thought' && p.kind === 'data' && isThoughtData(p.data)) {
                         let textDelta = '';
                         if (p.data.subject && p.data.description) {
@@ -471,7 +505,30 @@ export class A2AStreamMapper {
                 }
             }
 
-            if (result.final) {
+            // final のタイミング、または input-required / tool_calls などの状態で、
+            // バッファされている最終状態のツール呼び出しを一括で emit する
+            const isFinal = result.final === true || result.status.state === 'input-required' || result.status.state === 'tool_calls';
+            if (isFinal) {
+                const isInternalToolConfirmation = result.status.state === 'input-required' && coderAgentKind === 'tool-call-confirmation';
+
+                // A2A内部ツールの確認要求の場合は、OpenCodeにツールコールを露出しない
+                if (!isInternalToolConfirmation) {
+                    // final のタイミングで、バッファされている最終状態のツール呼び出しを一括で emit する
+                    // これにより、引数が完全に構築された状態でのみツール呼び出しが行われる
+                    for (const [toolCallId, toolInfo] of this.bufferedTools.entries()) {
+                        if (!this.emittedToolCallIds.has(toolCallId)) {
+                            parts.push({
+                                type: 'tool-call',
+                                toolCallType: 'function',
+                                toolCallId,
+                                toolName: toolInfo.toolName,
+                                args: JSON.stringify(toolInfo.args ?? {}),
+                            });
+                            this.emittedToolCallIds.add(toolCallId);
+                        }
+                    }
+                }
+
                 let finishReason: LanguageModelV1FinishReason = 'stop';
                 switch (result.status.state) {
                     case 'error':
@@ -479,8 +536,10 @@ export class A2AStreamMapper {
                         break;
                     case 'input-required':
                         // A2A の input-required は「エージェントがユーザー入力を待っている（ターン終了）」状態。
-                        // タスク継続のシグナルを維持しつつ、生の状態をフラグとして付与して呼び出し元に伝える
-                        finishReason = 'tool-calls';
+                        // ツールコールが存在しないのに 'tool-calls' を返すとOpenCodeが空のツール実行を試みて無限ループするため、
+                        // 実際にツールが発行された場合のみ 'tool-calls'、それ以外は 'stop' とし、別途 inputRequired フラグを付与する。
+                        // ただし内部ツールの場合は OpenCode 側にはストップとして見せる（実際には provider が auto-confirm して握り潰す）
+                        finishReason = (!isInternalToolConfirmation && this.bufferedTools.size > 0) ? 'tool-calls' : 'stop';
                         break;
                     case 'cancelled':
                     case 'timeout':
@@ -521,8 +580,15 @@ export class A2AStreamMapper {
                     type: 'finish',
                     finishReason,
                     usage,
-                    ...(result.status.state === 'input-required' ? { inputRequired: true, rawState: 'input-required' } : {})
+                    ...(result.status.state === 'input-required' ? { 
+                        inputRequired: true, 
+                        rawState: 'input-required',
+                        coderAgentKind: this._currentCoderAgentKind
+                    } : {})
                 } as ExtendedFinishPart);
+
+                // 発行が完了したらバッファをクリアして重複を防ぐ
+                this.bufferedTools.clear();
             }
         }
 
