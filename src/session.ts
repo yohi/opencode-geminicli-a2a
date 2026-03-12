@@ -5,6 +5,7 @@ export interface A2ASession {
     taskId?: string;
     lastFinishReason?: string;
     lastModelId?: string;
+    processedMessagesCount?: number;
 }
 
 export interface SessionStore {

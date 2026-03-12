@@ -100,6 +100,8 @@ export interface MapPromptOptions {
     taskId?: string;
     /** リクエストで使用するモデルID。A2Aサーバー起動時のデフォルトモデルを上書きする */
     modelId?: string;
+    /** 前回までに送信済みのプロンプトメッセージ数。重複した履歴送信を避けるため */
+    processedMessagesCount?: number;
     /** モデルの挙動を微調整する設定（温度感など） */
     generationConfig?: {
         temperature?: number;
@@ -142,10 +144,21 @@ export function mapPromptToA2AJsonRpcRequest(
     let historyText = '';
     let toolResultText = '';
 
+    // A2AのcontextIdによってサーバー側で履歴が維持されている場合、
+    // 重複して全履歴を送信しないよう、前回以降の新しいメッセージのみを抽出する。
+    // ただし、A2Aサーバーが生成したassistantメッセージは既にサーバー側のコンテキストに含まれるため除外する。
+    let newMessages = prompt;
+    if (contextId && options.processedMessagesCount !== undefined && options.processedMessagesCount > 0) {
+        newMessages = prompt.slice(options.processedMessagesCount).filter(m => m.role !== 'assistant');
+        if (newMessages.length === 0) {
+            newMessages = prompt;
+        }
+    }
+
     // 末尾が tool の場合はツール結果を取得し、通常のメッセージループから除外
-    const lastMessage = prompt[prompt.length - 1];
+    const lastMessage = newMessages[newMessages.length - 1];
     const isLastMessageTool = lastMessage.role === 'tool';
-    const effectivePrompt = isLastMessageTool ? prompt.slice(0, -1) : prompt;
+    const effectivePrompt = isLastMessageTool ? newMessages.slice(0, -1) : newMessages;
 
     if (isLastMessageTool) {
         toolResultText = formatToolResults(lastMessage.content);
