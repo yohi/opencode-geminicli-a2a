@@ -372,12 +372,12 @@ describe('mapper', () => {
             const parts = mapA2AResponseToStreamParts(result);
             const finishPart = parts.find(p => p.type === 'finish');
             if (finishPart && finishPart.type === 'finish') {
-                expect(finishPart.usage?.promptTokens).toBe(10);
-                expect(finishPart.usage?.completionTokens).toBe(20);
+                expect(finishPart.usage?.inputTokens.total).toBe(10);
+                expect(finishPart.usage?.outputTokens.total).toBe(20);
             }
         });
 
-        it('should return 0 for promptTokens and completionTokens when usage is missing', () => {
+        it('should return 0 for inputTokens and outputTokens when usage is missing', () => {
             const result: A2AResponseResult = {
                 kind: 'status-update',
                 taskId: 't1',
@@ -387,8 +387,8 @@ describe('mapper', () => {
             const parts = mapA2AResponseToStreamParts(result);
             const finishPart = parts.find(p => p.type === 'finish');
             if (finishPart && finishPart.type === 'finish') {
-                expect(finishPart.usage?.promptTokens).toBe(0);
-                expect(finishPart.usage?.completionTokens).toBe(0);
+                expect(finishPart.usage?.inputTokens.total).toBe(0);
+                expect(finishPart.usage?.outputTokens.total).toBe(0);
             }
         });
 
