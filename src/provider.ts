@@ -58,7 +58,9 @@ export class OpenCodeGeminiA2AProvider {
             this.modelId = modelId;
             this.modelID = modelId;
             this.options = options;
-            const config = resolveConfig(options);
+            const resolved = resolveConfig(options);
+            const config: A2AConfig = resolved;
+            const defaultGenerationConfig = resolved.generationConfig;
             
             let finalConfig: A2AConfig = config;
             if (options?.agents && options.agents.length > 0) {
@@ -97,6 +99,10 @@ export class OpenCodeGeminiA2AProvider {
                 port: finalConfig.port,
                 token: finalConfig.token,
                 protocol: finalConfig.protocol,
+                generationConfig: {
+                    ...defaultGenerationConfig,
+                    ...options?.generationConfig,
+                },
                 sessionStore: this.sessionStore,
                 fallback: this.fallbackConfig,
             };
@@ -112,20 +118,21 @@ export class OpenCodeGeminiA2AProvider {
             tools = options.mode.tools;
         }
 
-        // generationConfig の抽出
-        const generationConfig = {
-            temperature: options.temperature,
-            topP: options.topP,
-            topK: options.topK,
-            maxOutputTokens: options.maxTokens,
-            stopSequences: options.stopSequences,
-            presencePenalty: options.presencePenalty,
-            frequencyPenalty: options.frequencyPenalty,
-            seed: options.seed,
+        // generationConfig の抽出（インスタンスのデフォルト設定と呼び出し時の設定をマージ）
+        const mergedGenerationConfig = {
+            ...this.options?.generationConfig,
+            ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+            ...(options.topP !== undefined ? { topP: options.topP } : {}),
+            ...(options.topK !== undefined ? { topK: options.topK } : {}),
+            ...(options.maxTokens !== undefined ? { maxOutputTokens: options.maxTokens } : {}),
+            ...(options.stopSequences !== undefined ? { stopSequences: options.stopSequences } : {}),
+            ...(options.presencePenalty !== undefined ? { presencePenalty: options.presencePenalty } : {}),
+            ...(options.frequencyPenalty !== undefined ? { frequencyPenalty: options.frequencyPenalty } : {}),
+            ...(options.seed !== undefined ? { seed: options.seed } : {}),
         };
         // undefined の値を除去
         const filteredConfig = Object.fromEntries(
-            Object.entries(generationConfig).filter(([_, v]) => v !== undefined)
+            Object.entries(mergedGenerationConfig).filter(([_, v]) => v !== undefined)
         );
 
         const mapOptions: MapPromptOptions = { tools };
