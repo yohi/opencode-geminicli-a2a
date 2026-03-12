@@ -289,7 +289,9 @@ function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extr
                         bytes = btoa(Array.from(u8, b => String.fromCharCode(b)).join(''));
                     }
                 } else {
-                    console.warn('[A2A mapper] Malformed data URI format.');
+                if (process.env['DEBUG_OPENCODE']) {
+                console.warn('[A2A mapper] Malformed data URI format.');
+            }
                 }
             }
         } else if (str.startsWith('http://') || str.startsWith('https://')) {
@@ -305,7 +307,9 @@ function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extr
             if ((isBase64 || isBase64Url) && isValidLength) {
                 bytes = str;
             } else {
+            if (process.env['DEBUG_OPENCODE']) {
                 console.warn('[A2A mapper] Invalid base64 string provided for binary data. Part will be dropped.');
+            }
             }
         }
     }
@@ -330,7 +334,9 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
             const extracted = extractBinaryOrUri(part.image);
 
             if (extracted.bytes === undefined && !extracted.uri) {
+                if (process.env['DEBUG_OPENCODE']) {
                 console.warn('[A2A mapper] Unsupported image format: could not extract bytes or uri from image part. Part will be dropped.');
+            }
                 return null;
             }
 
@@ -348,7 +354,9 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
             const extracted = extractBinaryOrUri(part.data);
 
             if (extracted.bytes === undefined && !extracted.uri) {
+                if (process.env['DEBUG_OPENCODE']) {
                 console.warn('[A2A mapper] Unsupported file format: could not extract bytes or uri from file part. Part will be dropped.');
+            }
                 return null;
             }
 
@@ -568,7 +576,9 @@ export class A2AStreamMapper {
                                 data,
                             } as FileStreamPart);
                         } else {
-                            console.warn('[A2A mapper] Received image part without bytes or uri. Skipping.');
+                            if (process.env['DEBUG_OPENCODE']) {
+                                console.warn('[A2A mapper] Received image part without bytes or uri. Skipping.');
+                            }
                         }
                     } else if (p.kind === 'file') {
                         // 画像と同様に、マルチモーダルパーツは working 状態以外でも処理する。
@@ -583,7 +593,9 @@ export class A2AStreamMapper {
                                 data,
                             } as FileStreamPart);
                         } else {
-                            console.warn('[A2A mapper] Received file part without fileWithBytes or uri. Skipping.');
+                            if (process.env['DEBUG_OPENCODE']) {
+                                console.warn('[A2A mapper] Received file part without fileWithBytes or uri. Skipping.');
+                            }
                         }
                     }
                 }
@@ -662,7 +674,9 @@ export class A2AStreamMapper {
                             finishReason = 'stop';
                         }
                         if (!hasTools) {
-                            console.warn(`[A2A mapper] Unexpected final status state: '${result.status.state}' for taskId: '${result.taskId}'. Treating as 'stop'.`);
+                            if (process.env['DEBUG_OPENCODE']) {
+                                console.warn(`[A2A mapper] Unexpected final status state: '${result.status.state}' for taskId: '${result.taskId}'. Treating as 'stop'.`);
+                            }
                         }
                         break;
                 }

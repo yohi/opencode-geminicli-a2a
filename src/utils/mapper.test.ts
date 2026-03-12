@@ -1,9 +1,13 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mapPromptToA2AJsonRpcRequest, mapA2AResponseToStreamParts, A2AStreamMapper } from './mapper';
 import type { LanguageModelV1Prompt } from '@ai-sdk/provider';
 import type { A2AResponseResult } from '../schemas';
 
 describe('mapper', () => {
+    beforeEach(() => {
+        process.env['DEBUG_OPENCODE'] = '1';
+    });
+    
     describe('mapPromptToA2AJsonRpcRequest', () => {
         it('should map empty prompt', () => {
             const req = mapPromptToA2AJsonRpcRequest([]);

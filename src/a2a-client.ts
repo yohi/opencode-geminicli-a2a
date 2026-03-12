@@ -112,7 +112,9 @@ export class A2AClient {
                 try {
                     responseBody = await error.response?.text();
                 } catch (e) {
-                    console.error(`A2AClient: Failed to read response body for ${error.response?.url ?? this.endpoint} (status: ${statusCode}):`, e);
+                    if (process.env['DEBUG_OPENCODE']) {
+                        console.error(`A2AClient: Failed to read response body for ${error.response?.url ?? this.endpoint} (status: ${statusCode}):`, e);
+                    }
                     responseBody = undefined;
                 }
             }

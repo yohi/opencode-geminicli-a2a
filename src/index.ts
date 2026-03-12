@@ -91,7 +91,9 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
                     options.autoStart,
                     debug
                 ).catch((err: unknown) => {
-                    console.error(`[opencode-geminicli-a2a] Failed to auto-start server for model '${modelId}' on ${resolvedHost}:${resolvedPort}`, err);
+                    if (debug) {
+                        console.error(`[opencode-geminicli-a2a] Failed to auto-start server for model '${modelId}' on ${resolvedHost}:${resolvedPort}`, err);
+                    }
                     throw err;
                 });
             }
@@ -146,7 +148,9 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
         }
         return createModel;
     } catch (err) {
-        console.error('[opencode-geminicli-error] CRITICAL ERROR IN FACTORY:', err);
+        if (process.env['DEBUG_OPENCODE']) {
+            console.error('[opencode-geminicli-error] CRITICAL ERROR IN FACTORY:', err);
+        }
         throw err;
     }
 }

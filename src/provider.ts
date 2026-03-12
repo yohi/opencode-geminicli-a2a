@@ -118,7 +118,9 @@ export class OpenCodeGeminiA2AProvider {
                 fallback: this.fallbackConfig,
             };
         } catch (err) {
-            console.error(`[opencode-geminicli-error] ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
+            if (process.env['DEBUG_OPENCODE']) {
+                console.error(`[opencode-geminicli-error] ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
+            }
             throw err;
         }
     }
@@ -364,10 +366,14 @@ export class OpenCodeGeminiA2AProvider {
                 if (trimmed !== '') {
                     sessionId = trimmed;
                 } else {
-                    console.warn(`[opencode-geminicli-a2a] Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
+                    if (process.env['DEBUG_OPENCODE']) {
+                        console.warn(`[opencode-geminicli-a2a] Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
+                    }
                 }
             } else {
-                console.warn(`[opencode-geminicli-a2a] Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
+                if (process.env['DEBUG_OPENCODE']) {
+                    console.warn(`[opencode-geminicli-a2a] Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
+                }
             }
         }
 
