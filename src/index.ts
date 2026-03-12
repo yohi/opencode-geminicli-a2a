@@ -76,19 +76,24 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
                 const debug = !!process.env['DEBUG_OPENCODE'];
                 
                 // プロバイダー内で解決された最終的な接続先を取得
-                const resolvedHost = (providerInstance as any).options?.host ?? options.host ?? 'localhost';
-                const resolvedPort = (providerInstance as any).options?.port ?? options.port ?? 41242;
+                const providerOpts = providerInstance as unknown as { options?: { host?: string; port?: number } };
+                const resolvedHost = providerOpts.options?.host ?? options.host ?? 'localhost';
+                const resolvedPort = providerOpts.options?.port ?? options.port ?? 41242;
 
-// サーバー起動は非同期なので Promise としてプロバイダーに持たせる
-if (debug) {
-    console.log(`[opencode-geminicli-a2a] AutoStart configured for model '${modelId}' on ${resolvedHost}:${resolvedPort}`);
-}
-(providerInstance as any)._serverReady = manager.ensureRunning(                    resolvedPort,
+                // サーバー起動は非同期なので Promise としてプロバイダーに持たせる
+                if (debug) {
+                    console.log(`[opencode-geminicli-a2a] AutoStart configured for model '${modelId}' on ${resolvedHost}:${resolvedPort}`);
+                }
+                (providerInstance as any)._serverReady = manager.ensureRunning(
+                    resolvedPort,
                     resolvedHost,
                     modelId,
                     options.autoStart,
                     debug
-                );
+                ).catch((err: unknown) => {
+                    console.error(`[opencode-geminicli-a2a] Failed to auto-start server for model '${modelId}' on ${resolvedHost}:${resolvedPort}`, err);
+                    throw err;
+                });
             }
 
             return providerInstance;

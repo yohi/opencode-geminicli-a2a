@@ -19,4 +19,7 @@ async function main() {
     console.log("Result Text:", result.text);
 }
 
-main().catch(console.error);
+main().catch(err => {
+    console.error(err);
+    process.exitCode = 1;
+});

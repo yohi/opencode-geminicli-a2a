@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type {
     LanguageModelV1CallOptions,
     LanguageModelV1StreamPart,
@@ -19,6 +20,13 @@ import { type SessionStore, InMemorySessionStore, type A2ASession } from './sess
 import { isQuotaError, getNextFallbackModel, resolveFallbackConfig, type FallbackConfig } from './fallback';
 import { DefaultMultiAgentRouter } from './router';
 
+
+function isAutoConfirmTarget(part: ExtendedFinishPart | undefined): boolean {
+    if (!part) return false;
+    return part.inputRequired === true && 
+           part.hasExposedTools !== true &&
+           (part.coderAgentKind === 'tool-call-confirmation' || part.coderAgentKind === 'internal-tool-call');
+}
 
 export class OpenCodeGeminiA2AProvider {
     readonly specificationVersion = 'v2' as const;
@@ -327,7 +335,7 @@ export class OpenCodeGeminiA2AProvider {
 
         // Gemini CLI 等、メタデータを渡さないクライアントのためのフォールバック
         if (!sessionId) {
-            sessionId = 'default-cli-session';
+            sessionId = `cli-session-${crypto.randomUUID()}`;
         }
 
         const session = await this.sessionStore.get(sessionId) || {};
@@ -369,7 +377,6 @@ export class OpenCodeGeminiA2AProvider {
             throw error;
         }
 
-        const chunkGenerator = parseA2AStream(responseStream);
         const mapper = new A2AStreamMapper();
 
         // v2 ストリーム変換: v1 の LanguageModelV1StreamPart を
@@ -407,6 +414,7 @@ export class OpenCodeGeminiA2AProvider {
                             });
                         }
 
+                        mapper.startNewTurn();
                         const chunkGenerator = parseA2AStream(response.stream);
 
                         for await (const chunk of chunkGenerator) {
@@ -482,12 +490,7 @@ export class OpenCodeGeminiA2AProvider {
                                             lastFinishPart = finishPart;
 
                                             // 自動承認が必要な状態でなければ、OpenCodeに finish を流して終了判定する
-                                            const isAutoConfirmTarget = finishPart.inputRequired === true && 
-                                                                       finishPart.hasExposedTools !== true &&
-                                                                       (finishPart.coderAgentKind === 'tool-call-confirmation' || 
-                                                                        finishPart.coderAgentKind === 'internal-tool-call');
-                                            
-                                            if (!isAutoConfirmTarget) {
+                                            if (!isAutoConfirmTarget(finishPart)) {
                                                 controller.enqueue({
                                                     type: 'finish',
                                                     finishReason: finishPart.finishReason,
@@ -506,7 +509,12 @@ export class OpenCodeGeminiA2AProvider {
                                 // エラー時は以前と同様に処理
                                 const rpcError = new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`);
                                 const isQuota = isQuotaError({ code: chunk.error.code, message: chunk.error.message }, this.fallbackConfig);
-                                Object.assign(rpcError, { code: chunk.error.code, id: chunk.id, ...(isQuota ? { isQuotaError: true } : {}) });
+                                Object.assign(rpcError, { 
+                                    code: chunk.error.code, 
+                                    data: (chunk.error as any).data,
+                                    id: chunk.id, 
+                                    ...(isQuota ? { isQuotaError: true } : {}) 
+                                });
                                 if (sessionId) await this.sessionStore.update(sessionId, { lastFinishReason: undefined });
                                 controller.error(rpcError);
                                 return;
@@ -519,10 +527,7 @@ export class OpenCodeGeminiA2AProvider {
                         }
 
                         // 自動承認ロジック: 内部ツール確認中の場合は次のリクエストを自動送信
-                        if (lastFinishPart?.inputRequired === true && 
-                            lastFinishPart?.hasExposedTools !== true &&
-                            (lastFinishPart?.coderAgentKind === 'tool-call-confirmation' || 
-                             lastFinishPart?.coderAgentKind === 'internal-tool-call') && 
+                        if (isAutoConfirmTarget(lastFinishPart) && 
                             mapper.taskId) {
                             
                             autoConfirmCount++;

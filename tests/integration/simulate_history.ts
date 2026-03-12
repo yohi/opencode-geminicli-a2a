@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { createGeminiA2AProvider } from '../../src/index';
 
 async function main() {
@@ -15,6 +16,10 @@ async function main() {
     });
 
     console.log("Result 2 Text:", result2.text);
+    assert.ok(result2.text?.includes('25'), 'Result 2 should include "25"');
 }
 
-main().catch(console.error);
+main().catch(err => {
+    console.error(err);
+    process.exitCode = 1;
+});

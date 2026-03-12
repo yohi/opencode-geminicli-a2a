@@ -84,34 +84,6 @@ export const metadataSchema = z.object({
     }).optional()
 }).passthrough().optional();
 
-const BaseResponseSchema = z.object({
-    kind: z.string(),
-    contextId: z.string().optional(),
-    status: z.object({
-        state: z.union([z.enum(STATUS_STATES), z.string()]),
-        message: z.object({
-            parts: z.array(z.object({
-                kind: z.string(),
-                text: z.string().optional(),
-                data: z.unknown().optional(),
-                image: z.object({
-                    mimeType: z.string().optional(),
-                    bytes: z.string().optional(),
-                    uri: z.string().optional()
-                }).optional(),
-                file: z.object({
-                    name: z.string().optional(),
-                    mimeType: z.string().optional(),
-                    fileWithBytes: z.string().optional(),
-                    uri: z.string().optional()
-                }).optional(),
-            }))
-        }).optional(),
-        timestamp: z.string().optional()
-    }).optional(),
-    metadata: metadataSchema,
-}).passthrough();
-
 export const A2AResponseResultSchema = z.union([
     z.object({
         kind: z.literal('task'),
@@ -156,8 +128,7 @@ export const A2AResponseResultSchema = z.union([
             promptTokens: z.number().optional(),
             completionTokens: z.number().optional()
         }).optional(),
-    }),
-    BaseResponseSchema
+    })
 ]);
 
 export type A2AResponseResult = z.infer<typeof A2AResponseResultSchema>;
