@@ -251,15 +251,39 @@ export class OpenCodeGeminiA2AProvider {
                                                 controller.enqueue({ type: 'text-end', id: activeTextId });
                                                 activeTextId = undefined;
                                             }
-                                            // V2/V3 ハイブリッド形式
+                                            // OpenCode は内部的に tool-input-start をフックしてツール実行の初期化(pending state の登録)を行うため、
+                                            // チャンク単位のツール送信（V2/V3ストリーミング形式）にエミュレートする必要がある。
+                                            // 直接 'tool-call' を投げると、OpenCodeが認識できずに Tool execution aborted になる。
+                                            const toolId = part.toolCallId || `tool-${toolCallCounter++}`;
+                                            
                                             controller.enqueue({
-                                                type: 'tool-call',
-                                                toolCallType: 'function', // V2用
+                                                type: 'tool-input-start',
+                                                id: toolId,
                                                 toolCallId: part.toolCallId,
                                                 toolName: part.toolName,
-                                                args: part.args, // V2用
-                                                input: part.args, // V3用
+                                            } as any);
+
+                                            controller.enqueue({
+                                                type: 'tool-input-delta',
+                                                id: toolId,
+                                                delta: part.args,
                                             });
+
+                                            controller.enqueue({
+                                                type: 'tool-input-end',
+                                                id: toolId,
+                                            });
+                                            
+                                            // さらに、V3系のAI SDKが最後に統合された 'tool-call' オブジェクトを必要とする場合があるため念のため流す
+                                            // (ただし OpenCode は上記 start/delta/end で状態を完了させる)
+                                            controller.enqueue({
+                                                type: 'tool-call',
+                                                toolCallType: 'function',
+                                                toolCallId: part.toolCallId,
+                                                toolName: part.toolName,
+                                                args: part.args,
+                                                input: part.args,
+                                            } as any);
                                             break;
                                         }
                                         case 'file': {
