@@ -8,10 +8,10 @@ import crypto from 'node:crypto';
 import { Logger } from './logger';
 
 /**
- * Gemini CLI A2A サーバーの内部ツールリスト。
+ * Gemini CLI A2A サーバーのデフォルト内部ツールリスト。
  * これらは OpenCode 側には露出させず、プロバイダー層で自動承認（auto-confirm）する。
  */
-const INTERNAL_TOOLS = new Set([
+export const DEFAULT_INTERNAL_TOOLS = [
     'activate_skill',
     'load_skill',
     'search_skills',
@@ -22,7 +22,7 @@ const INTERNAL_TOOLS = new Set([
     'cli_help',
     'codebase_investigator',
     'generalist'
-]);
+];
 
 export interface ExtendedFinishPart {
     type: 'finish';
@@ -98,6 +98,12 @@ function percentPayloadToBytes(payload: string): Uint8Array {
  */
 export interface MapPromptOptions {
     tools?: Tool[];
+    /** ツール名のマッピング (OpenCode -> Server) */
+    toolMapping?: Record<string, string>;
+    /** 内部ツールリスト */
+    internalTools?: string[];
+    /** OpenCode 側がリクエストしたツールの一覧 (A2A 内部ツールとの識別に使う) */
+    clientTools?: string[];
     /** 前回レスポンスから取得した contextId。コンテキスト継続に使用 */
     contextId?: string;
     /** 前回レスポンスから取得した taskId。タスク継続（input-required 状態）に使用 */
@@ -137,7 +143,7 @@ export function mapPromptToA2AJsonRpcRequest(
         ? { tools: optionsOrTools }
         : (optionsOrTools ?? {});
 
-    const { tools, contextId, taskId, modelId, generationConfig } = options;
+    const { tools, contextId, taskId, modelId, generationConfig, toolMapping } = options;
 
     if (prompt.length === 0) {
         return buildRequest('(empty prompt)', options);
@@ -164,8 +170,13 @@ export function mapPromptToA2AJsonRpcRequest(
     const isLastMessageTool = lastMessage.role === 'tool';
     const effectivePrompt = isLastMessageTool ? newMessages.slice(0, -1) : newMessages;
 
+    // 🔴 INJECT ANTI-HALLUCINATION WARNING FOR NATIVE A2A SKILLS 🔴
+    // A2A internal skills run natively, bypassing JSON RPC tools. Gemini frequently
+    // hallucinates short names instead of long MCP prefixes, crashing the agent.
+    historyText += `[System]\nCRITICAL INSTRUCTION: When calling MCP tools (such as read_file, directory_tree, search_files), you MUST use their exact full names WITH the 'docker-mcp-gateway_' prefix (e.g., 'docker-mcp-gateway_read_multiple_files'). Do NOT use the short aliases! The server will violently reject the tool call with an 'invalid' error if the prefix is missing. Check your Available tools list and copy the exact prefixed name.\n\n`;
+
     if (isLastMessageTool) {
-        toolResultText = formatToolResults(lastMessage.content);
+        toolResultText = formatToolResults(lastMessage.content, toolMapping);
     }
 
     for (let i = 0; i < effectivePrompt.length; i++) {
@@ -208,7 +219,7 @@ export function mapPromptToA2AJsonRpcRequest(
                 }
                 historyText += `[Assistant]\n${text}\n\n`;
             } else if (msg.role === 'tool') {
-                historyText += `[Tool Result]\n${formatToolResults(msg.content)}\n\n`;
+                historyText += `[Tool Result]\n${formatToolResults(msg.content, toolMapping)}\n\n`;
             }
         }
     }
@@ -391,13 +402,17 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
  * AI SDK の tool-result パーツをテキスト形式に変換する。
  * A2A サーバーが理解できるよう、構造化されたテキストとして送信する。
  */
-function formatToolResults(content: Array<{ type: 'tool-result'; toolCallId: string; toolName: string; result: unknown; isError?: boolean }>): string {
+function formatToolResults(
+    content: Array<{ type: 'tool-result'; toolCallId: string; toolName: string; result: unknown; isError?: boolean }>,
+    toolMapping?: Record<string, string>
+): string {
     return content.map(part => {
         const resultStr = typeof part.result === 'string'
             ? part.result
             : JSON.stringify(part.result);
         const prefix = part.isError ? '[Tool Error' : '[Tool Result';
-        return `${prefix}: ${part.toolName} (${part.toolCallId})]\n${resultStr}`;
+        const mappedToolName = toolMapping?.[part.toolName] || part.toolName;
+        return `${prefix}: ${mappedToolName} (${part.toolCallId})]\n${resultStr}`;
     }).join('\n\n');
 }
 
@@ -408,7 +423,24 @@ function buildRequest(
     content: string | A2AJsonRpcRequest['params']['message']['parts'],
     options: MapPromptOptions
 ): A2AJsonRpcRequest {
-    const { tools, contextId, taskId, modelId, generationConfig } = options;
+    const { tools, contextId, taskId, modelId, generationConfig, toolMapping } = options;
+
+    // ツール名のマッピング適用し、OpenAIスキーマのラッパーを解除する
+    const mappedTools = tools?.map(tool => {
+        const toolObj = tool as any;
+        const isWrapped = toolObj.type === 'function' && typeof toolObj.function === 'object';
+        const flatTool = isWrapped ? {
+            name: toolObj.function.name,
+            description: toolObj.function.description,
+            parameters: toolObj.function.parameters
+        } : { ...toolObj };
+
+        if (flatTool.name && toolMapping?.[flatTool.name]) {
+            return { ...flatTool, name: toolMapping[flatTool.name] };
+        }
+        return flatTool;
+    });
+
     const parts = typeof content === 'string'
         ? [{ kind: 'text' as const, text: content }]
         : content;
@@ -425,7 +457,7 @@ function buildRequest(
             },
             configuration: {
                 blocking: false,
-                ...(tools && tools.length > 0 ? { tools } : {})
+                ...(mappedTools && mappedTools.length > 0 ? { tools: mappedTools } : {})
             },
             ...(generationConfig ? { generationConfig } : {}),
             ...(modelId ? { model: modelId } : {}),
@@ -447,6 +479,10 @@ function buildRequest(
  *   AI SDK の reasoning ストリームパーツとして出力する。
  */
 export class A2AStreamMapper {
+    private toolMapping: Record<string, string>;
+    private reverseToolMapping: Record<string, string>;
+    private internalTools: Set<string>;
+
     /** 出力済みテキストの累計インデックス別マップ。スナップショット重複排除に使用 */
     private bufferedTools = new Map<string, { toolName: string; args: any }>();
     /** レスポンスから抽出した contextId */
@@ -465,6 +501,20 @@ export class A2AStreamMapper {
     private _currentCoderAgentKind?: string;
     /** 最後の finishReason */
     private _lastFinishReason?: string;
+
+    /** OpenCode によって要求されたツールの Set (指定がある場合、これに含まれないツールはすべて internal 扱いになる) */
+    private clientTools?: Set<string>;
+
+    constructor(options?: { toolMapping?: Record<string, string>, internalTools?: string[], clientTools?: string[] }) {
+        this.toolMapping = options?.toolMapping ?? {};
+        this.reverseToolMapping = Object.fromEntries(
+            Object.entries(this.toolMapping).map(([k, v]) => [v, k])
+        );
+        this.internalTools = new Set(options?.internalTools ?? DEFAULT_INTERNAL_TOOLS);
+        if (options?.clientTools) {
+            this.clientTools = new Set(options.clientTools);
+        }
+    }
 
     /** レスポンスから抽出した contextId を取得 */
     get contextId(): string | undefined { return this._contextId; }
@@ -535,7 +585,7 @@ export class A2AStreamMapper {
                         }
                     } else if (p.kind === 'data' && isToolRequest(p.data)) {
                         const req = p.data.request;
-                        const toolName = req.name;
+                        let toolName = req.name;
 
                         // A2A側から callId が無い場合は toolName と index で一意に決定 (引数が変化してもIDが変わらないようにする)
                         // ツール呼び出しの引数はストリーム中に徐々に構築されるため、
@@ -553,6 +603,21 @@ export class A2AStreamMapper {
                             }
                             toolCallId = this.fallbackToolCallIds.get(fallbackKey)!;
                         }
+                        // CRITICAL: A2A natively hallucinates 'invalid' tools when it fails.
+                        // OpenCode tracks 'invalid' across the entire session and crashes with doom_loop if it hits 5.
+                        // We intercept 'invalid' and convert it to a harmless text warning so the LLM knows it failed
+                        // without OpenCode ever seeing a tool call.
+                        console.warn(`[Sandbox-Debug] Received tool call from A2A stream. Initial name: '${toolName}', callId: '${toolCallId}', raw request:`, JSON.stringify(req));
+
+                        if (toolName === 'invalid') {
+                            Logger.warn(`[Sandbox] Intercepted A2A native 'invalid' tool call. Converting to bash echo to prevent doom_loop.`);
+                            this.bufferedTools.set(toolCallId, {
+                                toolName: 'bash',
+                                args: { command: 'echo "SYSTEM WARNING: I attempted to use an invalid tool. I must check my available tools and use the exact prefixed name like docker-mcp-gateway_read_file."' }
+                            });
+                            continue;
+                        }
+
                         this.bufferedTools.set(toolCallId, { toolName, args: req.args });
                     } else if (coderAgentKind === 'thought' && p.kind === 'data' && isThoughtData(p.data)) {
                         let textDelta = '';
@@ -624,7 +689,27 @@ export class A2AStreamMapper {
                 let hasInternalTools = false;
 
                 for (const [toolCallId, toolInfo] of this.bufferedTools.entries()) {
-                    const isInternalTool = INTERNAL_TOOLS.has(toolInfo.toolName);
+                    const originalToolName = this.reverseToolMapping[toolInfo.toolName] || toolInfo.toolName;
+                    
+                    let isInternalTool = this.internalTools.has(toolInfo.toolName);
+                    // OpenCodeで要求した一覧(clientTools)に含まれていないかつ、内部ツール(internalTools)でもない場合、
+                    // A2Aサーバーがツールの名前を幻覚した（例：read_file）可能性が高い。
+                    // 単純に内部ツール扱いにしてしまうと OpenCode 側でツールが1つも露出せず
+                    // stop -> user_prompt -> tool のループ（doom_loop）に陥る。
+                    // そこで、未知の幻覚ツールは "bash" ツールへ置換し、Warningをechoさせることで安全に1ターン消費させる。
+                    if (this.clientTools && !this.clientTools.has(originalToolName) && !isInternalTool) {
+                        Logger.warn(`[Workaround] Intercepted hallucinated tool call '${toolInfo.toolName}'. Rewriting to a safe 'bash' call.`);
+                        
+                        toolInfo.toolName = 'bash';
+                        // toolInfo.args が文字列・オブジェクトどちらでも対応できるように上書き
+                        toolInfo.args = { command: `echo "[opencode-geminicli-a2a] Warning: Model hallucinated an unknown tool call '${originalToolName}'. This is a safe fallback execution."` };
+                        
+                        // 以降の処理で露出させるツールとして扱われるようフラグを倒す
+                        isInternalTool = false;
+                    } else if (this.clientTools && !this.clientTools.has(originalToolName)) {
+                        isInternalTool = true;
+                    }
+
                     if (isInternalTool || isInternalToolConfirmation) {
                         hasInternalTools = true;
                     } else {
@@ -635,13 +720,15 @@ export class A2AStreamMapper {
                                 : JSON.stringify(toolInfo.args ?? {});
                             if (!argsStr || argsStr === '""') argsStr = '{}';
                             
-                            Logger.info(`Emitting tool call: ${toolInfo.toolName} (${toolCallId}) with args: ${argsStr}`);
+                            const originalToolName = this.reverseToolMapping[toolInfo.toolName] || toolInfo.toolName;
+                            
+                            Logger.info(`Emitting tool call: ${originalToolName} (from: ${toolInfo.toolName}) (${toolCallId}) with args: ${argsStr}`);
 
                             parts.push({
                                 type: 'tool-call',
                                 toolCallType: 'function',
                                 toolCallId,
-                                toolName: toolInfo.toolName,
+                                toolName: originalToolName,
                                 args: argsStr,
                             });
                             this.emittedToolCallIds.add(toolCallId);
@@ -714,12 +801,17 @@ export class A2AStreamMapper {
                     coderAgentKindValue = 'tool-call-confirmation';
                 }
 
+                // If input is required but no internal tools are being processed (because they were dropped, e.g., 'invalid')
+                // and no exposed tools are present, we must NOT set inputRequired to true, 
+                // otherwise provider.ts will auto-confirm an empty array into an infinite loop.
+                const shouldPromptInput = result.status.state === 'input-required' && (hasExposedTools || hasInternalTools);
+
                 parts.push({
                     type: 'finish',
                     finishReason,
                     usage,
                     hasExposedTools,
-                    ...(result.status.state === 'input-required' || hasInternalTools ? { 
+                    ...(shouldPromptInput || hasInternalTools ? { 
                         inputRequired: true, 
                         rawState: result.status.state,
                         ...(coderAgentKindValue !== undefined ? { coderAgentKind: coderAgentKindValue } : {})
@@ -732,7 +824,9 @@ export class A2AStreamMapper {
         } else if (result.kind === 'artifact-update') {
             // artifact-update の場合はストリームパーツに変換しない
         } else {
-            throw new Error(`Unexpected result kind: ${(result as any).kind}`);
+            // 'invalid' など、スキーマ外の kind が返ることがある（Gemini CLI のツール呼び出し失敗など）。
+            // ストリームをクラッシュさせず、ログを出してスキップする。
+            Logger.warn(`Skipping unexpected A2A result kind: '${(result as any).kind}'`);
         }
 
         return parts;
