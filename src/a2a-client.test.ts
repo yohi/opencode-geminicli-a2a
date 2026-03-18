@@ -72,7 +72,7 @@ describe('A2AClient', () => {
                 },
                 retry: 3,
                 retryDelay: 1000,
-                timeout: 120000,
+                retryStatusCodes: [408, 409, 425, 429, 500, 502, 503, 504],
             })
         );
     });
@@ -91,7 +91,7 @@ describe('A2AClient', () => {
                 },
                 retry: 0,
                 retryDelay: 1000,
-                timeout: 120000,
+                retryStatusCodes: [408, 409, 425, 429, 500, 502, 503, 504],
             })
         );
     });

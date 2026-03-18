@@ -1,5 +1,6 @@
 import { InvalidResponseDataError } from '@ai-sdk/provider';
 import { A2AJsonRpcResponseSchema, type A2AJsonRpcResponse } from '../schemas';
+import { Logger } from './logger';
 
 function parseChunkLine(chunkDataSync: string): A2AJsonRpcResponse | null {
     if (!chunkDataSync) return null;
@@ -34,6 +35,14 @@ function parseChunkLine(chunkDataSync: string): A2AJsonRpcResponse | null {
 
     const validation = A2AJsonRpcResponseSchema.safeParse(parsedJson);
     if (!validation.success) {
+        // Gemini CLI が 'invalid' kind など、スキーマ外のレスポンスを返す場合がある。
+        // エラーとして扱うと、ツール呼び出し失敗ごとにストリームがクラッシュするため、
+        // 警告ログを出して当該チャンクをスキップする。
+        const parsed = parsedJson as Record<string, any>;
+        if (parsed?.result && typeof parsed?.result === 'object' && 'kind' in parsed.result) {
+            Logger.warn(`Skipping A2A chunk with unknown result kind: '${(parsed.result as any).kind}'`);
+            return null;
+        }
         throw new InvalidResponseDataError({
             data: parsedJson,
             message: `Chunk validation failed: ${validation.error.message}`,

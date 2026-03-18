@@ -68,7 +68,6 @@ export class A2AClient {
                 retry: retryCount,
                 retryDelay: 1000,
                 retryStatusCodes: RETRY_STATUS_CODES,
-                timeout: 120000,
                 signal: abortSignal,
                 ignoreResponseError: true,
                 responseType: 'stream',
