@@ -16,7 +16,7 @@ import {
     type ExtendedFinishPart 
 } from './utils/mapper';
 import { parseA2AStream } from './utils/stream';
-import type { A2AJsonRpcRequest, A2AConfig } from './schemas';
+import type { A2AJsonRpcRequest, A2AConfig, Tool } from './schemas';
 import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
 import { isQuotaError, getNextFallbackModel, resolveFallbackConfig, type FallbackConfig } from './fallback';
 import { DefaultMultiAgentRouter } from './router';
@@ -77,6 +77,16 @@ export class OpenCodeGeminiA2AProvider {
             this.sessionStore = options?.sessionStore ?? new InMemorySessionStore();
             this.fallbackConfig = resolveFallbackConfig(options?.fallback);
 
+            const defaultToolMapping: Record<string, string> = {
+                'docker-mcp-gateway_read_file': 'read_file',
+                'docker-mcp-gateway_directory_tree': 'directory_tree',
+                'docker-mcp-gateway_read_multiple_files': 'read_multiple_files',
+                'docker-mcp-gateway_edit_file': 'edit_file',
+                'docker-mcp-gateway_write_file': 'write_file',
+                'docker-mcp-gateway_search_files': 'search_files',
+                ...(finalConfig.toolMapping || {})
+            };
+
             this.options = {
                 ...options,
                 host: finalConfig.host,
@@ -86,6 +96,8 @@ export class OpenCodeGeminiA2AProvider {
                 generationConfig: defaultGenerationConfig,
                 sessionStore: this.sessionStore,
                 fallback: this.fallbackConfig,
+                toolMapping: defaultToolMapping,
+                internalTools: finalConfig.internalTools,
             };
         } catch (err) {
             Logger.error(`ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
@@ -94,10 +106,10 @@ export class OpenCodeGeminiA2AProvider {
     }
 
     private createA2ARequest(options: LanguageModelV1CallOptions, session: A2ASession): A2AJsonRpcRequest {
-        let tools: any[] | undefined;
-        if (options.mode && 'tools' in options.mode && options.mode.tools?.length) {
-            tools = options.mode.tools;
-        }
+        // NOTE: OpenCode (AI SDK) 側のツール定義 (options.mode.tools) は A2A サーバーへ送信しない。
+        // A2A の設計思想「Opaque Execution」に従い、Gemini CLI は自身の内部ツール
+        // (read, bash, edit 等) のみを使用する。OpenCode ツールの結果は
+        // formatToolResults() によりテキスト化されてメッセージ本文に混入する。
 
         const mergedGenerationConfig = {
             ...this.options?.generationConfig,
@@ -114,11 +126,21 @@ export class OpenCodeGeminiA2AProvider {
             Object.entries(mergedGenerationConfig).filter(([_, v]) => v !== undefined)
         );
 
-        const mapOptions: MapPromptOptions = { tools };
+        const mapOptions: MapPromptOptions = { 
+            toolMapping: this.options?.toolMapping,
+            internalTools: this.options?.internalTools
+        };
         if (Object.keys(filteredConfig).length > 0) {
             mapOptions.generationConfig = filteredConfig;
         }
         mapOptions.modelId = this.modelId;
+
+        if (options.mode?.type === 'regular' && options.mode.tools?.length) {
+            // Forward AI SDK tools to A2A natively.
+            // mapper.ts will automatically rename them using this.options.toolMapping (stripping MCP prefixes).
+            // When A2A returns the short name, mapper.ts will reverse the mapping back to the MCP prefix.
+            mapOptions.tools = options.mode.tools as any[];
+        }
 
         if (session.contextId) {
             mapOptions.contextId = session.contextId;
@@ -133,8 +155,8 @@ export class OpenCodeGeminiA2AProvider {
         return mapPromptToA2AJsonRpcRequest(options.prompt, mapOptions);
     }
 
-    async doStream(options: LanguageModelV1CallOptions) {
-        let result: any;
+    async doStream(options: LanguageModelV1CallOptions): Promise<LanguageModelV1StreamResult> {
+        let result: LanguageModelV1StreamResult;
         try {
             result = await this._doStreamInternal(options);
         } catch (error) {
@@ -143,31 +165,84 @@ export class OpenCodeGeminiA2AProvider {
             }
             throw error;
         }
-        return result;
+
+        const fallbackConfig = this.fallbackConfig;
+        if (!fallbackConfig) {
+            return result;
+        }
+
+        let currentReader = result.stream.getReader();
+        let fallbackAttempted = false;
+        let streamStartEmitted = false;
+        const self = this;
+
+        const proxyStream = new ReadableStream<any>({
+            async pull(controller) {
+                while (true) {
+                    try {
+                        const { done, value } = await currentReader.read();
+                        if (done) {
+                            controller.close();
+                            return;
+                        }
+
+                        if (value?.type === 'stream-start') {
+                            if (streamStartEmitted) continue;
+                            streamStartEmitted = true;
+                        }
+
+                        controller.enqueue(value);
+                        return;
+                    } catch (error) {
+                        if (!fallbackAttempted && isQuotaError(error, fallbackConfig)) {
+                            fallbackAttempted = true;
+                            if (process.env['DEBUG_OPENCODE']) {
+                                console.warn(`[opencode-geminicli-a2a] Stream error detected. Attempting fallback...`);
+                            }
+                            try {
+                                const fallbackResult = await self._attemptFallback(options, error);
+                                currentReader.releaseLock();
+                                currentReader = fallbackResult.stream.getReader();
+                                continue;
+                            } catch (fallbackError) {
+                                controller.error(fallbackError);
+                                return;
+                            }
+                        } else {
+                            controller.error(error);
+                            return;
+                        }
+                    }
+                }
+            },
+            cancel(reason) {
+                currentReader.cancel(reason);
+            }
+        });
+
+        return {
+            ...result,
+            stream: proxyStream,
+        };
     }
 
     private async _attemptFallback(
         callOptions: LanguageModelV1CallOptions,
         originalError: unknown,
     ): Promise<LanguageModelV1StreamResult> {
-        let currentModelId = this.modelId;
-        let lastError = originalError;
-        const fallbackModels = this.fallbackConfig?.models || [];
-        for (const nextModelId of fallbackModels) {
-            if (nextModelId === currentModelId) continue;
-            try {
-                const fallbackProvider = new OpenCodeGeminiA2AProvider(nextModelId, this.options);
-                return await fallbackProvider._doStreamInternal(callOptions);
-            } catch (retryError) {
-                if (isQuotaError(retryError, this.fallbackConfig)) {
-                    currentModelId = nextModelId;
-                    lastError = retryError;
-                    continue;
-                }
-                throw retryError;
-            }
+        if (!this.fallbackConfig) throw originalError;
+
+        const nextModelId = getNextFallbackModel(this.modelId, this.fallbackConfig);
+        if (!nextModelId) {
+            throw originalError;
         }
-        throw lastError;
+
+        if (process.env['DEBUG_OPENCODE']) {
+            console.warn(`[opencode-geminicli-a2a] Falling back from ${this.modelId} to ${nextModelId}`);
+        }
+
+        const fallbackProvider = new OpenCodeGeminiA2AProvider(nextModelId, this.options);
+        return fallbackProvider.doStream(callOptions);
     }
 
     private async _doStreamInternal(options: LanguageModelV1CallOptions) {
@@ -198,7 +273,16 @@ export class OpenCodeGeminiA2AProvider {
             throw error;
         }
 
-        const mapper = new A2AStreamMapper();
+        const clientTools = options.mode?.type === 'regular' && options.mode.tools
+            ? (options.mode.tools.map((t: any) => typeof t.name === 'string' ? t.name : t.function?.name)
+                .filter(Boolean) as string[])
+            : undefined;
+
+        const mapper = new A2AStreamMapper({
+            toolMapping: this.options?.toolMapping,
+            internalTools: this.options?.internalTools,
+            clientTools
+        });
         let textPartCounter = 0;
         let reasoningPartCounter = 0;
         let activeTextId: string | undefined;
@@ -207,7 +291,10 @@ export class OpenCodeGeminiA2AProvider {
             start: async (controller) => {
                 let currentRequest = request;
                 let autoConfirmCount = 0;
-                const MAX_AUTO_CONFIRM = 10;
+                let toolCallConfirmCount = 0;
+                const MAX_AUTO_CONFIRM = 50;          // internal-tool-call 用 (codebase_investigator 等の長時間実行エージェント対応のため拡大)
+                const MAX_TOOL_CONFIRM = 1;           // tool-call-confirmation 用 (invalid ツールのリトライループ防止)
+
                 let firstResponse: any = { stream: responseStream, headers: headers || {} };
 
                 try {
@@ -251,10 +338,10 @@ export class OpenCodeGeminiA2AProvider {
                                                 controller.enqueue({ type: 'text-end', id: activeTextId });
                                                 activeTextId = undefined;
                                             }
-                                            // OpenCode は内部的に tool-input-start をフックしてツール実行の初期化(pending state の登録)を行うため、
-                                            // チャンク単位のツール送信（V2/V3ストリーミング形式）にエミュレートする必要がある。
-                                            // 直接 'tool-call' を投げると、OpenCodeが認識できずに Tool execution aborted になる。
-                                            const toolId = part.toolCallId || `tool-${toolCallCounter++}`;
+                                            // OpenCode は内部的に tool-input-start を受けてツールを pending 登録し、
+                                            // その後の tool-call パーツ（またはストリームの完了）を受けて running 状態に遷移させる。
+                                            // ID が不一致だと登録済みのツールを更新できず、未完了のまま終了したとみなされて abort される。
+                                            const toolId = part.toolCallId;
                                             
                                             controller.enqueue({
                                                 type: 'tool-input-start',
@@ -273,9 +360,9 @@ export class OpenCodeGeminiA2AProvider {
                                                 type: 'tool-input-end',
                                                 id: toolId,
                                             });
-                                            
-                                            // さらに、V3系のAI SDKが最後に統合された 'tool-call' オブジェクトを必要とする場合があるため念のため流す
-                                            // (ただし OpenCode は上記 start/delta/end で状態を完了させる)
+
+                                            // 状態を 'running' に遷移させるために tool-call パーツも送出する。
+                                            // V2/V3 両方の SDK が理解できるようにプロパティを重複させておく。
                                             controller.enqueue({
                                                 type: 'tool-call',
                                                 toolCallType: 'function',
@@ -348,7 +435,32 @@ export class OpenCodeGeminiA2AProvider {
                         }
 
                         if (isAutoConfirmTarget(lastFinishPart) && mapper.taskId) {
-                            autoConfirmCount++;
+                            const isToolConfirm = lastFinishPart?.coderAgentKind === 'tool-call-confirmation';
+
+                            if (isToolConfirm) {
+                                toolCallConfirmCount++;
+                                if (toolCallConfirmCount > MAX_TOOL_CONFIRM) {
+                                    // invalid なツール（read_file 等）によるループを検知。
+                                    // これ以上 "Proceed" を送るとループするため、finish を emit して終了する。
+                                    Logger.warn(`[auto-confirm] tool-call-confirmation が ${toolCallConfirmCount} 回発生。ループの可能性があるため中断します。`);
+                                    controller.enqueue({
+                                        type: 'finish',
+                                        finishReason: 'stop',
+                                        usage: {
+                                            promptTokens: lastFinishPart.usage.inputTokens.total,
+                                            completionTokens: lastFinishPart.usage.outputTokens.total,
+                                        },
+                                        finishReasonV3: { unified: 'stop' as any, raw: 'tool-confirm-loop-detected' },
+                                    } as any);
+                                    break;
+                                }
+                            } else {
+                                autoConfirmCount++;
+                                if (autoConfirmCount >= MAX_AUTO_CONFIRM) {
+                                    break;
+                                }
+                            }
+
                             currentRequest = buildConfirmationRequest(mapper.taskId, this.modelId);
                             continue;
                         }
