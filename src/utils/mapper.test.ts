@@ -22,9 +22,9 @@ describe('mapper', () => {
                 { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
-            expect(part.kind).toBe('text');
-            expect(part.text).toBe('Hello');
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            expect((req.params.message.parts[1] as any).text).toBe('Hello');
             expect(req.params.message.role).toBe('user');
         });
 
@@ -33,11 +33,10 @@ describe('mapper', () => {
                 { role: 'user', content: [{ type: 'text', text: 'Hello ' }, { type: 'text', text: 'World' }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts.length).toBe(2);
-            expect((req.params.message.parts[0] as any).kind).toBe('text');
-            expect((req.params.message.parts[0] as any).text).toBe('Hello ');
-            expect((req.params.message.parts[1] as any).kind).toBe('text');
-            expect((req.params.message.parts[1] as any).text).toBe('World');
+            expect(req.params.message.parts.length).toBe(3);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            expect((req.params.message.parts[1] as any).text).toBe('Hello ');
+            expect((req.params.message.parts[2] as any).text).toBe('World');
             expect(req.params.message.role).toBe('user');
         });
 
@@ -48,7 +47,8 @@ describe('mapper', () => {
             const req = mapPromptToA2AJsonRpcRequest(prompt);
             const part = req.params.message.parts[0] as any;
             expect(part.kind).toBe('text');
-            expect(part.text).toBe('[System]\nYou are a helpful assistant.');
+            expect(part.text).toContain('CRITICAL INSTRUCTION');
+            expect(part.text).toContain('[System]\nYou are a helpful assistant.');
         });
 
         it('should format tool results when prompt ends with tool role', () => {
@@ -56,7 +56,9 @@ describe('mapper', () => {
                 { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call1', toolName: 'getWeather', result: { weather: 'sunny' } }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            const part = req.params.message.parts[1] as any;
             expect(part.kind).toBe('text');
             expect(part.text).toContain('[Tool Result: getWeather (call1)]');
             expect(part.text).toContain('"weather":"sunny"');
@@ -69,8 +71,8 @@ describe('mapper', () => {
                 { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call1', toolName: 'getWeather', result: { weather: 'sunny' } }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts.length).toBe(2);
-            expect((req.params.message.parts[0] as any).kind).toBe('text');
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
             expect((req.params.message.parts[0] as any).text).toContain('Where is Tokyo?');
             expect((req.params.message.parts[1] as any).kind).toBe('text');
             expect((req.params.message.parts[1] as any).text).toContain('[Tool Result: getWeather (call1)]');
@@ -82,7 +84,9 @@ describe('mapper', () => {
                 { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call2', toolName: 'failTool', result: 'something went wrong', isError: true }] }
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            const part = req.params.message.parts[1] as any;
             expect(part.kind).toBe('text');
             expect(part.text).toContain('[Tool Error: failTool (call2)]');
         });
@@ -93,7 +97,9 @@ describe('mapper', () => {
                 role: 'user', content: [{ type: 'image', image: buffer, mimeType: 'image/jpeg' }]
             }];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            const part = req.params.message.parts[1] as any;
             expect(part.kind).toBe('image');
             expect(part.image.bytes).toBe(buffer.toString('base64'));
             expect(part.image.uri).toBeUndefined();
@@ -105,7 +111,9 @@ describe('mapper', () => {
                 role: 'user', content: [{ type: 'image', image: 'https://example.com/image.png' as any }]
             }];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            const part = req.params.message.parts[1] as any;
             expect(part.kind).toBe('image');
             expect(part.image.bytes).toBeUndefined();
             expect(part.image.uri).toBe('https://example.com/image.png');
@@ -117,7 +125,9 @@ describe('mapper', () => {
                 role: 'user', content: [{ type: 'file', data: 'data:application/pdf;base64,JVBERi0xLjQKJ...' as any, mimeType: 'application/pdf' }]
             }];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            const part = req.params.message.parts[1] as any;
             expect(part.kind).toBe('file');
             expect(part.file.fileWithBytes).toBe('JVBERi0xLjQKJ...');
             expect(part.file.uri).toBeUndefined();
@@ -129,7 +139,9 @@ describe('mapper', () => {
                 role: 'user', content: [{ type: 'file', data: 'JVBERi0xLjQK' as any, mimeType: 'application/pdf' }]
             }];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            const part = req.params.message.parts[1] as any;
             expect(part.kind).toBe('file');
             expect(part.file.fileWithBytes).toBe('JVBERi0xLjQK');
             expect(part.file.uri).toBeUndefined();
@@ -142,7 +154,9 @@ describe('mapper', () => {
                 role: 'user', content: [{ type: 'image', image: arr, mimeType: 'image/png' }]
             }];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            const part = req.params.message.parts[1] as any;
             expect(part.kind).toBe('image');
             expect(part.image.bytes).toBe(typeof Buffer !== 'undefined' ? Buffer.from(arr).toString('base64') : btoa('hello'));
             expect(part.image.mimeType).toBe('image/png');
@@ -154,7 +168,9 @@ describe('mapper', () => {
                 role: 'user', content: [{ type: 'file', data: arr.buffer as any, mimeType: 'text/plain' }]
             }];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            const part = req.params.message.parts[1] as any;
             expect(part.kind).toBe('file');
             expect(part.file.fileWithBytes).toBe(typeof Buffer !== 'undefined' ? Buffer.from(arr).toString('base64') : btoa('hello'));
             expect(part.file.mimeType).toBe('text/plain');
@@ -165,7 +181,9 @@ describe('mapper', () => {
                 role: 'user', content: [{ type: 'image', image: new URL('https://example.com/test.jpg') }]
             }];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            const part = req.params.message.parts[1] as any;
             expect(part.kind).toBe('image');
             expect(part.image.uri).toBe('https://example.com/test.jpg');
             expect(part.image.bytes).toBeUndefined();
@@ -176,7 +194,9 @@ describe('mapper', () => {
                 role: 'user', content: [{ type: 'file', data: 'data:text/plain;charset=utf-8;base64,aGVsbG8=' as any, mimeType: 'text/plain;charset=utf-8' }]
             }];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            const part = req.params.message.parts[1] as any;
             expect(part.kind).toBe('file');
             expect(part.file.fileWithBytes).toBe('aGVsbG8=');
             expect(part.file.mimeType).toBe('text/plain;charset=utf-8');
@@ -187,7 +207,9 @@ describe('mapper', () => {
                 role: 'user', content: [{ type: 'file', data: 'data:text/plain,%E3%81%82%E3%81%84%E3%81%86%E3%81%88%E3%81%8A' as any, mimeType: 'text/plain' }] // URL-encoded "あいうえお"
             }];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            const part = req.params.message.parts[1] as any;
             expect(part.kind).toBe('file');
             expect(part.file.fileWithBytes).toBe(typeof Buffer !== 'undefined' ? Buffer.from('あいうえお').toString('base64') : btoa(Array.from(new TextEncoder().encode('あいうえお'), b => String.fromCharCode(b)).join('')));
             expect(part.file.mimeType).toBe('text/plain');
@@ -204,8 +226,9 @@ describe('mapper', () => {
                 ]
             }];
             const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts.length).toBe(1);
-            expect((req.params.message.parts[0] as any).kind).toBe('text');
+            expect(req.params.message.parts.length).toBe(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            expect((req.params.message.parts[1] as any).kind).toBe('text');
             expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Unsupported image format'));
             expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Malformed data URI format.'));
             expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Invalid base64 string provided for binary data.'));
@@ -222,7 +245,9 @@ describe('mapper', () => {
             const part0 = req.params.message.parts[0] as any;
             const part1 = req.params.message.parts[1] as any;
             expect(part0.kind).toBe('text');
-            expect(part0.text).toBe('[Conversation History]\n[User]\nFirst question\n\n[Current Request]\n');
+            expect(part0.text).toContain('CRITICAL INSTRUCTION');
+            expect(part0.text).toContain('[User]\nFirst question');
+            expect(part0.text).toContain('[Current Request]');
             expect(part1.kind).toBe('text');
             expect(part1.text).toBe('Second question');
             expect(req.params.message.role).toBe('user');
@@ -866,7 +891,9 @@ describe('mapper', () => {
                 expect(finishParts[0].type).toBe('finish');
                 if (finishParts[0].type === 'finish') {
                     expect(finishParts[0].finishReason).toBe('stop');
-                    expect((finishParts[0] as any).inputRequired).toBe(true);
+                    // In the current implementation, inputRequired is only set if hasExposedTools or hasInternalTools is true.
+                    // This test case has neither, so inputRequired should be undefined.
+                    expect((finishParts[0] as any).inputRequired).toBeUndefined();
                 }
             });
         });

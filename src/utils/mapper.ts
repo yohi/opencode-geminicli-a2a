@@ -21,7 +21,8 @@ export const DEFAULT_INTERNAL_TOOLS = [
     'save_memory',
     'cli_help',
     'codebase_investigator',
-    'generalist'
+    'generalist',
+    'run_shell_command'
 ];
 
 export interface ExtendedFinishPart {
@@ -173,7 +174,7 @@ export function mapPromptToA2AJsonRpcRequest(
     // 🔴 INJECT ANTI-HALLUCINATION WARNING FOR NATIVE A2A SKILLS 🔴
     // A2A internal skills run natively, bypassing JSON RPC tools. Gemini frequently
     // hallucinates short names instead of long MCP prefixes, crashing the agent.
-    historyText += `[System]\nCRITICAL INSTRUCTION: When calling MCP tools (such as read_file, directory_tree, search_files), you MUST use their exact full names WITH the 'docker-mcp-gateway_' prefix (e.g., 'docker-mcp-gateway_read_multiple_files'). Do NOT use the short aliases! The server will violently reject the tool call with an 'invalid' error if the prefix is missing. Check your Available tools list and copy the exact prefixed name.\n\n`;
+    historyText += `[System]\nCRITICAL INSTRUCTION: When calling tools, you MUST use their exact full names as they appear in your 'Available tools' list. Do NOT use short aliases or guess prefixes! If a tool is listed WITH a prefix (e.g., 'docker-mcp-gateway_read_file'), you MUST include it. If it is listed WITHOUT a prefix (e.g., 'read'), you MUST NOT add one. The server will reject the tool call with an 'invalid' error if the name does not match exactly.\n\n`;
 
     if (isLastMessageTool) {
         toolResultText = formatToolResults(lastMessage.content, toolMapping);
@@ -507,12 +508,21 @@ export class A2AStreamMapper {
 
     constructor(options?: { toolMapping?: Record<string, string>, internalTools?: string[], clientTools?: string[] }) {
         this.toolMapping = options?.toolMapping ?? {};
-        this.reverseToolMapping = Object.fromEntries(
-            Object.entries(this.toolMapping).map(([k, v]) => [v, k])
-        );
         this.internalTools = new Set(options?.internalTools ?? DEFAULT_INTERNAL_TOOLS);
         if (options?.clientTools) {
             this.clientTools = new Set(options.clientTools);
+        }
+
+        // reverseToolMapping の構築 (Server -> OpenCode)
+        // 1つのサーバー側ツール名（例: bash）に複数の OpenCode ツール名（例: bash, run_shell_command）
+        // が対応する場合、OpenCode が実際にサポートしている方を優先する。
+        this.reverseToolMapping = {};
+        for (const [openCodeName, serverName] of Object.entries(this.toolMapping)) {
+            const currentMapped = this.reverseToolMapping[serverName];
+            const isBetterMatch = !currentMapped || (this.clientTools?.has(openCodeName) && !this.clientTools?.has(currentMapped));
+            if (isBetterMatch) {
+                this.reverseToolMapping[serverName] = openCodeName;
+            }
         }
     }
 
@@ -613,9 +623,18 @@ export class A2AStreamMapper {
                             Logger.warn(`[Sandbox] Intercepted A2A native 'invalid' tool call. Converting to bash echo to prevent doom_loop.`);
                             this.bufferedTools.set(toolCallId, {
                                 toolName: 'bash',
-                                args: { command: 'echo "SYSTEM WARNING: I attempted to use an invalid tool. I must check my available tools and use the exact prefixed name like docker-mcp-gateway_read_file."' }
+                                args: { command: 'echo "SYSTEM WARNING: I attempted to use an invalid tool. I must check my available tools and use the EXACT names as they appear there (including prefixes if they exist)."' }
                             });
                             continue;
+                        }
+
+                        // run_shell_command -> bash rewrite for Gemini models
+                        if (toolName === 'run_shell_command' && !this.clientTools?.has('run_shell_command')) {
+                            Logger.warn(`[Workaround] Rewriting 'run_shell_command' to 'bash'`);
+                            toolName = 'bash';
+                            if (req.args && typeof req.args === 'object' && !('command' in (req.args as any)) && 'cmd' in (req.args as any)) {
+                                (req.args as any).command = (req.args as any).cmd;
+                            }
                         }
 
                         this.bufferedTools.set(toolCallId, { toolName, args: req.args });
@@ -692,21 +711,25 @@ export class A2AStreamMapper {
                     const originalToolName = this.reverseToolMapping[toolInfo.toolName] || toolInfo.toolName;
                     
                     let isInternalTool = this.internalTools.has(toolInfo.toolName);
-                    // OpenCodeで要求した一覧(clientTools)に含まれていないかつ、内部ツール(internalTools)でもない場合、
-                    // A2Aサーバーがツールの名前を幻覚した（例：read_file）可能性が高い。
-                    // 単純に内部ツール扱いにしてしまうと OpenCode 側でツールが1つも露出せず
-                    // stop -> user_prompt -> tool のループ（doom_loop）に陥る。
-                    // そこで、未知の幻覚ツールは "bash" ツールへ置換し、Warningをechoさせることで安全に1ターン消費させる。
-                    if (this.clientTools && !this.clientTools.has(originalToolName) && !isInternalTool) {
-                        Logger.warn(`[Workaround] Intercepted hallucinated tool call '${toolInfo.toolName}'. Rewriting to a safe 'bash' call.`);
+                    // 幻覚の検知ロジック
+                    // `invalid` は OpenCode の clientTools に含まれているが、A2A サーバーが
+                    // 内部サブエージェントの失敗時に生成する特殊なツール名なため、明示的に遮断する必要がある。
+                    const isInvalidToolName = toolInfo.toolName === 'invalid';
+                    const isUnknownToClient = this.clientTools ? !this.clientTools.has(originalToolName) : false;
+
+                    if (isInvalidToolName || (this.clientTools && isUnknownToClient && !isInternalTool)) {
+                        Logger.warn(`[Workaround] Intercepted hallucinated/invalid tool call '${toolInfo.toolName}'. Rewriting to a safe 'bash' call.`);
                         
                         toolInfo.toolName = 'bash';
-                        // toolInfo.args が文字列・オブジェクトどちらでも対応できるように上書き
-                        toolInfo.args = { command: `echo "[opencode-geminicli-a2a] Warning: Model hallucinated an unknown tool call '${originalToolName}'. This is a safe fallback execution."` };
+                        // OpenCode の bash ツールは { command: string, description: string } を引数として受け取る
+                        toolInfo.args = { 
+                            command: `echo '[opencode-geminicli-a2a] Warning: Model called unknown tool: ${originalToolName}'`,
+                            description: `Fallback for hallucinated tool ${originalToolName}` 
+                        };
                         
                         // 以降の処理で露出させるツールとして扱われるようフラグを倒す
                         isInternalTool = false;
-                    } else if (this.clientTools && !this.clientTools.has(originalToolName)) {
+                    } else if (this.clientTools && isUnknownToClient) {
                         isInternalTool = true;
                     }
 
@@ -719,8 +742,6 @@ export class A2AStreamMapper {
                                 ? toolInfo.args
                                 : JSON.stringify(toolInfo.args ?? {});
                             if (!argsStr || argsStr === '""') argsStr = '{}';
-                            
-                            const originalToolName = this.reverseToolMapping[toolInfo.toolName] || toolInfo.toolName;
                             
                             Logger.info(`Emitting tool call: ${originalToolName} (from: ${toolInfo.toolName}) (${toolCallId}) with args: ${argsStr}`);
 

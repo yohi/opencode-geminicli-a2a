@@ -78,12 +78,15 @@ export class OpenCodeGeminiA2AProvider {
             this.fallbackConfig = resolveFallbackConfig(options?.fallback);
 
             const defaultToolMapping: Record<string, string> = {
-                'docker-mcp-gateway_read_file': 'read_file',
-                'docker-mcp-gateway_directory_tree': 'directory_tree',
+                'docker-mcp-gateway_read_file': 'read',
+                'docker-mcp-gateway_directory_tree': 'glob',
                 'docker-mcp-gateway_read_multiple_files': 'read_multiple_files',
-                'docker-mcp-gateway_edit_file': 'edit_file',
-                'docker-mcp-gateway_write_file': 'write_file',
-                'docker-mcp-gateway_search_files': 'search_files',
+                'docker-mcp-gateway_edit_file': 'edit',
+                'docker-mcp-gateway_write_file': 'write',
+                'docker-mcp-gateway_search_files': 'grep',
+                'docker-mcp-gateway_get_file_info': 'get_file_info',
+                'run_shell_command': 'bash',
+                'bash': 'bash',
                 ...(finalConfig.toolMapping || {})
             };
 
@@ -135,12 +138,10 @@ export class OpenCodeGeminiA2AProvider {
         }
         mapOptions.modelId = this.modelId;
 
-        if (options.mode?.type === 'regular' && options.mode.tools?.length) {
-            // Forward AI SDK tools to A2A natively.
-            // mapper.ts will automatically rename them using this.options.toolMapping (stripping MCP prefixes).
-            // When A2A returns the short name, mapper.ts will reverse the mapping back to the MCP prefix.
-            mapOptions.tools = options.mode.tools as any[];
-        }
+        const rawToolsConfig = options.mode?.type === 'regular' ? options.mode.tools : (options as any).tools;
+        // Do NOT pass rawToolsConfig to mapOptions.tools. OpenCode dynamically loads humongous tools
+        // like Terraform docs which immediately block A2A with '413 Payload Too Large'.
+        // Let the invisible A2A tools stay hidden.
 
         if (session.contextId) {
             mapOptions.contextId = session.contextId;
@@ -273,10 +274,23 @@ export class OpenCodeGeminiA2AProvider {
             throw error;
         }
 
-        const clientTools = options.mode?.type === 'regular' && options.mode.tools
-            ? (options.mode.tools.map((t: any) => typeof t.name === 'string' ? t.name : t.function?.name)
-                .filter(Boolean) as string[])
-            : undefined;
+        try {
+            const keys = Object.keys(options);
+            Logger.warn(`[Debug] options keys: ${keys.join(', ')}`);
+        } catch(e) {}
+
+        const rawToolsInput = options.mode?.type === 'regular' ? options.mode.tools : (options as any).tools;
+        const clientTools = Array.isArray(rawToolsInput)
+            ? rawToolsInput.map((t: any) => t.name || t.id || t.function?.name || t.type).filter(Boolean) as string[]
+            : (rawToolsInput && typeof rawToolsInput === 'object' ? Object.keys(rawToolsInput) : undefined);
+
+        if (clientTools) {
+            Logger.warn(`[Debug] Parsed clientTools (${clientTools.length}): ${clientTools.slice(0, 5).join(', ')} ...`);
+            try {
+                const bashDef = rawToolsInput?.['bash'] ?? rawToolsInput?.find?.((t: any) => t.name === 'bash');
+                require('fs').writeFileSync('/tmp/bash_schema.json', JSON.stringify(bashDef, null, 2));
+            } catch(e) {}
+        }
 
         const mapper = new A2AStreamMapper({
             toolMapping: this.options?.toolMapping,
