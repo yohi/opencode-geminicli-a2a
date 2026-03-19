@@ -52,6 +52,8 @@ export class OpenCodeGeminiA2AProvider {
     private client!: A2AClient;
     private sessionStore!: SessionStore;
     private options?: OpenCodeProviderOptions;
+    /** 解決済みの実行時設定。ホットリロード時に再構築される */
+    private resolvedOptions?: OpenCodeProviderOptions;
     private fallbackConfig?: FallbackConfig;
     private unregisterConfigWatcher?: () => void;
 
@@ -107,7 +109,7 @@ export class OpenCodeGeminiA2AProvider {
                 ...(finalConfig.toolMapping || {})
             };
 
-            this.options = {
+            this.resolvedOptions = {
                 ...this.options,
                 host: finalConfig.host,
                 port: finalConfig.port,
@@ -139,7 +141,7 @@ export class OpenCodeGeminiA2AProvider {
         // formatToolResults() によりテキスト化されてメッセージ本文に混入する。
 
         const mergedGenerationConfig = {
-            ...this.options?.generationConfig,
+            ...this.resolvedOptions?.generationConfig,
             ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
             ...(options.topP !== undefined ? { topP: options.topP } : {}),
             ...(options.topK !== undefined ? { topK: options.topK } : {}),
@@ -154,8 +156,8 @@ export class OpenCodeGeminiA2AProvider {
         );
 
         const mapOptions: MapPromptOptions = { 
-            toolMapping: this.options?.toolMapping,
-            internalTools: this.options?.internalTools
+            toolMapping: this.resolvedOptions?.toolMapping,
+            internalTools: this.resolvedOptions?.internalTools
         };
         if (Object.keys(filteredConfig).length > 0) {
             mapOptions.generationConfig = filteredConfig;
@@ -271,7 +273,10 @@ export class OpenCodeGeminiA2AProvider {
             console.warn(`[opencode-geminicli-a2a] Falling back from ${this.modelId} to ${nextModelId} (level ${fallbackCount + 1})`);
         }
 
-        const fallbackProvider = new OpenCodeGeminiA2AProvider(nextModelId, this.options);
+        const fallbackProvider = new OpenCodeGeminiA2AProvider(nextModelId, {
+            ...this.options,
+            hotReload: false, // フォールバックインスタンスはホットリロードを監視しない
+        });
         return fallbackProvider.doStream({
             ...callOptions,
             _fallbackCount: fallbackCount + 1
@@ -314,8 +319,8 @@ export class OpenCodeGeminiA2AProvider {
             : (rawToolsInput && typeof rawToolsInput === 'object' ? Object.keys(rawToolsInput) : undefined);
 
         const mapper = new A2AStreamMapper({
-            toolMapping: this.options?.toolMapping,
-            internalTools: this.options?.internalTools,
+            toolMapping: this.resolvedOptions?.toolMapping,
+            internalTools: this.resolvedOptions?.internalTools,
             clientTools
         });
         let textPartCounter = 0;

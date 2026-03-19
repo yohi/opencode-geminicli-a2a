@@ -67,6 +67,7 @@ export class ConfigManager {
     private configPath: string = path.resolve(process.cwd(), 'a2a-config.json');
     private watchers: Set<() => void> = new Set();
     private isWatching: boolean = false;
+    private configWatcher: import('node:fs').FSWatcher | null = null;
 
     private constructor() {
         this.load();
@@ -82,6 +83,7 @@ export class ConfigManager {
     public setConfigPath(p: string) {
         const newPath = path.resolve(p);
         if (this.configPath !== newPath) {
+            this.stopWatch();
             this.configPath = newPath;
             this.load();
         }
@@ -110,7 +112,7 @@ export class ConfigManager {
         if (!enable || this.isWatching || !existsSync(this.configPath)) return;
         this.isWatching = true;
         try {
-            watch(this.configPath, (event) => {
+            this.configWatcher = watch(this.configPath, (event) => {
                 if (event === 'change') {
                     Logger.info(`[ConfigManager] Config file changed, reloading...`);
                     this.load();
@@ -121,6 +123,19 @@ export class ConfigManager {
             Logger.error(`[ConfigManager] Failed to watch config file:`, err);
             this.isWatching = false;
         }
+    }
+
+    public stopWatch() {
+        if (this.configWatcher) {
+            this.configWatcher.close();
+            this.configWatcher = null;
+        }
+        this.isWatching = false;
+    }
+
+    public dispose() {
+        this.stopWatch();
+        this.watchers.clear();
     }
 
     public onChange(cb: () => void) {

@@ -220,33 +220,52 @@ export class ServerManager {
 
         const cleanupAndExit = (signal?: NodeJS.Signals) => {
             Logger.info(`[ServerManager] Received ${signal || 'exit'}, cleaning up...`);
-            this.dispose();
+            try {
+                this.dispose();
+            } catch (err) {
+                Logger.error('[ServerManager] Error during dispose in signal handler:', err);
+            }
             if (signal) {
-                // Remove listener to avoid infinite recursion then kill itself
-                process.removeAllListeners(signal);
+                // Remove this handler to avoid infinite recursion then kill itself
+                const h = this.cleanupHandlers.find(ch => ch.event === signal);
+                if (h) process.off(signal as any, h.handler);
                 process.kill(process.pid, signal);
             }
         };
 
-        const exitHandler = () => this.dispose();
+        const exitHandler = () => {
+            try {
+                this.dispose();
+            } catch (err) {
+                Logger.error('[ServerManager] Error during dispose in exit handler:', err);
+            }
+        };
         const termHandler = () => cleanupAndExit('SIGTERM');
         const intHandler = () => cleanupAndExit('SIGINT');
         const exceptionHandler = (err: Error) => {
             Logger.error('[ServerManager] Uncaught Exception:', err);
-            this.dispose();
+            try {
+                this.dispose();
+            } catch (disposeErr) {
+                Logger.error('[ServerManager] Error during dispose in exception handler:', disposeErr);
+            }
             process.exit(1);
         };
         const rejectionHandler = (reason: any) => {
             Logger.error('[ServerManager] Unhandled Rejection:', reason);
-            this.dispose();
+            try {
+                this.dispose();
+            } catch (disposeErr) {
+                Logger.error('[ServerManager] Error during dispose in rejection handler:', disposeErr);
+            }
             process.exit(1);
         };
 
         process.once('exit', exitHandler);
         process.once('SIGTERM', termHandler);
         process.once('SIGINT', intHandler);
-        process.on('uncaughtException', exceptionHandler);
-        process.on('unhandledRejection', rejectionHandler);
+        process.once('uncaughtException', exceptionHandler);
+        process.once('unhandledRejection', rejectionHandler);
 
         this.cleanupHandlers.push(
             { event: 'exit', handler: exitHandler },
@@ -267,6 +286,11 @@ export class ServerManager {
             process.removeListener(event, handler);
         }
         this.cleanupHandlers = [];
+        
+        // Also cleanup ConfigManager if it was watching
+        import('./config').then(({ ConfigManager }) => {
+            ConfigManager.getInstance().dispose();
+        }).catch(() => {});
     }
 
     /** テスト用: インスタンスをリセットする */

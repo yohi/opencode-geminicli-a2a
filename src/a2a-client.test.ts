@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ofetch } from 'ofetch';
 import { A2AClient } from './a2a-client';
+import { APICallError } from '@ai-sdk/provider';
 import type { A2AJsonRpcRequest, A2AConfig } from './schemas';
 
 vi.mock('ofetch', () => ({
@@ -105,16 +106,38 @@ describe('A2AClient', () => {
         );
     });
 
+    it('should send request with custom traceId if provided', async () => {
+        const mockResponse = createMockResponse(true, 200);
+        vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
+
+        await client.chatStream({ request: mockRequest, traceId: 'trace-123' });
+
+        expect(ofetch.raw).toHaveBeenCalledWith(
+            'http://127.0.0.1:8080/',
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    'x-a2a-trace-id': 'trace-123',
+                }),
+            })
+        );
+    });
+
     it('should throw APICallError on non-ok response', async () => {
         const mockResponse = createMockResponse(false, 500);
         vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
 
+        await expect(client.chatStream({ request: mockRequest }))
+            .rejects.toThrow(APICallError);
+        
         await expect(client.chatStream({ request: mockRequest }))
             .rejects.toThrow('HTTP error 500: Error');
     });
 
     it('should wrap network errors in APICallError', async () => {
         vi.mocked(ofetch.raw).mockRejectedValue(new Error('Network failure'));
+
+        await expect(client.chatStream({ request: mockRequest }))
+            .rejects.toThrow(APICallError);
 
         await expect(client.chatStream({ request: mockRequest }))
             .rejects.toThrow('Network failure');
