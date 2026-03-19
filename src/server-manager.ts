@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { Logger } from './utils/logger';
+import { ConfigManager } from './config';
 
 export interface AutoStartConfig {
     /** サーバーの .mjs ファイルへの絶対パス。未指定時は自動検出を試みる。 */
@@ -288,14 +289,10 @@ export class ServerManager {
         this.cleanupHandlers = [];
         
         // Use a safe way to dispose ConfigManager if it was loaded.
-        // We avoid top-level static import to prevent circular dependency issues
-        // between config.ts and server-manager.ts (though config.ts imports server-manager for types only).
-        // Since this is cleanup, we attempt a required load if not already in cache.
         try {
-            const { ConfigManager } = require('./config');
             ConfigManager.getInstance().dispose();
         } catch (err) {
-            // Ignore if config cannot be loaded or already disposed
+            // Ignore if already disposed
         }
     }
 

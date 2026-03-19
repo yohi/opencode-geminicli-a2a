@@ -145,6 +145,16 @@ export class ConfigManager {
     public dispose() {
         this.stopWatch();
         this.watchers.clear();
+        // Reset the singleton for clean test isolation
+        if (ConfigManager.instance === this) {
+            ConfigManager.instance = undefined as any;
+        }
+    }
+
+    /** テスト用: インスタンスをリセットする */
+    static _reset() {
+        ConfigManager.instance?.dispose();
+        ConfigManager.instance = undefined as any;
     }
 
     public onChange(cb: () => void) {
