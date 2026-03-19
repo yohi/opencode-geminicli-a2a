@@ -150,14 +150,6 @@ export function mapPromptToA2AJsonRpcRequest(
         return buildRequest('(empty prompt)', options);
     }
 
-    // 履歴を含めてメッセージを処理する
-    let parts: A2AJsonRpcRequest['params']['message']['parts'] = [];
-    let historyText = '';
-    let toolResultText = '';
-
-    // A2AのcontextIdによってサーバー側で履歴が維持されている場合、
-    // 重複して全履歴を送信しないよう、前回以降の新しいメッセージのみを抽出する。
-    // ただし、A2Aサーバーが生成したassistantメッセージは既にサーバー側のコンテキストに含まれるため除外する。
     let newMessages = prompt;
     if (contextId && options.processedMessagesCount !== undefined && options.processedMessagesCount > 0) {
         newMessages = prompt.slice(options.processedMessagesCount).filter(m => m.role !== 'assistant');
@@ -166,78 +158,33 @@ export function mapPromptToA2AJsonRpcRequest(
         }
     }
 
-    // 末尾が tool の場合はツール結果を取得し、通常のメッセージループから除外
-    const lastMessage = newMessages[newMessages.length - 1];
-    const isLastMessageTool = lastMessage.role === 'tool';
-    const effectivePrompt = isLastMessageTool ? newMessages.slice(0, -1) : newMessages;
+    let parts: A2AJsonRpcRequest['params']['message']['parts'] = [];
 
-    // 🔴 INJECT ANTI-HALLUCINATION WARNING FOR NATIVE A2A SKILLS 🔴
-    // A2A internal skills run natively, bypassing JSON RPC tools. Gemini frequently
-    // hallucinates short names instead of long MCP prefixes, crashing the agent.
-    historyText += `[System]\nCRITICAL INSTRUCTION: When calling tools, you MUST use their exact full names as they appear in your 'Available tools' list. Do NOT use short aliases or guess prefixes! If a tool is listed WITH a prefix (e.g., 'docker-mcp-gateway_read_file'), you MUST include it. If it is listed WITHOUT a prefix (e.g., 'read'), you MUST NOT add one. The server will reject the tool call with an 'invalid' error if the name does not match exactly.\n\n`;
+    parts.push({
+        kind: 'text',
+        text: `[SYSTEM]\nCRITICAL INSTRUCTION: When calling tools, you MUST use their exact full names as they appear in your 'Available tools' list. Do NOT use short aliases or guess prefixes! If a tool is listed WITH a prefix (e.g., 'docker-mcp-gateway_read_file'), you MUST include it. If it is listed WITHOUT a prefix (e.g., 'read'), you MUST NOT add one. The server will reject the tool call with an 'invalid' error if the name does not match exactly.\n`
+    });
 
-    if (isLastMessageTool) {
-        toolResultText = formatToolResults(lastMessage.content, toolMapping);
-    }
-
-    for (let i = 0; i < effectivePrompt.length; i++) {
-        const msg = effectivePrompt[i];
-        
-        // 最後の(ユーザー)メッセージはパーツとして抽出
-        // toolで終わる場合はeffectivePromptの最後の要素をhistoryとしてではなく、リクエスト本体として扱う
-        if (i === effectivePrompt.length - 1 && !isLastMessageTool) {
-            if (msg.role === 'user') {
-                if (historyText) parts.push({ kind: 'text' as const, text: `[Conversation History]\n${historyText.trim()}\n\n[Current Request]\n` });
-                parts.push(...extractUserParts(msg));
-            } else if (msg.role === 'system') {
-                historyText += `[System]\n${msg.content}\n\n`;
-                if (historyText) parts.push({ kind: 'text' as const, text: historyText.trim() });
-            } else if (msg.role === 'assistant') {
-                let text = '';
-                if (typeof msg.content === 'string') text = msg.content;
-                else if (Array.isArray(msg.content)) {
-                    text = (msg.content as any[]).filter(p => p.type === 'text').map(p => p.text).join('\n');
-                }
-                historyText += `[Assistant]\n${text}\n\n`;
-                if (historyText) parts.push({ kind: 'text' as const, text: historyText.trim() });
+    for (const msg of newMessages) {
+        if (msg.role === 'system') {
+            parts.push({ kind: 'text', text: `[SYSTEM]\n${msg.content}\n` });
+        } else if (msg.role === 'user') {
+            parts.push({ kind: 'text', text: `[USER]\n` });
+            parts.push(...extractUserParts(msg));
+        } else if (msg.role === 'assistant') {
+            let text = '';
+            if (typeof msg.content === 'string') text = msg.content;
+            else if (Array.isArray(msg.content)) {
+                text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
             }
-        } else {
-            // 過去のメッセージをテキストとして蓄積
-            if (msg.role === 'system') {
-                historyText += `[System]\n${msg.content}\n\n`;
-            } else if (msg.role === 'user') {
-                let text = '';
-                if (typeof msg.content === 'string') text = msg.content;
-                else if (Array.isArray(msg.content)) {
-                    text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
-                }
-                historyText += `[User]\n${text}\n\n`;
-            } else if (msg.role === 'assistant') {
-                let text = '';
-                if (typeof msg.content === 'string') text = msg.content;
-                else if (Array.isArray(msg.content)) {
-                    text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
-                }
-                historyText += `[Assistant]\n${text}\n\n`;
-            } else if (msg.role === 'tool') {
-                historyText += `[Tool Result]\n${formatToolResults(msg.content, toolMapping)}\n\n`;
-            }
+            parts.push({ kind: 'text', text: `[ASSISTANT]\n${text}\n` });
+        } else if (msg.role === 'tool') {
+            parts.push({ kind: 'text', text: `[TOOL RESULT]\n${formatToolResults(msg.content, toolMapping)}\n` });
         }
-    }
-
-    if (isLastMessageTool) {
-        if (historyText) {
-            parts.push({ kind: 'text' as const, text: `[Conversation History]\n${historyText.trim()}\n\n[Current Request]\n` });
-        }
-        parts.push({ kind: 'text' as const, text: toolResultText });
     }
 
     if (parts.length === 0) {
-        if (historyText) {
-            parts = [{ kind: 'text' as const, text: historyText.trim() }];
-        } else {
-            parts = [{ kind: 'text' as const, text: '(empty prompt)' }];
-        }
+        parts = [{ kind: 'text' as const, text: '(empty prompt)' }];
     }
 
     return buildRequest(parts, options);
@@ -585,7 +532,7 @@ export class A2AStreamMapper {
                                        result.status.state === 'completed';
             if (shouldProcessParts && msg && msg.parts) {
                 for (const [index, p] of msg.parts.entries()) {
-                    if (p.kind === 'text' && p.text && result.status.state === 'working') {
+                    if (p.kind === 'text' && p.text) {
                         const delta = this.extractTextDelta(index, p.text);
                         if (delta) {
                             parts.push({
@@ -617,10 +564,10 @@ export class A2AStreamMapper {
                         // OpenCode tracks 'invalid' across the entire session and crashes with doom_loop if it hits 5.
                         // We intercept 'invalid' and convert it to a harmless text warning so the LLM knows it failed
                         // without OpenCode ever seeing a tool call.
-                        console.warn(`[Sandbox-Debug] Received tool call from A2A stream. Initial name: '${toolName}', callId: '${toolCallId}', raw request:`, JSON.stringify(req));
+                        Logger.info(`[Sandbox-Debug] Received tool call from A2A stream. Initial name: '${toolName}', callId: '${toolCallId}', raw request:`, JSON.stringify(req));
 
                         if (toolName === 'invalid') {
-                            Logger.warn(`[Sandbox] Intercepted A2A native 'invalid' tool call. Converting to bash echo to prevent doom_loop.`);
+                            Logger.info(`[Sandbox] Intercepted A2A native 'invalid' tool call. Converting to bash echo to prevent doom_loop.`);
                             this.bufferedTools.set(toolCallId, {
                                 toolName: 'bash',
                                 args: { command: 'echo "SYSTEM WARNING: I attempted to use an invalid tool. I must check my available tools and use the EXACT names as they appear there (including prefixes if they exist)."' }
@@ -628,12 +575,60 @@ export class A2AStreamMapper {
                             continue;
                         }
 
-                        // run_shell_command -> bash rewrite for Gemini models
-                        if (toolName === 'run_shell_command' && !this.clientTools?.has('run_shell_command')) {
-                            Logger.warn(`[Workaround] Rewriting 'run_shell_command' to 'bash'`);
-                            toolName = 'bash';
-                            if (req.args && typeof req.args === 'object' && !('command' in (req.args as any)) && 'cmd' in (req.args as any)) {
-                                (req.args as any).command = (req.args as any).cmd;
+                        // Argument normalization for Schema Bridging
+                        if (req.args && typeof req.args === 'object') {
+                            const args: any = req.args;
+                            if (args.file_path && !args.filePath) args.filePath = args.file_path;
+                            if (args.path && !args.filePath) args.filePath = args.path;
+                            if (args.cmd && !args.command) args.command = args.cmd;
+
+                            if ((toolName === 'bash' || toolName === 'run_shell_command') && typeof args.command === 'string') {
+                                // Match both 'task(' and 'task '
+                                const trimmedCmd = args.command.trim();
+                                if (trimmedCmd.startsWith('task(') || trimmedCmd.startsWith('task ')) {
+                                    args.command = `echo '[opencode-geminicli-a2a] Error: You cannot execute task() pseudocode inside a bash shell. You MUST use the dedicated "task" tool.'`;
+                                }
+                            }
+                            
+                            req.args = args;
+                        }
+
+                        // Common Gemini hallucinations to Server names
+                        const commonHallucinations: Record<string, string> = {
+                            'read_file': 'read',
+                            'write_file': 'write',
+                            'list_directory': 'glob',
+                            'directory_tree': 'glob',
+                            'search_files': 'grep',
+                            'edit_file': 'edit',
+                            'run_shell_command': 'bash',
+                            'run_command': 'bash',
+                            'exec_command': 'bash',
+                            'shell': 'bash',
+                            'sequentialthinking': 'sequential-thinking_sequentialthinking'
+                        };
+
+                        const baseName = toolName.startsWith('docker-mcp-gateway_') 
+                            ? toolName.replace('docker-mcp-gateway_', '') 
+                            : toolName;
+
+                        if (commonHallucinations[baseName] && !this.clientTools?.has(toolName)) {
+                            const targetServerName = commonHallucinations[baseName];
+                            Logger.info(`[Workaround] Normalizing hallucinated tool call '${toolName}' to server-side name '${targetServerName}'`);
+                            toolName = targetServerName;
+                            
+                            // Fix specific arguments for mapped tools
+                            if (toolName === 'glob' && req.args && typeof req.args === 'object') {
+                                const a = req.args as any;
+                                if (a.pattern === undefined) {
+                                    const p = a.dir_path || a.path || '.';
+                                    a.pattern = `${p}/**/*`;
+                                }
+                            } else if (toolName === 'grep' && req.args && typeof req.args === 'object') {
+                                const a = req.args as any;
+                                if (a.pattern === undefined) {
+                                    a.pattern = a.query || a.text || '';
+                                }
                             }
                         }
 
@@ -703,37 +698,35 @@ export class A2AStreamMapper {
             if (isFinal) {
                 const isInternalToolConfirmation = result.status.state === 'input-required' && coderAgentKind === 'tool-call-confirmation';
 
-                // A2A内部ツールの確認要求、または既知の内部ツール呼び出しの場合は、OpenCodeに露出しない
+                // Schema Bridging: DO NOT use Opaque Execution. We emit everything as tool-call so OpenCode handles it.
                 let hasExposedTools = false;
                 let hasInternalTools = false;
 
                 for (const [toolCallId, toolInfo] of this.bufferedTools.entries()) {
-                    const originalToolName = this.reverseToolMapping[toolInfo.toolName] || toolInfo.toolName;
+                    let originalToolName = this.reverseToolMapping[toolInfo.toolName] || toolInfo.toolName;
                     
-                    let isInternalTool = this.internalTools.has(toolInfo.toolName);
-                    // 幻覚の検知ロジック
-                    // `invalid` は OpenCode の clientTools に含まれているが、A2A サーバーが
-                    // 内部サブエージェントの失敗時に生成する特殊なツール名なため、明示的に遮断する必要がある。
                     const isInvalidToolName = toolInfo.toolName === 'invalid';
                     const isUnknownToClient = this.clientTools ? !this.clientTools.has(originalToolName) : false;
 
-                    if (isInvalidToolName || (this.clientTools && isUnknownToClient && !isInternalTool)) {
-                        Logger.warn(`[Workaround] Intercepted hallucinated/invalid tool call '${toolInfo.toolName}'. Rewriting to a safe 'bash' call.`);
+                    if (isInvalidToolName || isUnknownToClient) {
+                        Logger.info(`[Workaround] Intercepted hallucinated/invalid tool call '${toolInfo.toolName}' (mapped to '${originalToolName}'). Rewriting to a safe 'bash' call.`);
                         
+                        const badName = originalToolName;
+                        originalToolName = 'bash';
                         toolInfo.toolName = 'bash';
                         // OpenCode の bash ツールは { command: string, description: string } を引数として受け取る
                         toolInfo.args = { 
-                            command: `echo '[opencode-geminicli-a2a] Warning: Model called unknown tool: ${originalToolName}'`,
-                            description: `Fallback for hallucinated tool ${originalToolName}` 
+                            command: `echo '[opencode-geminicli-a2a] Warning: Model called unknown tool: ${badName}'`,
+                            description: `Fallback for hallucinated tool ${badName}` 
                         };
-                        
-                        // 以降の処理で露出させるツールとして扱われるようフラグを倒す
-                        isInternalTool = false;
-                    } else if (this.clientTools && isUnknownToClient) {
-                        isInternalTool = true;
+                    }
+                    
+                    // Add description to satisfy OpenCode strict schemas
+                    if (toolInfo.args && typeof toolInfo.args === 'object' && !('description' in (toolInfo.args as any))) {
+                        (toolInfo.args as any).description = "Execute tool via A2A";
                     }
 
-                    if (isInternalTool || isInternalToolConfirmation) {
+                    if (isInternalToolConfirmation) {
                         hasInternalTools = true;
                     } else {
                         hasExposedTools = true;

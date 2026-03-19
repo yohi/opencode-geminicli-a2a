@@ -218,50 +218,19 @@ export const A2AJsonRpcResponseSchema = z.union([ResultResponseSchema, ErrorResp
       ```
 * **Multi-Turn 対話サポート**:
     * **コンテキストの保持**: A2A サーバーは必要に応じて / 存在する場合にレスポンスに `contextId`（`status-update.contextId` は optional）および `task.id` を含めます。プロバイダーはストリーム終了時に存在する `contextId` / `taskId` を記録します（ステートフル）。
-    * **コンテキスト継続**: 2回目以降のリクエストでは、保持している場合に `contextId` を自動的に `params.contextId` に付与してサーバーへ送信し、サーバー側でコンテキストを維持します。
+    * **Stateful Deltas (差分送信)**: 無限ループとペイロードの肥大化を防ぐため、プロバイダーは 2 回目以降のリクエストにおいて、AI SDK から渡される全履歴のうち **「前回の送信以降に追加された新しいメッセージ（Delta）」のみ** を A2A サーバーへ送信します。
+    * **コンテキスト継続**: 2回目以降のリクエストでは、保持している `contextId` を `params.contextId` に付与して送信します。サーバー側はこの ID に基づいて内部で履歴を復元・結合するため、クライアント側で巨大なテキストを再送する必要はありません。
     * **タスクの継続**: 前回のタスクの `finishReason === 'tool-calls'` かつ保持している `taskId` がある場合に、`taskId` を `params.taskId` に付与して A2A サーバーにおける `input-required` 状態のタスクを再開できます。
-    * **ツール結果の送信 (AI SDK → A2A)**: AI SDK が渡してくる `prompt` 履歴の末尾が `role: "tool"` (ツール結果) の場合、A2A サーバーが理解可能な形式（`[Tool Result: {toolName} ({toolCallId})]\n{result}`）にテキスト化され、直近のユーザーメッセージに結合されて送信されます。
-    * **動的モデル指定**: プロバイダーは毎リクエストに `params.model` フィールドを付与し、A2A サーバーがリクエスト単位でモデルを切り替えられるようにします。これにより、マルチエージェント構成における同一サーバーでのモデルスイッチが可能です。
-    * **⚠️ 警告: 状態の競合について**: 
-      プロバイダーインスタンスが `contextId` や `taskId` といったステートフルなプロパティを内部で保持する設計上、**同一のプロバイダーインスタンスに対して `doStream` を並行して呼び出すと激しい状態競合（Race condition）が発生します**。
-      並行して別々の会話セッションを進行させる必要がある場合は、並行セッションごとに別々のプロバイダーインスタンスを生成してください（例: リクエストごとに `createGeminiA2AProvider` を呼び出して新規インスタンスを作る）。
-      *今後の拡張へのメモ*: 状態（`contextId`, `taskId`）をプロバイダーインスタンスではなく、外部のセッションオブジェクトとして分離する設計パターンに変更することで、この並行処理の制約を解消できる可能性があります。
+    * **ツール結果の送信 (AI SDK → A2A)**: ツール実行結果は A2A サーバーが理解可能な形式にテキスト化され、差分として送信されます。その際、サーバー側で履歴が二重化されるのを防ぐため、既にサーバーが把握している `assistant` ロールのメッセージは送信対象から除外されます。
+
+* **Schema Bridging & Argument Normalization (互換性維持)**:
+    OpenCode の厳密な Zod スキーマと、Gemini モデルの柔軟な（時に曖昧な）ツール呼び出しの間のギャップを埋めるための自動補完機能を備えます。
+    * **引数名の多重化 (Multiplexing)**: `file_path`, `path`, `filePath` の間で引数名が食い違っていてもエラーにならないよう、存在するパス情報をこれらすべてのキーに自動的にコピーして OpenCode へ渡します。`command` と `cmd` についても同様です。
+    * **必須項目の自動補完**: OpenCode のツールが `description` を必須としている場合、モデルがそれを省略してもプロバイダー側で `description: "Execute tool via A2A"` を自動付与し、バリデーションエラーを未然に防ぎます。
+    * **ハルシネーション・インターセプト**: モデルがシェルコマンド（`bash`）内で `task()` などの擬似コードを実行しようとした場合、プロバイダーがそれを検知してインターセプトし、正しいツールの使用を促すエラーメッセージをモデルへ返します。これにより、セキュリティブロックによるクラッシュとループを回避します。
 
 * **Status Handling**:
-    * `status.state === 'working'` かつ `status.message.parts` 内の `text` を `text-delta` として扱う。
-    * A2A サーバーはテキストを累計（スナップショット）で返す場合があるため、前方一致による**重複排除ロジック**を用いて差分のみを `text-delta` として抽出・出力する。
-    * `kind: "data"` 内に存在する思考プロセス（subject や description、`metadata.coderAgent.kind === 'thought'` 等）は抽出され、AI SDK の `reasoning` ストリームパーツとして出力する。
-      **例:**
-      **入力 (A2A JSON-RPC):**
-      ```json
-      {
-        "kind": "status-update",
-        "status": {
-          "message": {
-            "parts": [
-              {
-                "kind": "data",
-                "data": {
-                  "subject": "Evaluating options",
-                  "description": "Considering approach A and B."
-                }
-              }
-            ]
-          }
-        },
-        "metadata": {
-          "coderAgent": { "kind": "thought" }
-        }
-      }
-      ```
-      **出力 (AI SDK Stream Part):**
-      ```json
-      {
-        "type": "reasoning",
-        "textDelta": "[Evaluating options] Considering approach A and B."
-      }
-      ```
-    * `final === true` をストリームの終了トリガーとして扱い、`status.state` の値に応じて AI SDK 互換の `finishReason` へ変換する。
+    * `status.message.parts` 内の `text` を `text-delta` として扱う。以前は `state === 'working'` 時のみ抽出していましたが、完了時の最終出力を漏らさないよう、現在は状態に関わらずパーツが存在すれば抽出する仕様としています。
 
 | `status.state` | AI SDK `finishReason` |
 |---|---|

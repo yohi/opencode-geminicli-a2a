@@ -276,7 +276,7 @@ export class OpenCodeGeminiA2AProvider {
 
         try {
             const keys = Object.keys(options);
-            Logger.warn(`[Debug] options keys: ${keys.join(', ')}`);
+            Logger.info(`[Debug] options keys: ${keys.join(', ')}`);
         } catch(e) {}
 
         const rawToolsInput = options.mode?.type === 'regular' ? options.mode.tools : (options as any).tools;
@@ -285,7 +285,7 @@ export class OpenCodeGeminiA2AProvider {
             : (rawToolsInput && typeof rawToolsInput === 'object' ? Object.keys(rawToolsInput) : undefined);
 
         if (clientTools) {
-            Logger.warn(`[Debug] Parsed clientTools (${clientTools.length}): ${clientTools.slice(0, 5).join(', ')} ...`);
+            Logger.info(`[Debug] Parsed clientTools (${clientTools.length}): ${clientTools.slice(0, 5).join(', ')} ...`);
             try {
                 const bashDef = rawToolsInput?.['bash'] ?? rawToolsInput?.find?.((t: any) => t.name === 'bash');
                 require('fs').writeFileSync('/tmp/bash_schema.json', JSON.stringify(bashDef, null, 2));
