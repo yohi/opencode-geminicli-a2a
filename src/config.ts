@@ -121,7 +121,10 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & {
     return {
         ...baseConfig,
         generationConfig: parsedData.generationConfig,
-        toolMapping: options?.toolMapping ?? DEFAULT_TOOL_MAPPING,
+        toolMapping: {
+            ...DEFAULT_TOOL_MAPPING,
+            ...options?.toolMapping,
+        },
         internalTools: options?.internalTools,
     };
 }

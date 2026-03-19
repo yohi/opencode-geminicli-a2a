@@ -6,6 +6,8 @@ export interface A2ASession {
     lastFinishReason?: string;
     lastModelId?: string;
     processedMessagesCount?: number;
+    inputRequired?: boolean;
+    rawState?: string;
 }
 
 export interface SessionStore {

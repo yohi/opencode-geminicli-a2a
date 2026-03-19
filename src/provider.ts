@@ -152,7 +152,7 @@ export class OpenCodeGeminiA2AProvider {
         if (session.processedMessagesCount !== undefined) {
             mapOptions.processedMessagesCount = session.processedMessagesCount;
         }
-        if (session.lastFinishReason === 'tool-calls' && session.taskId) {
+        if ((session.lastFinishReason === 'tool-calls' || session.rawState === 'input-required' || session.inputRequired === true) && session.taskId) {
             mapOptions.taskId = session.taskId;
         }
 
@@ -269,6 +269,8 @@ export class OpenCodeGeminiA2AProvider {
             delete session.contextId;
             delete session.taskId;
             delete session.lastFinishReason;
+            delete session.inputRequired;
+            delete session.rawState;
         }
 
         const request = this.createA2ARequest(options, session);
@@ -475,7 +477,9 @@ export class OpenCodeGeminiA2AProvider {
                             contextId: mapper.contextId || session.contextId,
                             taskId: mapper.taskId || session.taskId,
                             lastFinishReason: mapper.lastFinishReason || lastFinishPart?.finishReason,
-                            processedMessagesCount: options.prompt.length
+                            processedMessagesCount: options.prompt.length,
+                            inputRequired: lastFinishPart?.inputRequired,
+                            rawState: lastFinishPart?.rawState
                         });
                     }
 
@@ -528,7 +532,7 @@ export class OpenCodeGeminiA2AProvider {
                         reasoning += value.delta;
                         break;
                     case 'tool-call':
-                        toolCalls.push({ toolCallType: 'function', toolCallId: value.toolCallId, toolName: value.toolName, args: JSON.stringify(value.args) });
+                        toolCalls.push({ toolCallType: 'function', toolCallId: value.toolCallId, toolName: value.toolName, args: value.args });
                         content.push({ type: 'tool-call', toolCallId: value.toolCallId, toolName: value.toolName, args: value.args });
                         break;
                     case 'finish':

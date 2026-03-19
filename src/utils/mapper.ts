@@ -151,7 +151,13 @@ export function mapPromptToA2AJsonRpcRequest(
 
     let newMessages = prompt;
     if (contextId && options.processedMessagesCount !== undefined && options.processedMessagesCount > 0) {
-        newMessages = prompt.slice(options.processedMessagesCount);
+        // AI SDK のツール実行フローでは、直前の assistant レスポンス（ツール呼び出しを含む）
+        // が再送されることがある。A2A サーバー側では既にコンテキストとして保持されている
+        // ため、それらが二重にヒストリに追加されないよう、 assistant ロールの場合はスキップする。
+        const skipCount = prompt[options.processedMessagesCount]?.role === 'assistant' 
+            ? options.processedMessagesCount + 1 
+            : options.processedMessagesCount;
+        newMessages = prompt.slice(skipCount);
     }
 
     let parts: A2AJsonRpcRequest['params']['message']['parts'] = [];
