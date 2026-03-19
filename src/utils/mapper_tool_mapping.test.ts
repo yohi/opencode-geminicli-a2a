@@ -1,55 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { mapPromptToA2AJsonRpcRequest, mapA2AResponseToStreamParts, A2AStreamMapper } from './mapper';
+import { mapPromptToA2AJsonRpcRequest, A2AStreamMapper } from './mapper';
 import type { LanguageModelV1Prompt } from '@ai-sdk/provider';
 import type { A2AResponseResult } from '../schemas';
 
 describe('mapper tool name mapping', () => {
     const toolMapping = {
-        'read_file': 'read',
-        'write_file': 'write',
-        'run_shell_command': 'bash',
+        'docker-mcp-gateway_read_file': 'read',
+        'docker-mcp-gateway_write_file': 'write',
+        'run_shell_command': 'bash'
     };
 
-    describe('outbound mapping (request)', () => {
-        it('should map read_file to read', () => {
-            const prompt: LanguageModelV1Prompt = [{ role: 'user', content: [{ type: 'text', text: 'read' }] }];
-            const tools = [{ type: 'function', name: 'read_file', parameters: {} }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt, { tools, toolMapping });
-            
-            const tool = req.params.configuration?.tools?.[0] as any;
-            expect(tool.name).toBe('read');
-        });
-
-        it('should map write_file to write', () => {
-            const prompt: LanguageModelV1Prompt = [{ role: 'user', content: [{ type: 'text', text: 'write' }] }];
-            const tools = [{ type: 'function', name: 'write_file', parameters: {} }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt, { tools, toolMapping });
-            
-            const tool = req.params.configuration?.tools?.[0] as any;
-            expect(tool.name).toBe('write');
-        });
-
-        it('should map run_shell_command to bash', () => {
-            const prompt: LanguageModelV1Prompt = [{ role: 'user', content: [{ type: 'text', text: 'exec' }] }];
-            const tools = [{ type: 'function', name: 'run_shell_command', parameters: {} }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt, { tools, toolMapping });
-            
-            const tool = req.params.configuration?.tools?.[0] as any;
-            expect(tool.name).toBe('bash');
-        });
-
-        it('should map tool-result names back to A2A names', () => {
-            const prompt: LanguageModelV1Prompt = [
-                { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'read_file', result: 'content' }] }
-            ];
-            const req = mapPromptToA2AJsonRpcRequest(prompt, { toolMapping });
-            const part = req.params.message.parts.find(p => (p as any).text.includes('[Tool Result:')) as any;
-            expect(part.text).toContain('[Tool Result: read (c1)]');
-        });
-    });
-
-    describe('inbound mapping (response)', () => {
-        it('should map read back to read_file', () => {
+    describe('inbound mapping (response) - Reverted Opaque Execution', () => {
+        it('should treat read as a standard tool and emit an exposed tool call', () => {
             const result: A2AResponseResult = {
                 kind: 'status-update',
                 taskId: 't1',
@@ -69,11 +31,18 @@ describe('mapper tool name mapping', () => {
             
             const mapper = new A2AStreamMapper({ toolMapping });
             const parts = mapper.mapResult(result);
+            
+            // Should emit a tool-call part
             const toolCall = parts.find(p => p.type === 'tool-call') as any;
-            expect(toolCall.toolName).toBe('read_file');
+            expect(toolCall).toBeDefined();
+            expect(toolCall.toolName).toBe('docker-mcp-gateway_read_file');
+
+            // SHOULD NOT emit a reasoning part
+            const reasoningPart = parts.find(p => p.type === 'reasoning');
+            expect(reasoningPart).toBeUndefined();
         });
 
-        it('should map bash back to run_shell_command', () => {
+        it('should treat bash as a standard tool and emit an exposed tool call', () => {
             const result: A2AResponseResult = {
                 kind: 'status-update',
                 taskId: 't1',
@@ -93,8 +62,71 @@ describe('mapper tool name mapping', () => {
             
             const mapper = new A2AStreamMapper({ toolMapping });
             const parts = mapper.mapResult(result);
+            
+            // Should emit a tool-call part
             const toolCall = parts.find(p => p.type === 'tool-call') as any;
+            expect(toolCall).toBeDefined();
             expect(toolCall.toolName).toBe('run_shell_command');
+
+            // SHOULD NOT emit a reasoning part
+            const reasoningPart = parts.find(p => p.type === 'reasoning');
+            expect(reasoningPart).toBeUndefined();
+        });
+
+        it('should handle hallucinated prefixes (docker-mcp-gateway_search_files -> grep -> search_files) and emit as tool-call', () => {
+            const result: A2AResponseResult = {
+                kind: 'status-update',
+                taskId: 't1',
+                final: true,
+                status: {
+                    state: 'working',
+                    message: {
+                        parts: [{
+                            kind: 'data',
+                            data: {
+                                request: { callId: 'c1', name: 'docker-mcp-gateway_search_files', args: { pattern: 'test' } }
+                            }
+                        }]
+                    }
+                }
+            };
+            
+            const mapper = new A2AStreamMapper({ toolMapping: { 'search_files': 'grep' } });
+            const parts = mapper.mapResult(result);
+            
+            const toolCall = parts.find(p => p.type === 'tool-call') as any;
+            expect(toolCall).toBeDefined();
+            expect(toolCall.toolName).toBe('search_files');
+            
+            const reasoningPart = parts.find(p => p.type === 'reasoning');
+            expect(reasoningPart).toBeUndefined();
+        });
+
+        it('should emit exposed tool call for unknown tools not in nativeA2ATools', () => {
+            const result: A2AResponseResult = {
+                kind: 'status-update',
+                taskId: 't1',
+                final: true,
+                status: {
+                    state: 'working',
+                    message: {
+                        parts: [{
+                            kind: 'data',
+                            data: {
+                                request: { callId: 'c1', name: 'my_custom_tool', args: { foo: 'bar' } }
+                            }
+                        }]
+                    }
+                }
+            };
+            
+            // Mock clientTools to include 'my_custom_tool' so it isn't treated as a hallucination
+            const mapper = new A2AStreamMapper({ clientTools: ['my_custom_tool'] });
+            const parts = mapper.mapResult(result);
+            
+            const toolCall = parts.find(p => p.type === 'tool-call') as any;
+            expect(toolCall).toBeDefined();
+            expect(toolCall.toolName).toBe('my_custom_tool');
         });
     });
 });

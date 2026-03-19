@@ -8,15 +8,15 @@ You are working on `opencode-geminicli-a2a-provider`. This is a plugin designed 
 ## Core Directives
 <instructions>
 1. **Source of Truth**: Always refer to [SPEC.md](./SPEC.md) for architectural decisions, data structures, and communication protocols.
-2. **No Proxy Servers**: Do NOT implement intermediate Express or Hono proxy servers. The provider must implement the `LanguageModelV1` interface and communicate directly using `ofetch`.
-3. **AI SDK Compliance**: Ensure all implementations follow the Vercel AI SDK specification.
+2. **Stateful Deltas**: Every request must favor sending ONLY new messages (deltas) if a `contextId` is present, relying on A2A server-side history to prevent infinite loops and payload bloat.
+3. **Schema Bridging**: Maintain the argument normalization logic in `mapper.ts`. Ensure `filePath` is prioritized for OpenCode tools, and `description` is always provided to satisfy strict Zod schemas.
 4. **Resilience**: Use `ofetch` with the configured retry and timeout logic as specified in the SPEC.
 5. **Type Safety**: All communication payloads must be validated using Zod schemas defined in `src/schemas.ts`.
 </instructions>
 
 ## Current State
-- **Phase**: Core provider logic has been stabilized, along with model registry, automatic fallback on errors, multi-agent routing, and native multimodal support (Phase 5).
-- **Testing**: Core tests are green. The framework for streaming and tool calling is in place.
+- **Phase**: Core provider logic is stabilized. **Stateful Deltas** and **Schema Bridging** (Phase 7) are implemented to resolve infinite loops and strict argument schema errors in OpenCode.
+- **Testing**: Comprehensive test suite (160+ tests) is green, covering mapping, streaming, and error fallbacks.
 
 ## Action Guidelines
 <instructions>

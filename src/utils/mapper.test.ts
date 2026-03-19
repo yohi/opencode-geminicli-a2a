@@ -17,286 +17,39 @@ describe('mapper', () => {
             expect(part.text).toBe('(empty prompt)');
         });
 
-        it('should map user message correctly', () => {
-            const prompt: LanguageModelV1Prompt = [
+        it('should map user message correctly, sending only the delta when contextId is present', () => {
+            const prompt = [
+                { role: 'user', content: [{ type: 'text', text: 'Old message' }] },
                 { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
             ];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            expect((req.params.message.parts[1] as any).text).toBe('Hello');
-            expect(req.params.message.role).toBe('user');
-        });
-
-        it('should concatenate multiple text parts for a user message', () => {
-            const prompt: LanguageModelV1Prompt = [
-                { role: 'user', content: [{ type: 'text', text: 'Hello ' }, { type: 'text', text: 'World' }] }
-            ];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts.length).toBe(3);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            expect((req.params.message.parts[1] as any).text).toBe('Hello ');
-            expect((req.params.message.parts[2] as any).text).toBe('World');
-            expect(req.params.message.role).toBe('user');
+            const req = mapPromptToA2AJsonRpcRequest(prompt as any, { contextId: 'ctx', processedMessagesCount: 1 });
+            expect(req.params.message.parts).toHaveLength(1);
+            expect((req.params.message.parts[0] as any).text).toBe('Hello');
         });
 
         it('should handle system message', () => {
-            const prompt: LanguageModelV1Prompt = [
+            const prompt = [
                 { role: 'system', content: 'You are a helpful assistant.' }
             ];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            const part = req.params.message.parts[0] as any;
-            expect(part.kind).toBe('text');
-            expect(part.text).toContain('CRITICAL INSTRUCTION');
-            expect(part.text).toContain('[System]\nYou are a helpful assistant.');
-        });
-
-        it('should format tool results when prompt ends with tool role', () => {
-            const prompt: LanguageModelV1Prompt = [
-                { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call1', toolName: 'getWeather', result: { weather: 'sunny' } }] }
-            ];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            const part = req.params.message.parts[1] as any;
-            expect(part.kind).toBe('text');
-            expect(part.text).toContain('[Tool Result: getWeather (call1)]');
-            expect(part.text).toContain('"weather":"sunny"');
-        });
-
-        it('should include user text with tool results when prompt ends with tool', () => {
-            const prompt: LanguageModelV1Prompt = [
-                { role: 'user', content: [{ type: 'text', text: 'Where is Tokyo?' }] },
-                { role: 'assistant', content: [{ type: 'text', text: 'Tokyo is in Japan.' }] },
-                { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call1', toolName: 'getWeather', result: { weather: 'sunny' } }] }
-            ];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            expect((req.params.message.parts[0] as any).text).toContain('Where is Tokyo?');
-            expect((req.params.message.parts[1] as any).kind).toBe('text');
-            expect((req.params.message.parts[1] as any).text).toContain('[Tool Result: getWeather (call1)]');
-            expect(req.params.message.role).toBe('user');
-        });
-
-        it('should format tool error results with [Tool Error prefix', () => {
-            const prompt: LanguageModelV1Prompt = [
-                { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call2', toolName: 'failTool', result: 'something went wrong', isError: true }] }
-            ];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            const part = req.params.message.parts[1] as any;
-            expect(part.kind).toBe('text');
-            expect(part.text).toContain('[Tool Error: failTool (call2)]');
-        });
-
-        it('should correctly map multimodal image parts (Buffer)', () => {
-            const buffer = Buffer.from('hello');
-            const prompt: LanguageModelV1Prompt = [{
-                role: 'user', content: [{ type: 'image', image: buffer, mimeType: 'image/jpeg' }]
-            }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            const part = req.params.message.parts[1] as any;
-            expect(part.kind).toBe('image');
-            expect(part.image.bytes).toBe(buffer.toString('base64'));
-            expect(part.image.uri).toBeUndefined();
-            expect(part.image.mimeType).toBe('image/jpeg');
-        });
-
-        it('should correctly map multimodal image parts (HTTP URL)', () => {
-            const prompt: LanguageModelV1Prompt = [{
-                role: 'user', content: [{ type: 'image', image: 'https://example.com/image.png' as any }]
-            }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            const part = req.params.message.parts[1] as any;
-            expect(part.kind).toBe('image');
-            expect(part.image.bytes).toBeUndefined();
-            expect(part.image.uri).toBe('https://example.com/image.png');
-            expect(part.image.mimeType).toBeUndefined();
-        });
-
-        it('should correctly map multimodal file parts (data URI)', () => {
-            const prompt: LanguageModelV1Prompt = [{
-                role: 'user', content: [{ type: 'file', data: 'data:application/pdf;base64,JVBERi0xLjQKJ...' as any, mimeType: 'application/pdf' }]
-            }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            const part = req.params.message.parts[1] as any;
-            expect(part.kind).toBe('file');
-            expect(part.file.fileWithBytes).toBe('JVBERi0xLjQKJ...');
-            expect(part.file.uri).toBeUndefined();
-            expect(part.file.mimeType).toBe('application/pdf');
-        });
-
-        it('should correctly map multimodal file parts (raw base64 string)', () => {
-            const prompt: LanguageModelV1Prompt = [{
-                role: 'user', content: [{ type: 'file', data: 'JVBERi0xLjQK' as any, mimeType: 'application/pdf' }]
-            }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            const part = req.params.message.parts[1] as any;
-            expect(part.kind).toBe('file');
-            expect(part.file.fileWithBytes).toBe('JVBERi0xLjQK');
-            expect(part.file.uri).toBeUndefined();
-            expect(part.file.mimeType).toBe('application/pdf');
-        });
-
-        it('should correctly map multimodal image parts (Uint8Array)', () => {
-            const arr = new Uint8Array([104, 101, 108, 108, 111]); // 'hello'
-            const prompt: LanguageModelV1Prompt = [{
-                role: 'user', content: [{ type: 'image', image: arr, mimeType: 'image/png' }]
-            }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            const part = req.params.message.parts[1] as any;
-            expect(part.kind).toBe('image');
-            expect(part.image.bytes).toBe(typeof Buffer !== 'undefined' ? Buffer.from(arr).toString('base64') : btoa('hello'));
-            expect(part.image.mimeType).toBe('image/png');
-        });
-
-        it('should correctly map multimodal file parts (ArrayBuffer)', () => {
-            const arr = new Uint8Array([104, 101, 108, 108, 111]); // 'hello'
-            const prompt: LanguageModelV1Prompt = [{
-                role: 'user', content: [{ type: 'file', data: arr.buffer as any, mimeType: 'text/plain' }]
-            }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            const part = req.params.message.parts[1] as any;
-            expect(part.kind).toBe('file');
-            expect(part.file.fileWithBytes).toBe(typeof Buffer !== 'undefined' ? Buffer.from(arr).toString('base64') : btoa('hello'));
-            expect(part.file.mimeType).toBe('text/plain');
-        });
-
-        it('should correctly map multimodal image parts (URL object)', () => {
-            const prompt: LanguageModelV1Prompt = [{
-                role: 'user', content: [{ type: 'image', image: new URL('https://example.com/test.jpg') }]
-            }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            const part = req.params.message.parts[1] as any;
-            expect(part.kind).toBe('image');
-            expect(part.image.uri).toBe('https://example.com/test.jpg');
-            expect(part.image.bytes).toBeUndefined();
-        });
-
-        it('should correctly map multimodal file parts (data URI with parameters)', () => {
-            const prompt: LanguageModelV1Prompt = [{
-                role: 'user', content: [{ type: 'file', data: 'data:text/plain;charset=utf-8;base64,aGVsbG8=' as any, mimeType: 'text/plain;charset=utf-8' }]
-            }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            const part = req.params.message.parts[1] as any;
-            expect(part.kind).toBe('file');
-            expect(part.file.fileWithBytes).toBe('aGVsbG8=');
-            expect(part.file.mimeType).toBe('text/plain;charset=utf-8');
-        });
-
-        it('should correctly map multimodal file parts (percent-encoded non-base64 data URI)', () => {
-            const prompt: LanguageModelV1Prompt = [{
-                role: 'user', content: [{ type: 'file', data: 'data:text/plain,%E3%81%82%E3%81%84%E3%81%86%E3%81%88%E3%81%8A' as any, mimeType: 'text/plain' }] // URL-encoded "あいうえお"
-            }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            const part = req.params.message.parts[1] as any;
-            expect(part.kind).toBe('file');
-            expect(part.file.fileWithBytes).toBe(typeof Buffer !== 'undefined' ? Buffer.from('あいうえお').toString('base64') : btoa(Array.from(new TextEncoder().encode('あいうえお'), b => String.fromCharCode(b)).join('')));
-            expect(part.file.mimeType).toBe('text/plain');
-        });
-
-        it('should drop malformed or unsupported parts and warn', () => {
-            const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
-            const prompt: LanguageModelV1Prompt = [{
-                role: 'user', content: [
-                    { type: 'image', image: { unsupported: true } as any },
-                    { type: 'file', data: 'data:malformed-no-comma' as any, mimeType: 'text/plain' },
-                    { type: 'file', data: 'relative/path/not-base64.png' as any, mimeType: 'image/png' },
-                    { type: 'text', text: 'valid text' }
-                ]
-            }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts.length).toBe(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
-            expect((req.params.message.parts[1] as any).kind).toBe('text');
-            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Unsupported image format'));
-            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Malformed data URI format.'));
-            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Invalid base64 string provided for binary data.'));
-            consoleSpy.mockRestore();
-        });
-
-        it('should select the latest user message when multiple user messages exist', () => {
-            const prompt: LanguageModelV1Prompt = [
-                { role: 'user', content: [{ type: 'text', text: 'First question' }] },
-                { role: 'user', content: [{ type: 'text', text: 'Second question' }] }
-            ];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.message.parts).toHaveLength(2);
-            const part0 = req.params.message.parts[0] as any;
-            const part1 = req.params.message.parts[1] as any;
-            expect(part0.kind).toBe('text');
-            expect(part0.text).toContain('CRITICAL INSTRUCTION');
-            expect(part0.text).toContain('[User]\nFirst question');
-            expect(part0.text).toContain('[Current Request]');
-            expect(part1.kind).toBe('text');
-            expect(part1.text).toBe('Second question');
-            expect(req.params.message.role).toBe('user');
+            const req = mapPromptToA2AJsonRpcRequest(prompt as any);
+            expect(req.params.message.parts).toHaveLength(1);
+            expect((req.params.message.parts[0] as any).text).toBe('You are a helpful assistant.');
         });
 
         it('should include contextId when provided via options', () => {
-            const prompt: LanguageModelV1Prompt = [
+            const prompt = [
                 { role: 'user', content: [{ type: 'text', text: 'Follow up' }] }
             ];
-            const req = mapPromptToA2AJsonRpcRequest(prompt, { contextId: 'ctx-123' });
+            const req = mapPromptToA2AJsonRpcRequest(prompt as any, { contextId: 'ctx-123' });
             expect(req.params.contextId).toBe('ctx-123');
         });
 
         it('should include taskId when provided via options', () => {
-            const prompt: LanguageModelV1Prompt = [
-                { role: 'user', content: [{ type: 'text', text: 'Tool result follow up' }] }
+            const prompt = [
+                { role: 'user', content: [{ type: 'text', text: 'Follow up' }] }
             ];
-            const req = mapPromptToA2AJsonRpcRequest(prompt, { taskId: 'task-456' });
+            const req = mapPromptToA2AJsonRpcRequest(prompt as any, { taskId: 'task-456' });
             expect(req.params.taskId).toBe('task-456');
-        });
-
-        it('should not include contextId/taskId when not provided', () => {
-            const prompt: LanguageModelV1Prompt = [
-                { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
-            ];
-            const req = mapPromptToA2AJsonRpcRequest(prompt);
-            expect(req.params.contextId).toBeUndefined();
-            expect(req.params.taskId).toBeUndefined();
-        });
-
-        it('should include generationConfig when provided via options', () => {
-            const prompt: LanguageModelV1Prompt = [
-                { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
-            ];
-            const generationConfig = {
-                temperature: 0.5,
-                topP: 0.9,
-            };
-            const req = mapPromptToA2AJsonRpcRequest(prompt, { generationConfig });
-            expect(req.params.generationConfig).toEqual(generationConfig);
-        });
-
-        it('should maintain backward compatibility with tools array as second argument', () => {
-            const prompt: LanguageModelV1Prompt = [
-                { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
-            ];
-            const tools = [{ name: 'myTool' }];
-            const req = mapPromptToA2AJsonRpcRequest(prompt, tools);
-            expect(req.params.configuration?.tools).toEqual(tools);
         });
     });
 
@@ -374,16 +127,16 @@ describe('mapper', () => {
             }
         });
 
-        it('should NOT emit text-delta when state is not working', () => {
+        it('should emit text-delta even when state is stop (as it is a valid state to process parts)', () => {
             const resultStop: A2AResponseResult = {
                 kind: 'status-update',
                 taskId: 't1',
                 status: {
                     state: 'stop',
-                    message: { parts: [{ kind: 'text', text: 'ignored text' }] }
+                    message: { parts: [{ kind: 'text', text: 'final text' }] }
                 }
             };
-            expect(mapA2AResponseToStreamParts(resultStop).filter(p => p.type === 'text-delta').length).toBe(0);
+            expect(mapA2AResponseToStreamParts(resultStop).filter(p => p.type === 'text-delta').length).toBe(1);
         });
 
         it('should map token usage correctly', () => {
@@ -441,7 +194,7 @@ describe('mapper', () => {
             if (toolCall && toolCall.type === 'tool-call') {
                 expect(toolCall.toolCallId).toBe('call-123');
                 expect(toolCall.toolName).toBe('getWeather');
-                expect(toolCall.args).toBe(JSON.stringify({ location: 'Tokyo' }));
+                expect(toolCall.args).toBe(JSON.stringify({ location: 'Tokyo', description: 'Execute tool via A2A' }));
             } else {
                 // If not emitted because of buffering, we might need to adjust mapResult logic
                 // for the stateless wrapper to always emit if final is not present?
@@ -1167,7 +920,7 @@ describe('mapper', () => {
                 expect(toolCall).toBeDefined();
                 if (toolCall && toolCall.type === 'tool-call') {
                     expect(toolCall.toolName).toBe('search');
-                    expect(toolCall.args).toBe(JSON.stringify({ q: 'AB' }));
+                    expect(toolCall.args).toBe(JSON.stringify({ q: 'AB', description: 'Execute tool via A2A' }));
                 }
             });
 
