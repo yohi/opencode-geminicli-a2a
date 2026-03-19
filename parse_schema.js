@@ -1,6 +1,15 @@
 const fs = require('fs');
 
-const content = fs.readFileSync('notion_diary_combined.md', 'utf8');
+const FILENAME = 'notion_diary_combined.md';
+
+let content;
+try {
+    content = fs.readFileSync(FILENAME, 'utf8');
+} catch (err) {
+    console.error(`Failed to read file "${FILENAME}": ${err.message}`);
+    process.exit(1);
+}
+
 const lines = content.split('\n');
 
 // Find the latest occurrence (search from the end)
@@ -18,13 +27,18 @@ try {
     }
     
     const jsonStr = parts[1].trim();
-    const pIdx = jsonStr.indexOf('"parameters"');
-    
-    if (pIdx === -1) {
-        throw new Error('"parameters" not found in jsonStr');
+    let parsed;
+    try {
+        parsed = JSON.parse(jsonStr);
+    } catch (e) {
+        throw new Error(`Invalid JSON in schema line: ${e.message}\nLine: ${schemaLine}`);
+    }
+
+    if (!parsed.parameters) {
+        throw new Error('Property "parameters" not found in parsed JSON.');
     }
     
-    console.log(jsonStr.substring(pIdx, jsonStr.length - 2));
+    console.log(JSON.stringify(parsed.parameters, null, 2));
 } catch (err) {
     console.error('Error parsing schema:', err.message);
     process.exit(1);

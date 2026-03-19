@@ -68,6 +68,7 @@ export class ConfigManager {
     private watchers: Set<() => void> = new Set();
     private isWatching: boolean = false;
     private configWatcher: import('node:fs').FSWatcher | null = null;
+    private _changeTimer: NodeJS.Timeout | null = null;
 
     private constructor() {
         this.load();
@@ -95,16 +96,17 @@ export class ConfigManager {
 
     public load() {
         if (!existsSync(this.configPath)) {
-            this.externalConfig = {};
+            // Keep current config if file is missing (e.g. temporary delete during save)
             return;
         }
         try {
             const content = readFileSync(this.configPath, 'utf8');
             const parsed = JSON.parse(content);
-            this.externalConfig = ExternalConfigSchema.parse(parsed);
+            const validated = ExternalConfigSchema.parse(parsed);
+            this.externalConfig = validated;
             Logger.info(`[ConfigManager] Loaded external config from ${this.configPath}`);
         } catch (err) {
-            Logger.error(`[ConfigManager] Failed to load config from ${this.configPath}:`, err);
+            Logger.error(`[ConfigManager] Failed to load config from ${this.configPath} (previous config preserved):`, err);
         }
     }
 
@@ -114,9 +116,12 @@ export class ConfigManager {
         try {
             this.configWatcher = watch(this.configPath, (event) => {
                 if (event === 'change') {
-                    Logger.info(`[ConfigManager] Config file changed, reloading...`);
-                    this.load();
-                    for (const cb of this.watchers) cb();
+                    if (this._changeTimer) clearTimeout(this._changeTimer);
+                    this._changeTimer = setTimeout(() => {
+                        Logger.info(`[ConfigManager] Config file changed, reloading...`);
+                        this.load();
+                        for (const cb of this.watchers) cb();
+                    }, 300);
                 }
             });
         } catch (err) {
@@ -126,6 +131,10 @@ export class ConfigManager {
     }
 
     public stopWatch() {
+        if (this._changeTimer) {
+            clearTimeout(this._changeTimer);
+            this._changeTimer = null;
+        }
         if (this.configWatcher) {
             this.configWatcher.close();
             this.configWatcher = null;
