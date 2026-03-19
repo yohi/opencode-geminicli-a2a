@@ -126,20 +126,16 @@ describe('A2AClient', () => {
         const mockResponse = createMockResponse(false, 500);
         vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
 
-        await expect(client.chatStream({ request: mockRequest }))
-            .rejects.toThrow(APICallError);
-        
-        await expect(client.chatStream({ request: mockRequest }))
-            .rejects.toThrow('HTTP error 500: Error');
+        const promise = client.chatStream({ request: mockRequest });
+        await expect(promise).rejects.toThrow(APICallError);
+        await expect(promise).rejects.toThrow('HTTP error 500: Error');
     });
 
     it('should wrap network errors in APICallError', async () => {
         vi.mocked(ofetch.raw).mockRejectedValue(new Error('Network failure'));
 
-        await expect(client.chatStream({ request: mockRequest }))
-            .rejects.toThrow(APICallError);
-
-        await expect(client.chatStream({ request: mockRequest }))
-            .rejects.toThrow('Network failure');
+        const promise = client.chatStream({ request: mockRequest });
+        await expect(promise).rejects.toThrow(APICallError);
+        await expect(promise).rejects.toThrow('Network failure');
     });
 });

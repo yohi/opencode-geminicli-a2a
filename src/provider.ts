@@ -49,8 +49,8 @@ export class OpenCodeGeminiA2AProvider {
     readonly modelId: string;
     readonly modelID: string;
 
-    private client!: A2AClient;
-    private sessionStore!: SessionStore;
+    private client: A2AClient | null = null;
+    private sessionStore: SessionStore;
     private options?: OpenCodeProviderOptions;
     /** 解決済みの実行時設定。ホットリロード時に再構築される */
     private resolvedOptions?: OpenCodeProviderOptions;
@@ -61,6 +61,8 @@ export class OpenCodeGeminiA2AProvider {
         this.modelId = modelId;
         this.modelID = modelId;
         this.options = options;
+        // 最小限の初期化。詳細は init() で設定される。
+        this.sessionStore = options?.sessionStore ?? new InMemorySessionStore();
         this.init();
 
         if (options?.hotReload) {
@@ -130,7 +132,8 @@ export class OpenCodeGeminiA2AProvider {
 
         } catch (err) {
             Logger.error(`ERROR IN MODEL INIT (${this.modelId}):`, err);
-            // In constructor, we throw. In init (hot-reload), we just log and keep old state if possible.
+            // In constructor, we throw if client is not yet established.
+            // In init (hot-reload), we just log and keep old state if possible.
             if (!this.client) throw err;
         }
     }
@@ -190,6 +193,8 @@ export class OpenCodeGeminiA2AProvider {
     }
 
     async doStream(options: LanguageModelV1CallOptions): Promise<LanguageModelV1StreamResult> {
+        if (!this.client) throw new Error('A2AClient is not initialized.');
+
         let result: LanguageModelV1StreamResult;
         try {
             result = await this._doStreamInternal(options);
@@ -312,7 +317,7 @@ export class OpenCodeGeminiA2AProvider {
         let responseStream;
         let headers;
         try {
-            const response = await this.client.chatStream({ request, idempotencyKey, abortSignal: options.abortSignal });
+            const response = await this.client!.chatStream({ request, idempotencyKey, abortSignal: options.abortSignal });
             responseStream = response.stream;
             headers = response.headers;
         } catch (error) {
