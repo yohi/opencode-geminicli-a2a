@@ -53,7 +53,10 @@ describe('Review Fixes Verification', () => {
 
         const result = await model.doGenerate({
             inputFormat: 'messages',
-            mode: { type: 'regular' },
+            mode: { 
+                type: 'regular',
+                tools: [{ type: 'function', name: 'test_tool', parameters: {} }]
+            },
             prompt: [{ role: 'user', content: [{ type: 'text', text: 'trigger-tool' }] }],
         });
 
@@ -84,7 +87,10 @@ describe('Review Fixes Verification', () => {
         // 1. Trigger input-required
         const result = await model.doGenerate({
             inputFormat: 'messages',
-            mode: { type: 'regular' },
+            mode: { 
+                type: 'regular',
+                tools: [{ type: 'function', name: 'ask_user', parameters: {} }]
+            },
             prompt: [{ role: 'user', content: [{ type: 'text', text: 'trigger-input-required' }] }],
             providerMetadata: { opencode: { sessionId } }
         });
