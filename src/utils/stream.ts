@@ -37,12 +37,17 @@ function parseChunkLine(chunkDataSync: string): A2AJsonRpcResponse | null {
     if (!validation.success) {
         // Gemini CLI が 'invalid' kind など、スキーマ外のレスポンスを返す場合がある。
         // エラーとして扱うと、ツール呼び出し失敗ごとにストリームがクラッシュするため、
-        // 警告ログを出して当該チャンクをスキップする。
+        // 知らない kind の場合は警告ログを出して当該チャンクをスキップする。
+        // 知っている kind なのにバリデーションに失敗した場合はエラーとする。
         const parsed = parsedJson as Record<string, any>;
-        if (parsed?.result && typeof parsed?.result === 'object' && 'kind' in parsed.result) {
-            Logger.warn(`Skipping A2A chunk with unknown result kind: '${(parsed.result as any).kind}'`);
+        const knownKinds = ['task', 'status-update', 'artifact-update'];
+        const resultKind = parsed?.result?.kind;
+
+        if (resultKind && !knownKinds.includes(resultKind)) {
+            Logger.warn(`Skipping A2A chunk with unknown result kind: '${resultKind}'`);
             return null;
         }
+
         throw new InvalidResponseDataError({
             data: parsedJson,
             message: `Chunk validation failed: ${validation.error.message}`,
