@@ -1,8 +1,11 @@
 import { z } from 'zod';
-import { ConfigSchema, type A2AConfig, type AgentEndpoint } from './schemas';
+import { ConfigSchema, type A2AConfig, type AgentEndpoint, AgentEndpointSchema } from './schemas';
 import type { SessionStore } from './session';
 import type { ModelRegistry } from './model-registry';
 import type { FallbackConfig } from './fallback';
+import { readFileSync, watch, existsSync } from 'node:fs';
+import path from 'node:path';
+import { Logger } from './utils/logger';
 
 export interface OpenCodeProviderOptions {
     host?: string;
@@ -41,6 +44,104 @@ export interface OpenCodeProviderOptions {
     agents?: AgentEndpoint[];
     /** A2A サーバーの自動起動設定 */
     autoStart?: Partial<import('./server-manager').AutoStartConfig>;
+    /** 外部設定ファイルのパス (デフォルト: a2a-config.json) */
+    configPath?: string;
+    /** ホットリロードを有効にするか */
+    hotReload?: boolean;
+}
+
+/** 外部設定ファイルのスキーマ */
+const ExternalConfigSchema = z.object({
+    host: z.string().optional(),
+    port: z.number().optional(),
+    token: z.string().optional(),
+    protocol: z.enum(['http', 'https']).optional(),
+    agents: z.array(AgentEndpointSchema).optional(),
+    toolMapping: z.record(z.string()).optional(),
+    internalTools: z.array(z.string()).optional(),
+}).passthrough();
+
+export class ConfigManager {
+    private static instance: ConfigManager;
+    private externalConfig: z.infer<typeof ExternalConfigSchema> = {};
+    private configPath: string = path.resolve(process.cwd(), 'a2a-config.json');
+    private watchers: Set<() => void> = new Set();
+    private isWatching: boolean = false;
+    private configWatcher: import('node:fs').FSWatcher | null = null;
+
+    private constructor() {
+        this.load();
+    }
+
+    static getInstance(): ConfigManager {
+        if (!ConfigManager.instance) {
+            ConfigManager.instance = new ConfigManager();
+        }
+        return ConfigManager.instance;
+    }
+
+    public setConfigPath(p: string) {
+        const newPath = path.resolve(p);
+        if (this.configPath !== newPath) {
+            this.stopWatch();
+            this.configPath = newPath;
+            this.load();
+        }
+    }
+
+    public getExternalConfig() {
+        return this.externalConfig;
+    }
+
+    public load() {
+        if (!existsSync(this.configPath)) {
+            this.externalConfig = {};
+            return;
+        }
+        try {
+            const content = readFileSync(this.configPath, 'utf8');
+            const parsed = JSON.parse(content);
+            this.externalConfig = ExternalConfigSchema.parse(parsed);
+            Logger.info(`[ConfigManager] Loaded external config from ${this.configPath}`);
+        } catch (err) {
+            Logger.error(`[ConfigManager] Failed to load config from ${this.configPath}:`, err);
+        }
+    }
+
+    public watch(enable: boolean) {
+        if (!enable || this.isWatching || !existsSync(this.configPath)) return;
+        this.isWatching = true;
+        try {
+            this.configWatcher = watch(this.configPath, (event) => {
+                if (event === 'change') {
+                    Logger.info(`[ConfigManager] Config file changed, reloading...`);
+                    this.load();
+                    for (const cb of this.watchers) cb();
+                }
+            });
+        } catch (err) {
+            Logger.error(`[ConfigManager] Failed to watch config file:`, err);
+            this.isWatching = false;
+        }
+    }
+
+    public stopWatch() {
+        if (this.configWatcher) {
+            this.configWatcher.close();
+            this.configWatcher = null;
+        }
+        this.isWatching = false;
+    }
+
+    public dispose() {
+        this.stopWatch();
+        this.watchers.clear();
+    }
+
+    public onChange(cb: () => void) {
+        this.watchers.add(cb);
+        return () => this.watchers.delete(cb);
+    }
 }
 
 // ユーティリティ: 文字列を正規化し、空、空白のみ、または "undefined"/"null" 文字列は undefined とする
@@ -51,8 +152,6 @@ function getNormalizedValue(val: any): any {
     return trimmed;
 }
 
-// 4. Zod スキーマでパース（デフォルト値の適用と型変換）
-// coerce を使って port の文字列を数値に変換するスキーマを作成
 const parseSchema = z.object({
     host: z.string().optional(),
     port: z.coerce.number().int().refine(n => Number.isFinite(n) && n > 0 && n <= 65535, 'invalid port').optional(),
@@ -71,7 +170,6 @@ const parseSchema = z.object({
     }).optional(),
 });
 
-// デフォルトのツールマッピング（OpenCode標準 -> Gemini CLI / MCP）
 const DEFAULT_TOOL_MAPPING = {
     'read_file': 'read',
     'write_file': 'write',
@@ -90,41 +188,45 @@ const DEFAULT_TOOL_MAPPING = {
 export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & { 
     generationConfig?: OpenCodeProviderOptions['generationConfig'],
     toolMapping?: Record<string, string>,
-    internalTools?: string[]
+    internalTools?: string[],
+    agents?: AgentEndpoint[]
 } {
-    // 1. 環境変数の取得（空文字、"undefined" などを undefined に正規化）
+    const manager = ConfigManager.getInstance();
+    if (options?.configPath) manager.setConfigPath(options.configPath);
+    if (options?.hotReload) manager.watch(true);
+
+    const external = manager.getExternalConfig();
+
     const envHost = getNormalizedValue(process.env['GEMINI_A2A_HOST']);
     const envPort = getNormalizedValue(process.env['GEMINI_A2A_PORT']);
     const envToken = getNormalizedValue(process.env['GEMINI_A2A_TOKEN']);
     const envProtocol = getNormalizedValue(process.env['GEMINI_A2A_PROTOCOL']);
 
-    // 2. 引数によるオプションの取得（同様に正規化）
-    const optHost = getNormalizedValue(options?.host);
-    const optPort = getNormalizedValue(options?.port);
-    const optToken = getNormalizedValue(options?.token);
-    const optProtocol = getNormalizedValue(options?.protocol);
-
-    // 3. 優先順位（オプション > 環境変数）でマージ
     const mergedConfig = {
-        host: optHost ?? envHost,
-        port: optPort ?? envPort,
-        token: optToken ?? envToken,
-        protocol: optProtocol ?? (envProtocol as 'http' | 'https' | undefined),
+        host: getNormalizedValue(options?.host) ?? external.host ?? envHost,
+        port: getNormalizedValue(options?.port) ?? external.port ?? envPort,
+        token: getNormalizedValue(options?.token) ?? external.token ?? envToken,
+        protocol: getNormalizedValue(options?.protocol) ?? external.protocol ?? (envProtocol as 'http' | 'https' | undefined),
         generationConfig: options?.generationConfig,
     };
 
-
     const parsedData = parseSchema.parse(mergedConfig);
-
-    // 最終的な ConfigSchema で検証とデフォルト値適用
     const baseConfig = ConfigSchema.parse(parsedData);
+
+    let externalAgents: AgentEndpoint[] | undefined = undefined;
+    if (external.agents && Array.isArray(external.agents)) {
+        externalAgents = external.agents.map(a => AgentEndpointSchema.parse(a));
+    }
+
     return {
         ...baseConfig,
         generationConfig: parsedData.generationConfig,
         toolMapping: {
             ...DEFAULT_TOOL_MAPPING,
+            ...external.toolMapping,
             ...options?.toolMapping,
         },
-        internalTools: options?.internalTools,
+        internalTools: options?.internalTools ?? external.internalTools,
+        agents: options?.agents ?? externalAgents,
     };
 }
