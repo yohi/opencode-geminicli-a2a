@@ -8,10 +8,10 @@ import crypto from 'node:crypto';
 import { Logger } from './logger';
 
 /**
- * Gemini CLI A2A サーバーの内部ツールリスト。
+ * Gemini CLI A2A サーバーのデフォルト内部ツールリスト。
  * これらは OpenCode 側には露出させず、プロバイダー層で自動承認（auto-confirm）する。
  */
-const INTERNAL_TOOLS = new Set([
+export const DEFAULT_INTERNAL_TOOLS = [
     'activate_skill',
     'load_skill',
     'search_skills',
@@ -22,12 +22,15 @@ const INTERNAL_TOOLS = new Set([
     'cli_help',
     'codebase_investigator',
     'generalist'
-]);
+];
 
 export interface ExtendedFinishPart {
     type: 'finish';
     finishReason: LanguageModelV1FinishReason;
-    usage: { promptTokens: number; completionTokens: number };
+    usage: { 
+        inputTokens: { total: number }; 
+        outputTokens: { total: number };
+    };
     providerMetadata?: Record<string, any>;
     inputRequired?: boolean;
     rawState?: string;
@@ -37,10 +40,11 @@ export interface ExtendedFinishPart {
 
 export type ExtendedStreamPart = LanguageModelV1StreamPart | ExtendedFinishPart | FileStreamPart;
 
-// AI SDK v1 の LanguageModelV1StreamPart に含まれる file 型
+// AI SDK v3 の LanguageModelV3StreamPart に含まれる file 型
 export interface FileStreamPart {
     type: 'file';
-    mimeType: string;
+    mimeType: string; // V1/V2 互換用
+    mediaType: string; // V3 互換用
     data: string | Uint8Array;
 }
 
@@ -94,12 +98,20 @@ function percentPayloadToBytes(payload: string): Uint8Array {
  */
 export interface MapPromptOptions {
     tools?: Tool[];
+    /** ツール名のマッピング (OpenCode -> Server) */
+    toolMapping?: Record<string, string>;
+    /** 内部ツールリスト */
+    internalTools?: string[];
+    /** OpenCode 側がリクエストしたツールの一覧 (A2A 内部ツールとの識別に使う) */
+    clientTools?: string[];
     /** 前回レスポンスから取得した contextId。コンテキスト継続に使用 */
     contextId?: string;
     /** 前回レスポンスから取得した taskId。タスク継続（input-required 状態）に使用 */
     taskId?: string;
     /** リクエストで使用するモデルID。A2Aサーバー起動時のデフォルトモデルを上書きする */
     modelId?: string;
+    /** 前回までに送信済みのプロンプトメッセージ数。重複した履歴送信を避けるため */
+    processedMessagesCount?: number;
     /** モデルの挙動を微調整する設定（温度感など） */
     generationConfig?: {
         temperature?: number;
@@ -131,84 +143,52 @@ export function mapPromptToA2AJsonRpcRequest(
         ? { tools: optionsOrTools }
         : (optionsOrTools ?? {});
 
-    const { tools, contextId, taskId, modelId, generationConfig } = options;
+    const { tools, contextId, taskId, modelId, generationConfig, toolMapping } = options;
 
     if (prompt.length === 0) {
         return buildRequest('(empty prompt)', options);
     }
 
-    // 履歴を含めてメッセージを処理する
+    let newMessages = prompt;
+    if (contextId && options.processedMessagesCount !== undefined && options.processedMessagesCount > 0) {
+        // AI SDK のツール実行フローでは、直前の assistant レスポンス（ツール呼び出しを含む）
+        // が再送されることがある。A2A サーバー側では既にコンテキストとして保持されている
+        // ため、それらが二重にヒストリに追加されないよう、 assistant ロールの場合はスキップする。
+        const skipCount = prompt[options.processedMessagesCount]?.role === 'assistant' 
+            ? options.processedMessagesCount + 1 
+            : options.processedMessagesCount;
+        newMessages = prompt.slice(skipCount);
+    }
+
     let parts: A2AJsonRpcRequest['params']['message']['parts'] = [];
-    let historyText = '';
-    let toolResultText = '';
 
-    // 末尾が tool の場合はツール結果を取得し、通常のメッセージループから除外
-    const lastMessage = prompt[prompt.length - 1];
-    const isLastMessageTool = lastMessage.role === 'tool';
-    const effectivePrompt = isLastMessageTool ? prompt.slice(0, -1) : prompt;
-
-    if (isLastMessageTool) {
-        toolResultText = formatToolResults(lastMessage.content);
+    if (!contextId) {
+        parts.push({
+            kind: 'text',
+            text: `[SYSTEM]\nCRITICAL INSTRUCTION: When calling tools, you MUST use their exact full names as they appear in your 'Available tools' list. Do NOT use short aliases or guess prefixes! If a tool is listed WITH a prefix (e.g., 'docker-mcp-gateway_read_file'), you MUST include it. If it is listed WITHOUT a prefix (e.g., 'read'), you MUST NOT add one. The server will reject the tool call with an 'invalid' error if the name does not match exactly.\n`
+        });
     }
 
-    for (let i = 0; i < effectivePrompt.length; i++) {
-        const msg = effectivePrompt[i];
-        
-        // 最後の(ユーザー)メッセージはパーツとして抽出
-        // toolで終わる場合はeffectivePromptの最後の要素をhistoryとしてではなく、リクエスト本体として扱う
-        if (i === effectivePrompt.length - 1 && !isLastMessageTool) {
-            if (msg.role === 'user') {
-                if (historyText) parts.push({ kind: 'text' as const, text: `[Conversation History]\n${historyText.trim()}\n\n[Current Request]\n` });
-                parts.push(...extractUserParts(msg));
-            } else if (msg.role === 'system') {
-                historyText += `[System]\n${msg.content}\n\n`;
-                if (historyText) parts.push({ kind: 'text' as const, text: historyText.trim() });
-            } else if (msg.role === 'assistant') {
-                let text = '';
-                if (typeof msg.content === 'string') text = msg.content;
-                else if (Array.isArray(msg.content)) {
-                    text = (msg.content as any[]).filter(p => p.type === 'text').map(p => p.text).join('\n');
-                }
-                historyText += `[Assistant]\n${text}\n\n`;
-                if (historyText) parts.push({ kind: 'text' as const, text: historyText.trim() });
+    for (const msg of newMessages) {
+        if (msg.role === 'system') {
+            parts.push({ kind: 'text', text: `[SYSTEM]\n${msg.content}\n` });
+        } else if (msg.role === 'user') {
+            parts.push({ kind: 'text', text: `[USER]\n` });
+            parts.push(...extractUserParts(msg));
+        } else if (msg.role === 'assistant') {
+            let text = '';
+            if (typeof msg.content === 'string') text = msg.content;
+            else if (Array.isArray(msg.content)) {
+                text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
             }
-        } else {
-            // 過去のメッセージをテキストとして蓄積
-            if (msg.role === 'system') {
-                historyText += `[System]\n${msg.content}\n\n`;
-            } else if (msg.role === 'user') {
-                let text = '';
-                if (typeof msg.content === 'string') text = msg.content;
-                else if (Array.isArray(msg.content)) {
-                    text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
-                }
-                historyText += `[User]\n${text}\n\n`;
-            } else if (msg.role === 'assistant') {
-                let text = '';
-                if (typeof msg.content === 'string') text = msg.content;
-                else if (Array.isArray(msg.content)) {
-                    text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
-                }
-                historyText += `[Assistant]\n${text}\n\n`;
-            } else if (msg.role === 'tool') {
-                historyText += `[Tool Result]\n${formatToolResults(msg.content)}\n\n`;
-            }
+            parts.push({ kind: 'text', text: `[ASSISTANT]\n${text}\n` });
+        } else if (msg.role === 'tool') {
+            parts.push({ kind: 'text', text: `[TOOL RESULT]\n${formatToolResults(msg.content, toolMapping)}\n` });
         }
-    }
-
-    if (isLastMessageTool) {
-        if (historyText) {
-            parts.push({ kind: 'text' as const, text: `[Conversation History]\n${historyText.trim()}\n\n[Current Request]\n` });
-        }
-        parts.push({ kind: 'text' as const, text: toolResultText });
     }
 
     if (parts.length === 0) {
-        if (historyText) {
-            parts = [{ kind: 'text' as const, text: historyText.trim() }];
-        } else {
-            parts = [{ kind: 'text' as const, text: '(empty prompt)' }];
-        }
+        parts = [{ kind: 'text' as const, text: '(empty prompt)' }];
     }
 
     return buildRequest(parts, options);
@@ -374,13 +354,17 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
  * AI SDK の tool-result パーツをテキスト形式に変換する。
  * A2A サーバーが理解できるよう、構造化されたテキストとして送信する。
  */
-function formatToolResults(content: Array<{ type: 'tool-result'; toolCallId: string; toolName: string; result: unknown; isError?: boolean }>): string {
+function formatToolResults(
+    content: Array<{ type: 'tool-result'; toolCallId: string; toolName: string; result: unknown; isError?: boolean }>,
+    toolMapping?: Record<string, string>
+): string {
     return content.map(part => {
         const resultStr = typeof part.result === 'string'
             ? part.result
             : JSON.stringify(part.result);
         const prefix = part.isError ? '[Tool Error' : '[Tool Result';
-        return `${prefix}: ${part.toolName} (${part.toolCallId})]\n${resultStr}`;
+        const mappedToolName = toolMapping?.[part.toolName] || part.toolName;
+        return `${prefix}: ${mappedToolName} (${part.toolCallId})]\n${resultStr}`;
     }).join('\n\n');
 }
 
@@ -391,7 +375,24 @@ function buildRequest(
     content: string | A2AJsonRpcRequest['params']['message']['parts'],
     options: MapPromptOptions
 ): A2AJsonRpcRequest {
-    const { tools, contextId, taskId, modelId, generationConfig } = options;
+    const { tools, contextId, taskId, modelId, generationConfig, toolMapping } = options;
+
+    // ツール名のマッピング適用し、OpenAIスキーマのラッパーを解除する
+    const mappedTools = tools?.map(tool => {
+        const toolObj = tool as any;
+        const isWrapped = toolObj.type === 'function' && typeof toolObj.function === 'object';
+        const flatTool = isWrapped ? {
+            name: toolObj.function.name,
+            description: toolObj.function.description,
+            parameters: toolObj.function.parameters
+        } : { ...toolObj };
+
+        if (flatTool.name && toolMapping?.[flatTool.name]) {
+            return { ...flatTool, name: toolMapping[flatTool.name] };
+        }
+        return flatTool;
+    });
+
     const parts = typeof content === 'string'
         ? [{ kind: 'text' as const, text: content }]
         : content;
@@ -408,7 +409,7 @@ function buildRequest(
             },
             configuration: {
                 blocking: false,
-                ...(tools && tools.length > 0 ? { tools } : {})
+                ...(mappedTools && mappedTools.length > 0 ? { tools: mappedTools } : {})
             },
             ...(generationConfig ? { generationConfig } : {}),
             ...(modelId ? { model: modelId } : {}),
@@ -430,6 +431,10 @@ function buildRequest(
  *   AI SDK の reasoning ストリームパーツとして出力する。
  */
 export class A2AStreamMapper {
+    private toolMapping: Record<string, string>;
+    private reverseToolMapping: Record<string, string>;
+    private internalTools: Set<string>;
+
     /** 出力済みテキストの累計インデックス別マップ。スナップショット重複排除に使用 */
     private bufferedTools = new Map<string, { toolName: string; args: any }>();
     /** レスポンスから抽出した contextId */
@@ -448,6 +453,29 @@ export class A2AStreamMapper {
     private _currentCoderAgentKind?: string;
     /** 最後の finishReason */
     private _lastFinishReason?: string;
+
+    /** OpenCode によって要求されたツールの Set (指定がある場合、これに含まれないツールはすべて internal 扱いになる) */
+    private clientTools?: Set<string>;
+
+    constructor(options?: { toolMapping?: Record<string, string>, internalTools?: string[], clientTools?: string[] }) {
+        this.toolMapping = options?.toolMapping ?? {};
+        this.internalTools = new Set(options?.internalTools ?? DEFAULT_INTERNAL_TOOLS);
+        if (options?.clientTools) {
+            this.clientTools = new Set(options.clientTools);
+        }
+
+        // reverseToolMapping の構築 (Server -> OpenCode)
+        // 1つのサーバー側ツール名（例: bash）に複数の OpenCode ツール名（例: bash, run_shell_command）
+        // が対応する場合、OpenCode が実際にサポートしている方を優先する。
+        this.reverseToolMapping = {};
+        for (const [openCodeName, serverName] of Object.entries(this.toolMapping)) {
+            const currentMapped = this.reverseToolMapping[serverName];
+            const isBetterMatch = !currentMapped || (this.clientTools?.has(openCodeName) && !this.clientTools?.has(currentMapped));
+            if (isBetterMatch) {
+                this.reverseToolMapping[serverName] = openCodeName;
+            }
+        }
+    }
 
     /** レスポンスから抽出した contextId を取得 */
     get contextId(): string | undefined { return this._contextId; }
@@ -508,7 +536,7 @@ export class A2AStreamMapper {
                                        result.status.state === 'completed';
             if (shouldProcessParts && msg && msg.parts) {
                 for (const [index, p] of msg.parts.entries()) {
-                    if (p.kind === 'text' && p.text && result.status.state === 'working') {
+                    if (p.kind === 'text' && p.text) {
                         const delta = this.extractTextDelta(index, p.text);
                         if (delta) {
                             parts.push({
@@ -518,7 +546,7 @@ export class A2AStreamMapper {
                         }
                     } else if (p.kind === 'data' && isToolRequest(p.data)) {
                         const req = p.data.request;
-                        const toolName = req.name;
+                        let toolName = req.name;
 
                         // A2A側から callId が無い場合は toolName と index で一意に決定 (引数が変化してもIDが変わらないようにする)
                         // ツール呼び出しの引数はストリーム中に徐々に構築されるため、
@@ -528,10 +556,87 @@ export class A2AStreamMapper {
                         if (!toolCallId) {
                             const fallbackKey = `${toolName}_${index}`;
                             if (!this.fallbackToolCallIds.has(fallbackKey)) {
-                                this.fallbackToolCallIds.set(fallbackKey, `call_${toolName}_${index}_${this._turnSequence}`);
+                                // 完全にランダムなUUIDだと、チャンクごとにIDが変わってバッファリングが効かなくなるため、
+                                // ターン内では安定したID（ただしUUID形式）を生成する
+                                const turnSeed = `${this._turnSequence}_${fallbackKey}`;
+                                const hash = crypto.createHash('md5').update(turnSeed).digest('hex');
+                                this.fallbackToolCallIds.set(fallbackKey, `call_${hash}`);
                             }
                             toolCallId = this.fallbackToolCallIds.get(fallbackKey)!;
                         }
+                        // CRITICAL: A2A natively hallucinates 'invalid' tools when it fails.
+                        // OpenCode tracks 'invalid' across the entire session and crashes with doom_loop if it hits 5.
+                        // We intercept 'invalid' and convert it to a harmless text warning so the LLM knows it failed
+                        // without OpenCode ever seeing a tool call.
+                        Logger.info(`[Sandbox-Debug] Received tool call from A2A stream. Initial name: '${toolName}', callId: '${toolCallId}', raw request:`, JSON.stringify(req));
+
+                        if (toolName === 'invalid') {
+                            Logger.info(`[Sandbox] Intercepted A2A native 'invalid' tool call. Converting to bash echo to prevent doom_loop.`);
+                            this.bufferedTools.set(toolCallId, {
+                                toolName: 'bash',
+                                args: { command: 'echo "SYSTEM WARNING: I attempted to use an invalid tool. I must check my available tools and use the EXACT names as they appear there (including prefixes if they exist)."' }
+                            });
+                            continue;
+                        }
+
+                        // Argument normalization for Schema Bridging
+                        if (req.args && typeof req.args === 'object') {
+                            const args: any = req.args;
+                            if (args.file_path && !args.filePath) args.filePath = args.file_path;
+                            if (args.path && !args.filePath) args.filePath = args.path;
+                            if (args.cmd && !args.command) args.command = args.cmd;
+
+                            if ((toolName === 'bash' || toolName === 'run_shell_command') && typeof args.command === 'string') {
+                                // Block pseudocode calls like task(subject="foo") but allow legitimate shell commands
+                                if (/^\s*task\s*\(/i.test(args.command)) {
+                                    args.command = `echo '[opencode-geminicli-a2a] Error: You cannot execute task() pseudocode inside a bash shell. You MUST use the dedicated "task" tool.'`;
+                                }
+                            }
+                            
+                            req.args = args;
+                        }
+
+                        // Common Gemini hallucinations to Server names
+                        const commonHallucinations: Record<string, string> = {
+                            'read_file': 'read',
+                            'write_file': 'write',
+                            'list_directory': 'glob',
+                            'directory_tree': 'glob',
+                            'search_files': 'grep',
+                            'edit_file': 'edit',
+                            'run_shell_command': 'bash',
+                            'run_command': 'bash',
+                            'exec_command': 'bash',
+                            'shell': 'bash',
+                            // Normalize 'sequentialthinking' to its full MCP server/tool name format
+                            // to ensure correct routing in A2A server.
+                            'sequentialthinking': 'sequential-thinking_sequentialthinking'
+                        };
+
+                        const baseName = toolName.startsWith('docker-mcp-gateway_') 
+                            ? toolName.replace('docker-mcp-gateway_', '') 
+                            : toolName;
+
+                        if (commonHallucinations[baseName] && !this.clientTools?.has(toolName)) {
+                            const targetServerName = commonHallucinations[baseName];
+                            Logger.info(`[Workaround] Normalizing hallucinated tool call '${toolName}' to server-side name '${targetServerName}'`);
+                            toolName = targetServerName;
+                            
+                            // Fix specific arguments for mapped tools
+                            if (toolName === 'glob' && req.args && typeof req.args === 'object') {
+                                const a = req.args as any;
+                                if (a.pattern === undefined) {
+                                    const p = a.dir_path || a.path || '.';
+                                    a.pattern = `${p}/**/*`;
+                                }
+                            } else if (toolName === 'grep' && req.args && typeof req.args === 'object') {
+                                const a = req.args as any;
+                                if (a.pattern === undefined) {
+                                    a.pattern = a.query || a.text || '';
+                                }
+                            }
+                        }
+
                         this.bufferedTools.set(toolCallId, { toolName, args: req.args });
                     } else if (coderAgentKind === 'thought' && p.kind === 'data' && isThoughtData(p.data)) {
                         let textDelta = '';
@@ -566,6 +671,7 @@ export class A2AStreamMapper {
                             parts.push({
                                 type: 'file',
                                 mimeType,
+                                mediaType: mimeType,
                                 data,
                             } as FileStreamPart);
                         } else {
@@ -581,6 +687,7 @@ export class A2AStreamMapper {
                             parts.push({
                                 type: 'file',
                                 mimeType,
+                                mediaType: mimeType,
                                 data,
                             } as FileStreamPart);
                         } else {
@@ -596,23 +703,52 @@ export class A2AStreamMapper {
             if (isFinal) {
                 const isInternalToolConfirmation = result.status.state === 'input-required' && coderAgentKind === 'tool-call-confirmation';
 
-                // A2A内部ツールの確認要求、または既知の内部ツール呼び出しの場合は、OpenCodeに露出しない
+                // Schema Bridging: DO NOT use Opaque Execution. We emit everything as tool-call so OpenCode handles it.
                 let hasExposedTools = false;
                 let hasInternalTools = false;
 
                 for (const [toolCallId, toolInfo] of this.bufferedTools.entries()) {
-                    const isInternalTool = INTERNAL_TOOLS.has(toolInfo.toolName);
-                    if (isInternalTool || isInternalToolConfirmation) {
+                    let originalToolName = this.reverseToolMapping[toolInfo.toolName] || toolInfo.toolName;
+                    
+                    const isInvalidToolName = toolInfo.toolName === 'invalid';
+                    const isUnknownToClient = this.clientTools ? !this.clientTools.has(originalToolName) : false;
+
+                    if (isInvalidToolName || isUnknownToClient) {
+                        Logger.info(`[Workaround] Intercepted hallucinated/invalid tool call '${toolInfo.toolName}' (mapped to '${originalToolName}'). Rewriting to a safe 'bash' call.`);
+                        
+                        const badName = originalToolName;
+                        originalToolName = 'bash';
+                        toolInfo.toolName = 'bash';
+                        // OpenCode の bash ツールは { command: string, description: string } を引数として受け取る
+                        toolInfo.args = { 
+                            command: `echo '[opencode-geminicli-a2a] Warning: Model called unknown tool: ${badName}'`,
+                            description: `Fallback for hallucinated tool ${badName}` 
+                        };
+                    }
+                    
+                    // Add description to satisfy OpenCode strict schemas
+                    if (toolInfo.args && typeof toolInfo.args === 'object' && !('description' in (toolInfo.args as any))) {
+                        (toolInfo.args as any).description = `Execute ${originalToolName} via A2A (${toolCallId})`;
+                    }
+
+                    if (isInternalToolConfirmation) {
                         hasInternalTools = true;
                     } else {
                         hasExposedTools = true;
                         if (!this.emittedToolCallIds.has(toolCallId)) {
+                            let argsStr = typeof toolInfo.args === 'string'
+                                ? toolInfo.args
+                                : JSON.stringify(toolInfo.args ?? {});
+                            if (!argsStr || argsStr === '""') argsStr = '{}';
+                            
+                            Logger.info(`Emitting tool call: ${originalToolName} (from: ${toolInfo.toolName}) (${toolCallId}) with args: ${argsStr}`);
+
                             parts.push({
                                 type: 'tool-call',
                                 toolCallType: 'function',
                                 toolCallId,
-                                toolName: toolInfo.toolName,
-                                args: JSON.stringify(toolInfo.args ?? {}),
+                                toolName: originalToolName,
+                                args: argsStr,
                             });
                             this.emittedToolCallIds.add(toolCallId);
                         }
@@ -671,8 +807,8 @@ export class A2AStreamMapper {
                 this._lastFinishReason = finishReason;
 
                 const usage = {
-                    promptTokens: result.usage?.promptTokens ?? 0,
-                    completionTokens: result.usage?.completionTokens ?? 0,
+                    inputTokens: { total: result.usage?.promptTokens ?? 0 },
+                    outputTokens: { total: result.usage?.completionTokens ?? 0 },
                 };
 
                 let coderAgentKindValue: string | undefined = undefined;
@@ -684,12 +820,17 @@ export class A2AStreamMapper {
                     coderAgentKindValue = 'tool-call-confirmation';
                 }
 
+                // If input is required but no internal tools are being processed (because they were dropped, e.g., 'invalid')
+                // and no exposed tools are present, we must NOT set inputRequired to true, 
+                // otherwise provider.ts will auto-confirm an empty array into an infinite loop.
+                const shouldPromptInput = result.status.state === 'input-required' && (hasExposedTools || hasInternalTools);
+
                 parts.push({
                     type: 'finish',
                     finishReason,
                     usage,
                     hasExposedTools,
-                    ...(result.status.state === 'input-required' || hasInternalTools ? { 
+                    ...(shouldPromptInput || hasInternalTools ? { 
                         inputRequired: true, 
                         rawState: result.status.state,
                         ...(coderAgentKindValue !== undefined ? { coderAgentKind: coderAgentKindValue } : {})
@@ -699,8 +840,12 @@ export class A2AStreamMapper {
                 // 発行が完了したらバッファをクリアして重複を防ぐ
                 this.bufferedTools.clear();
             }
+        } else if (result.kind === 'artifact-update') {
+            // artifact-update の場合はストリームパーツに変換しない
         } else {
-            throw new Error(`Unexpected result kind: ${(result as any).kind}`);
+            // 'invalid' など、スキーマ外の kind が返ることがある（Gemini CLI のツール呼び出し失敗など）。
+            // ストリームをクラッシュさせず、ログを出してスキップする。
+            Logger.warn(`Skipping unexpected A2A result kind: '${(result as any).kind}'`);
         }
 
         return parts;

@@ -193,10 +193,11 @@ describe('OpenCodeGeminiA2AProvider', () => {
             if (done) break;
         }
 
-        // Verify it retained context
+        // Verify it now uses stateful mode (contextId/taskId are sent)
         expect(vi.mocked(ofetch.raw)).toHaveBeenCalledTimes(1);
         const requestBody2 = vi.mocked(ofetch.raw).mock.calls[0][1]?.body as any;
         const parsedBody2 = typeof requestBody2 === 'string' ? JSON.parse(requestBody2) : requestBody2;
+        // STATEFUL DELTAS: Provider should send contextId and taskId
         expect(parsedBody2.params.contextId).toBe('existing-ctx');
         expect(parsedBody2.params.taskId).toBe('existing-task');
     });

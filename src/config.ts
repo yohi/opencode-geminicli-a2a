@@ -22,6 +22,17 @@ export interface OpenCodeProviderOptions {
         seed?: number;
         responseFormat?: any;
     };
+    /** 
+     * ツール名のマッピング。
+     * クライアント側のツール名をサーバー側（A2Aサーバー/Gemini CLI）が認識できる名称に変換します。
+     * 例: { "read_file": "read", "run_shell_command": "bash" }
+     */
+    toolMapping?: Record<string, string>;
+    /**
+     * 内部ツールリスト。
+     * これらのツール呼び出しはプロバイダー層で自動承認され、クライアント側には露出しません。
+     */
+    internalTools?: string[];
     /** カスタムモデルレジストリ。未指定時は StaticModelRegistry が使用される */
     modelRegistry?: ModelRegistry;
     /** エラー時自動フォールバック設定。未指定時はフォールバック無効 */
@@ -60,7 +71,27 @@ const parseSchema = z.object({
     }).optional(),
 });
 
-export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & { generationConfig?: OpenCodeProviderOptions['generationConfig'] } {
+// デフォルトのツールマッピング（OpenCode標準 -> Gemini CLI / MCP）
+const DEFAULT_TOOL_MAPPING = {
+    'read_file': 'read',
+    'write_file': 'write',
+    'run_shell_command': 'bash',
+    'bash': 'bash',
+    'list_directory': 'glob',
+    'read_multiple_files': 'read_multiple_files',
+    'create_directory': 'create_directory',
+    'search_files': 'grep',
+    'edit_file': 'edit',
+    'get_file_info': 'get_file_info',
+    'directory_tree': 'glob',
+    'move_file': 'move_file',
+};
+
+export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & { 
+    generationConfig?: OpenCodeProviderOptions['generationConfig'],
+    toolMapping?: Record<string, string>,
+    internalTools?: string[]
+} {
     // 1. 環境変数の取得（空文字、"undefined" などを undefined に正規化）
     const envHost = getNormalizedValue(process.env['GEMINI_A2A_HOST']);
     const envPort = getNormalizedValue(process.env['GEMINI_A2A_PORT']);
@@ -90,5 +121,10 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & { 
     return {
         ...baseConfig,
         generationConfig: parsedData.generationConfig,
+        toolMapping: {
+            ...DEFAULT_TOOL_MAPPING,
+            ...options?.toolMapping,
+        },
+        internalTools: options?.internalTools,
     };
 }

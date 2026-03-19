@@ -58,14 +58,15 @@
     "update-models": "tsx scripts/update-models.ts"
   },
   "dependencies": {
-    "@ai-sdk/provider": "^1.0.0",
-    "@ai-sdk/provider-utils": "^2.0.0",
+    "@ai-sdk/provider": "^3.0.8",
+    "@ai-sdk/provider-utils": "^4.0.19",
+    "ai": "^6.0.116",
     "ofetch": "^1.4.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0",
     "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
     "tsup": "^8.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
