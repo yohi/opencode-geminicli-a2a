@@ -115,11 +115,18 @@ export class ConfigManager {
         this.isWatching = true;
         try {
             this.configWatcher = watch(this.configPath, (event) => {
-                if (event === 'change') {
+                if (event === 'change' || event === 'rename') {
                     if (this._changeTimer) clearTimeout(this._changeTimer);
                     this._changeTimer = setTimeout(() => {
-                        Logger.info(`[ConfigManager] Config file changed, reloading...`);
+                        Logger.info(`[ConfigManager] Config file ${event}, reloading...`);
                         this.load();
+                        
+                        // For 'rename' (atomic write), we might need to recreate the watcher
+                        if (event === 'rename' && existsSync(this.configPath)) {
+                            this.stopWatch();
+                            this.watch(true);
+                        }
+
                         for (const cb of this.watchers) cb();
                     }, 300);
                 }
@@ -232,11 +239,6 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & {
     const parsedData = parseSchema.parse(mergedConfig);
     const baseConfig = ConfigSchema.parse(parsedData);
 
-    let externalAgents: AgentEndpoint[] | undefined = undefined;
-    if (external.agents && Array.isArray(external.agents)) {
-        externalAgents = external.agents.map(a => AgentEndpointSchema.parse(a));
-    }
-
     return {
         ...baseConfig,
         generationConfig: parsedData.generationConfig,
@@ -246,6 +248,6 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & {
             ...options?.toolMapping,
         },
         internalTools: options?.internalTools ?? external.internalTools,
-        agents: options?.agents ?? externalAgents,
+        agents: options?.agents ?? external.agents,
     };
 }
