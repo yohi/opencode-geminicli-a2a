@@ -4,6 +4,10 @@ import type {
     LanguageModelV1StreamPart,
     LanguageModelV1FunctionToolCall,
     LanguageModelV1FinishReason,
+    LanguageModelV1StreamResult,
+    LanguageModelV1CallResult,
+    LanguageModelV1TextPart,
+    LanguageModelV1ToolCallPart,
 } from '@ai-sdk/provider';
 import { resolveConfig, type OpenCodeProviderOptions } from './config';
 import { A2AClient } from './a2a-client';
@@ -15,7 +19,7 @@ import {
     type ExtendedFinishPart 
 } from './utils/mapper';
 import { parseA2AStream } from './utils/stream';
-import type { A2AJsonRpcRequest, A2AConfig } from './schemas';
+import type { A2AJsonRpcRequest, A2AConfig, Tool } from './schemas';
 import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
 import { isQuotaError, getNextFallbackModel, resolveFallbackConfig, type FallbackConfig } from './fallback';
 import { DefaultMultiAgentRouter } from './router';
@@ -29,12 +33,17 @@ function isAutoConfirmTarget(part: ExtendedFinishPart | undefined): boolean {
            (part.coderAgentKind === 'tool-call-confirmation' || part.coderAgentKind === 'internal-tool-call');
 }
 
+/**
+ * OpenCode Gemini CLI A2A Provider.
+ * Supports AI SDK Language Model Specification V2 and V3 (Compatibility Mode).
+ */
 export class OpenCodeGeminiA2AProvider {
+    // V2 をベースにすることで OpenCode の多くのバージョンで安定動作させる
     readonly specificationVersion = 'v2' as const;
     readonly provider = 'opencode-geminicli-a2a';
     readonly providerId = 'opencode-geminicli-a2a';
     readonly providerID = 'opencode-geminicli-a2a';
-    readonly id = 'opencode-geminicli-a2a'; // プロバイダーとしてのID
+    readonly id = 'opencode-geminicli-a2a'; 
     readonly name = 'Gemini CLI (A2A)';
     readonly defaultObjectGenerationMode = undefined;
     readonly modelId: string;
@@ -45,67 +54,56 @@ export class OpenCodeGeminiA2AProvider {
     private options?: OpenCodeProviderOptions;
     private fallbackConfig?: FallbackConfig;
 
-    /**
-     * @note 複数プロセス・複数インスタンス・サーバーレス環境でのデプロイ時は、
-     * デフォルトの InMemorySessionStore ではなく外部共有ストレージ実装を
-     * OpenCodeProviderOptions.sessionStore に渡す必要があります。
-     * 例: `new OpenCodeGeminiA2AProvider(modelId, { sessionStore: myRedisStore })`
-     */
     constructor(modelId: string, options?: OpenCodeProviderOptions) {
+        this.modelId = modelId;
+        this.modelID = modelId;
         try {
-            Logger.info(`Initializing model: ${modelId}`);
-            this.modelId = modelId;
-            this.modelID = modelId;
-            this.options = options;
-            const resolved = resolveConfig(options);
-            const config: A2AConfig = resolved;
-            let defaultGenerationConfig = resolved.generationConfig;
-            
-            let finalConfig: A2AConfig = config;
-            if (options?.agents && options.agents.length > 0) {
-                const router = new DefaultMultiAgentRouter(options.agents);
-                const resolvedResult = router.resolve(modelId);
-                if (resolvedResult) {
-                    const endpoint = resolvedResult.endpoint;
-                    const modelConfig = resolvedResult.config;
+            const router = options?.agents ? new DefaultMultiAgentRouter(options.agents) : undefined;
+            const resolved = router?.resolve(modelId);
+            const agentConfig = resolved?.endpoint;
+            const modelConfig = resolved?.config;
 
-                    Logger.info(`Routing model '${modelId}' to endpoint '${endpoint.key}' (${endpoint.host}:${endpoint.port})`);
+            const finalConfig = resolveConfig({
+                ...options,
+                host: agentConfig?.host ?? options?.host,
+                port: agentConfig?.port ?? options?.port,
+                token: agentConfig?.token ?? options?.token,
+                protocol: agentConfig?.protocol ?? options?.protocol,
+            });
 
-                    // モデル固有の設定があれば上書き
-                    if (modelConfig?.options?.generationConfig) {
-                        defaultGenerationConfig = {
-                            ...defaultGenerationConfig,
-                            ...modelConfig.options.generationConfig
-                        };
-                    }
-
-                    const endpointProtocol = endpoint.protocol || config.protocol || 'http';
-                    const configProtocol = config.protocol || 'http';
-                    const endpointOrigin = `${endpointProtocol}://${endpoint.host}:${endpoint.port}`;
-                    const configOrigin = `${configProtocol}://${config.host}:${config.port}`;
-                    
-                    const token = endpoint.token !== undefined 
-                        ? endpoint.token 
-                        : (endpointOrigin === configOrigin ? config.token : undefined);
-
-                    finalConfig = {
-                        host: endpoint.host,
-                        port: endpoint.port,
-                        token: token,
-                        protocol: endpointProtocol as 'http' | 'https'
-                    };
-                }
-            }
+            const defaultGenerationConfig = {
+                ...options?.generationConfig,
+                ...modelConfig?.options?.generationConfig,
+            };
 
             this.client = new A2AClient(finalConfig);
             this.sessionStore = options?.sessionStore ?? new InMemorySessionStore();
             this.fallbackConfig = resolveFallbackConfig(options?.fallback);
 
+            const defaultToolMapping: Record<string, string> = {
+                'docker-mcp-gateway_read_file': 'read',
+                'docker-mcp-gateway_directory_tree': 'glob',
+                'docker-mcp-gateway_read_multiple_files': 'read_multiple_files',
+                'docker-mcp-gateway_edit_file': 'edit',
+                'docker-mcp-gateway_write_file': 'write',
+                'docker-mcp-gateway_search_files': 'grep',
+                'docker-mcp-gateway_get_file_info': 'get_file_info',
+                'run_shell_command': 'bash',
+                'bash': 'bash',
+                ...(finalConfig.toolMapping || {})
+            };
+
             this.options = {
                 ...options,
+                host: finalConfig.host,
+                port: finalConfig.port,
+                token: finalConfig.token,
+                protocol: finalConfig.protocol,
                 generationConfig: defaultGenerationConfig,
                 sessionStore: this.sessionStore,
                 fallback: this.fallbackConfig,
+                toolMapping: defaultToolMapping,
+                internalTools: finalConfig.internalTools,
             };
         } catch (err) {
             Logger.error(`ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
@@ -114,12 +112,11 @@ export class OpenCodeGeminiA2AProvider {
     }
 
     private createA2ARequest(options: LanguageModelV1CallOptions, session: A2ASession): A2AJsonRpcRequest {
-        let tools: any[] | undefined;
-        if (options.mode && 'tools' in options.mode && options.mode.tools?.length) {
-            tools = options.mode.tools;
-        }
+        // NOTE: OpenCode (AI SDK) 側のツール定義 (options.mode.tools) は A2A サーバーへ送信しない。
+        // A2A の設計思想「Opaque Execution」に従い、Gemini CLI は自身の内部ツール
+        // (read, bash, edit 等) のみを使用する。OpenCode ツールの結果は
+        // formatToolResults() によりテキスト化されてメッセージ本文に混入する。
 
-        // generationConfig の抽出（インスタンスのデフォルト設定と呼び出し時の設定をマージ）
         const mergedGenerationConfig = {
             ...this.options?.generationConfig,
             ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
@@ -131,44 +128,42 @@ export class OpenCodeGeminiA2AProvider {
             ...(options.frequencyPenalty !== undefined ? { frequencyPenalty: options.frequencyPenalty } : {}),
             ...(options.seed !== undefined ? { seed: options.seed } : {}),
         };
-        // undefined の値を除去
         const filteredConfig = Object.fromEntries(
             Object.entries(mergedGenerationConfig).filter(([_, v]) => v !== undefined)
         );
 
-        const mapOptions: MapPromptOptions = { tools };
-
+        const mapOptions: MapPromptOptions = { 
+            toolMapping: this.options?.toolMapping,
+            internalTools: this.options?.internalTools
+        };
         if (Object.keys(filteredConfig).length > 0) {
             mapOptions.generationConfig = filteredConfig;
         }
-
-        // リクエスト単位でモデルIDを指定（A2Aサーバーの動的モデル変更をサポート）
         mapOptions.modelId = this.modelId;
 
-        // マルチターン: contextId を引き継ぐ
+        const rawToolsConfig = options.mode?.type === 'regular' ? options.mode.tools : (options as any).tools;
+        // Do NOT pass rawToolsConfig to mapOptions.tools. OpenCode dynamically loads humongous tools
+        // like Terraform docs which immediately block A2A with '413 Payload Too Large'.
+        // Let the invisible A2A tools stay hidden.
+
         if (session.contextId) {
             mapOptions.contextId = session.contextId;
         }
-
-        // マルチターン: 前回が tool-calls で終了した場合、taskId も引き継いでタスク継続
-        if (session.lastFinishReason === 'tool-calls' && session.taskId) {
+        if (session.processedMessagesCount !== undefined) {
+            mapOptions.processedMessagesCount = session.processedMessagesCount;
+        }
+        if ((session.lastFinishReason === 'tool-calls' || session.rawState === 'input-required' || session.inputRequired === true) && session.taskId) {
             mapOptions.taskId = session.taskId;
         }
 
         return mapPromptToA2AJsonRpcRequest(options.prompt, mapOptions);
     }
 
-    /**
-     * @note sessionStore を利用して、並行実行時の状態を分離して管理します。
-     * sessionId は providerMetadata から取得されます。
-     * 並行リクエスト時の状態の競合を避けるため、呼び出し元は必ず一意の sessionId を指定してください。
-     */
-    async doStream(options: LanguageModelV1CallOptions) {
-        let result: any;
+    async doStream(options: LanguageModelV1CallOptions): Promise<LanguageModelV1StreamResult> {
+        let result: LanguageModelV1StreamResult;
         try {
             result = await this._doStreamInternal(options);
         } catch (error) {
-            // フォールバック判定: クォータエラーの場合に別モデルで再試行
             if (this.fallbackConfig && isQuotaError(error, this.fallbackConfig)) {
                 return this._attemptFallback(options, error);
             }
@@ -195,7 +190,6 @@ export class OpenCodeGeminiA2AProvider {
                             return;
                         }
 
-                        // stream-start の重複送信を防ぐ
                         if (value?.type === 'stream-start') {
                             if (streamStartEmitted) continue;
                             streamStartEmitted = true;
@@ -207,13 +201,13 @@ export class OpenCodeGeminiA2AProvider {
                         if (!fallbackAttempted && isQuotaError(error, fallbackConfig)) {
                             fallbackAttempted = true;
                             if (process.env['DEBUG_OPENCODE']) {
-                                console.warn(`[opencode-geminicli-a2a] Stream error detected over A2A. Attempting fallback...`);
+                                console.warn(`[opencode-geminicli-a2a] Stream error detected. Attempting fallback...`);
                             }
                             try {
                                 const fallbackResult = await self._attemptFallback(options, error);
                                 currentReader.releaseLock();
                                 currentReader = fallbackResult.stream.getReader();
-                                continue; // 新しいリーダーから読み取りを試行する
+                                continue;
                             } catch (fallbackError) {
                                 controller.error(fallbackError);
                                 return;
@@ -236,147 +230,47 @@ export class OpenCodeGeminiA2AProvider {
         };
     }
 
-    /**
-     * フォールバック試行。クォータエラー発生時に代替モデルで doStream をリトライする。
-     * Phase 1: 同一サーバーに別モデルIDで再試行（A2A サーバーの制約上、効果は限定的）
-     * Phase 2 (5-D 後): MultiAgentRouter 経由で別サーバーへルーティング
-     */
     private async _attemptFallback(
         callOptions: LanguageModelV1CallOptions,
         originalError: unknown,
-    ) {
+    ): Promise<LanguageModelV1StreamResult> {
         if (!this.fallbackConfig) throw originalError;
 
-        const maxRetries = this.fallbackConfig.maxRetries ?? 2;
-        let currentModelId = this.modelId;
-        let lastError = originalError;
-
-        for (let i = 0; i < maxRetries; i++) {
-            const nextModelId = getNextFallbackModel(currentModelId, this.fallbackConfig);
-            if (!nextModelId) {
-                if (process.env['DEBUG_OPENCODE']) {
-                    console.warn(`[opencode-geminicli-a2a] No more fallback models available after '${currentModelId}'.`);
-                }
-                break;
-            }
-
-            if (process.env['DEBUG_OPENCODE']) {
-                console.warn(`[opencode-geminicli-a2a] Quota error on model '${currentModelId}'. Falling back to '${nextModelId}'.`);
-            }
-
-            try {
-                // フォールバック先のモデルで新しいプロバイダーインスタンスを生成
-                const fallbackProvider = new OpenCodeGeminiA2AProvider(nextModelId, {
-                    ...this.options,
-                    sessionStore: this.sessionStore,
-                });
-                const result = await fallbackProvider._doStreamInternal(callOptions);
-                
-                let currentReader = result.stream.getReader();
-                let streamFallbackAttempted = false;
-                let streamStartEmitted = false;
-                const self = this;
-                
-                const proxyStream = new ReadableStream<any>({
-                    async pull(controller) {
-                        while (true) {
-                            try {
-                                const { done, value } = await currentReader.read();
-                                if (done) {
-                                    controller.close();
-                                    return;
-                                }
-
-                                if (value?.type === 'stream-start') {
-                                    if (streamStartEmitted) continue;
-                                    streamStartEmitted = true;
-                                }
-
-                                controller.enqueue(value);
-                                return;
-                            } catch (streamError) {
-                                if (!streamFallbackAttempted && isQuotaError(streamError, self.fallbackConfig)) {
-                                    streamFallbackAttempted = true;
-                                    if (process.env['DEBUG_OPENCODE']) {
-                                        console.warn(`[opencode-geminicli-a2a] Stream error on fallback model '${nextModelId}'. Attempting further fallback...`);
-                                    }
-                                    try {
-                                        const fallbackResult = await fallbackProvider._attemptFallback(callOptions, streamError);
-                                        currentReader.releaseLock();
-                                        currentReader = fallbackResult.stream.getReader();
-                                        continue;
-                                    } catch (furtherError) {
-                                        controller.error(furtherError);
-                                        return;
-                                    }
-                                } else {
-                                    controller.error(streamError);
-                                    return;
-                                }
-                            }
-                        }
-                    },
-                    cancel(reason) {
-                        currentReader.cancel(reason);
-                    }
-                });
-
-                return {
-                    ...result,
-                    stream: proxyStream,
-                };
-            } catch (retryError) {
-                if (isQuotaError(retryError, this.fallbackConfig)) {
-                    currentModelId = nextModelId;
-                    lastError = retryError;
-                    continue;
-                }
-                // クォータエラーでない場合はそのままスロー
-                throw retryError;
-            }
+        const fallbackCount = (callOptions as any)._fallbackCount ?? 0;
+        if (fallbackCount >= 3) {
+            throw originalError;
         }
 
-        // 全フォールバックが失敗した場合は元のエラーをスロー
-        throw lastError;
+        const nextModelId = getNextFallbackModel(this.modelId, this.fallbackConfig);
+        if (!nextModelId) {
+            throw originalError;
+        }
+
+        if (process.env['DEBUG_OPENCODE']) {
+            console.warn(`[opencode-geminicli-a2a] Falling back from ${this.modelId} to ${nextModelId} (level ${fallbackCount + 1})`);
+        }
+
+        const fallbackProvider = new OpenCodeGeminiA2AProvider(nextModelId, this.options);
+        return fallbackProvider.doStream({
+            ...callOptions,
+            _fallbackCount: fallbackCount + 1
+        } as any);
     }
 
-    /** @internal ストリーミングの内部実装 */
     private async _doStreamInternal(options: LanguageModelV1CallOptions) {
-        Logger.debug('doStream called for model:', this.modelId);
         let sessionId: string | undefined = undefined;
         const opencodeMetadata = options.providerMetadata?.opencode;
-
-        if (opencodeMetadata?.sessionId !== undefined) {
-            if (typeof opencodeMetadata.sessionId === 'string') {
-                const trimmed = opencodeMetadata.sessionId.trim();
-                if (trimmed !== '') {
-                    sessionId = trimmed;
-                } else {
-                    Logger.warn(`Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
-                }
-            } else {
-                Logger.warn(`Invalid or empty sessionId. Expected a non-empty string. Session tracking is disabled.`);
-            }
-        }
-
-        // Gemini CLI 等、メタデータを渡さないクライアントのためのフォールバック
-        if (!sessionId) {
-            sessionId = `cli-session-${crypto.randomUUID()}`;
-        }
+        if (opencodeMetadata?.sessionId) sessionId = String(opencodeMetadata.sessionId).trim();
+        if (!sessionId) sessionId = `cli-session-${crypto.randomUUID()}`;
 
         const session = await this.sessionStore.get(sessionId) || {};
-
-        // resetContext フラグの検出: 新規チャットスレッド開始時等にコンテキストをリセット
         if (opencodeMetadata?.resetContext === true && sessionId) {
             await this.sessionStore.resetSession(sessionId);
-            // リセット後はセッション情報をクリアして新規コンテキストで開始
             delete session.contextId;
             delete session.taskId;
             delete session.lastFinishReason;
-            if (process.env['DEBUG_OPENCODE']) {
-                const maskedId = sessionId.length > 8 ? `${sessionId.substring(0, 4)}...${sessionId.substring(sessionId.length - 4)}` : '***';
-                Logger.debug(`Context reset for session: ${maskedId}`);
-            }
+            delete session.inputRequired;
+            delete session.rawState;
         }
 
         const request = this.createA2ARequest(options, session);
@@ -384,61 +278,47 @@ export class OpenCodeGeminiA2AProvider {
 
         let responseStream;
         let headers;
-
         try {
-            const response = await this.client.chatStream({
-                request,
-                idempotencyKey,
-                abortSignal: options.abortSignal,
-            });
+            const response = await this.client.chatStream({ request, idempotencyKey, abortSignal: options.abortSignal });
             responseStream = response.stream;
             headers = response.headers;
         } catch (error) {
-            if (sessionId) {
-                const currentSession = await this.sessionStore.get(sessionId);
-                if (currentSession && Object.keys(currentSession).length > 0) {
-                    await this.sessionStore.update(sessionId, { lastFinishReason: undefined });
-                }
-            }
+            if (sessionId) await this.sessionStore.update(sessionId, { lastFinishReason: undefined });
             throw error;
         }
 
-        const mapper = new A2AStreamMapper();
+        const rawToolsInput = options.mode?.type === 'regular' ? options.mode.tools : (options as any).tools;
+        const clientTools = Array.isArray(rawToolsInput)
+            ? rawToolsInput.map((t: any) => t.name || t.id || t.function?.name || t.type).filter(Boolean) as string[]
+            : (rawToolsInput && typeof rawToolsInput === 'object' ? Object.keys(rawToolsInput) : undefined);
 
-        // v2 ストリーム変換: v1 の LanguageModelV1StreamPart を
-        // AI SDK v2 のストリームパーツ形式に変換する。
-        // OpenCode は v2 形式（text-start/text-delta(delta,id)/text-end 等）を要求。
+        const mapper = new A2AStreamMapper({
+            toolMapping: this.options?.toolMapping,
+            internalTools: this.options?.internalTools,
+            clientTools
+        });
         let textPartCounter = 0;
         let reasoningPartCounter = 0;
         let activeTextId: string | undefined;
-        let toolCallCounter = 0;
 
         const stream = new ReadableStream<any>({
             start: async (controller) => {
                 let currentRequest = request;
                 let autoConfirmCount = 0;
-                const MAX_AUTO_CONFIRM = 10;
-                let firstResponse: { stream: any, headers: Record<string, string> } | undefined = { stream: responseStream, headers: headers || {} };
+                let toolCallConfirmCount = 0;
+                const MAX_AUTO_CONFIRM = 50;          // internal-tool-call 用 (codebase_investigator 等の長時間実行エージェント対応のため拡大)
+                const MAX_TOOL_CONFIRM = 1;           // tool-call-confirmation 用 (invalid ツールのリトライループ防止)
+
+                let firstResponse: any = { stream: responseStream, headers: headers || {} };
+                let lastFinishPart: ExtendedFinishPart | undefined;
 
                 try {
-                    // stream-start を送信
                     controller.enqueue({ type: 'stream-start' });
 
                     while (autoConfirmCount < MAX_AUTO_CONFIRM) {
                         let hasFinished = false;
-                        let lastFinishPart: ExtendedFinishPart | undefined;
-                        
-                        let response;
-                        if (firstResponse) {
-                            response = firstResponse;
-                            firstResponse = undefined;
-                        } else {
-                            response = await this.client.chatStream({
-                                request: currentRequest,
-                                idempotencyKey: undefined,
-                                abortSignal: options.abortSignal,
-                            });
-                        }
+                        let response = firstResponse || await this.client.chatStream({ request: currentRequest, abortSignal: options.abortSignal });
+                        firstResponse = undefined;
 
                         mapper.startNewTurn();
                         const chunkGenerator = parseA2AStream(response.stream);
@@ -453,11 +333,7 @@ export class OpenCodeGeminiA2AProvider {
                                                 activeTextId = `text-${textPartCounter++}`;
                                                 controller.enqueue({ type: 'text-start', id: activeTextId });
                                             }
-                                            controller.enqueue({
-                                                type: 'text-delta',
-                                                id: activeTextId,
-                                                delta: part.textDelta,
-                                            });
+                                            controller.enqueue({ type: 'text-delta', id: activeTextId, delta: part.textDelta });
                                             break;
                                         }
                                         case 'reasoning': {
@@ -467,11 +343,7 @@ export class OpenCodeGeminiA2AProvider {
                                             }
                                             const reasoningId = `reasoning-${reasoningPartCounter++}`;
                                             controller.enqueue({ type: 'reasoning-start', id: reasoningId });
-                                            controller.enqueue({
-                                                type: 'reasoning-delta',
-                                                id: reasoningId,
-                                                delta: part.textDelta,
-                                            });
+                                            controller.enqueue({ type: 'reasoning-delta', id: reasoningId, delta: part.textDelta });
                                             controller.enqueue({ type: 'reasoning-end', id: reasoningId });
                                             break;
                                         }
@@ -480,22 +352,39 @@ export class OpenCodeGeminiA2AProvider {
                                                 controller.enqueue({ type: 'text-end', id: activeTextId });
                                                 activeTextId = undefined;
                                             }
-                                            const toolId = `tool-${toolCallCounter++}`;
+                                            // OpenCode は内部的に tool-input-start を受けてツールを pending 登録し、
+                                            // その後の tool-call パーツ（またはストリームの完了）を受けて running 状態に遷移させる。
+                                            // ID が不一致だと登録済みのツールを更新できず、未完了のまま終了したとみなされて abort される。
+                                            const toolId = part.toolCallId;
+                                            
                                             controller.enqueue({
                                                 type: 'tool-input-start',
                                                 id: toolId,
                                                 toolCallId: part.toolCallId,
                                                 toolName: part.toolName,
-                                            });
+                                            } as any);
+
                                             controller.enqueue({
                                                 type: 'tool-input-delta',
                                                 id: toolId,
                                                 delta: part.args,
                                             });
+
                                             controller.enqueue({
                                                 type: 'tool-input-end',
                                                 id: toolId,
                                             });
+
+                                            // 状態を 'running' に遷移させるために tool-call パーツも送出する。
+                                            // V2/V3 両方の SDK が理解できるようにプロパティを重複させておく。
+                                            controller.enqueue({
+                                                type: 'tool-call',
+                                                toolCallType: 'function',
+                                                toolCallId: part.toolCallId,
+                                                toolName: part.toolName,
+                                                args: part.args,
+                                                input: part.args, // V3 compatible
+                                            } as LanguageModelV1StreamPart);
                                             break;
                                         }
                                         case 'file': {
@@ -515,14 +404,22 @@ export class OpenCodeGeminiA2AProvider {
                                             const finishPart = part as ExtendedFinishPart;
                                             lastFinishPart = finishPart;
 
-                                            // 自動承認が必要な状態でなければ、OpenCodeに finish を流して終了判定する
                                             if (!isAutoConfirmTarget(finishPart)) {
+                                                const unifiedFinishReason = (finishPart.finishReason === 'unknown' ? 'stop' : finishPart.finishReason);
                                                 controller.enqueue({
                                                     type: 'finish',
-                                                    finishReason: finishPart.finishReason,
-                                                    usage: finishPart.usage,
+                                                    finishReason: unifiedFinishReason, // V2用
+                                                    usage: {
+                                                        promptTokens: finishPart.usage.inputTokens.total,
+                                                        completionTokens: finishPart.usage.outputTokens.total,
+                                                    },
+                                                    // V3用フィールドも混ぜる
+                                                    finishReasonV3: {
+                                                        unified: unifiedFinishReason as any,
+                                                        raw: finishPart.rawState || finishPart.finishReason,
+                                                    },
                                                     ...(finishPart.providerMetadata !== undefined ? { providerMetadata: finishPart.providerMetadata } : {}),
-                                                });
+                                                } as any);
                                             }
                                             break;
                                         }
@@ -532,17 +429,7 @@ export class OpenCodeGeminiA2AProvider {
                                     }
                                 }
                             } else if ('error' in chunk && chunk.error) {
-                                // エラー時は以前と同様に処理
-                                const rpcError = new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`);
-                                const isQuota = isQuotaError({ code: chunk.error.code, message: chunk.error.message }, this.fallbackConfig);
-                                Object.assign(rpcError, { 
-                                    code: chunk.error.code, 
-                                    data: (chunk.error as any).data,
-                                    id: chunk.id, 
-                                    ...(isQuota ? { isQuotaError: true } : {}) 
-                                });
-                                if (sessionId) await this.sessionStore.update(sessionId, { lastFinishReason: undefined });
-                                controller.error(rpcError);
+                                controller.error(new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`));
                                 return;
                             }
                         }
@@ -552,45 +439,54 @@ export class OpenCodeGeminiA2AProvider {
                             return;
                         }
 
-                        // 自動承認ロジック: 内部ツール確認中の場合は次のリクエストを自動送信
-                        if (isAutoConfirmTarget(lastFinishPart) && 
-                            mapper.taskId) {
-                            
-                            autoConfirmCount++;
-                            Logger.info(`Auto-confirming tool call (count: ${autoConfirmCount}) for taskId: ${mapper.taskId}`);
+                        if (isAutoConfirmTarget(lastFinishPart) && mapper.taskId) {
+                            const isToolConfirm = lastFinishPart?.coderAgentKind === 'tool-call-confirmation';
+
+                            if (isToolConfirm) {
+                                toolCallConfirmCount++;
+                                if (toolCallConfirmCount > MAX_TOOL_CONFIRM) {
+                                    // invalid なツール（read_file 等）によるループを検知。
+                                    // これ以上 "Proceed" を送るとループするため、finish を emit して終了する。
+                                    Logger.warn(`[auto-confirm] tool-call-confirmation が ${toolCallConfirmCount} 回発生。ループの可能性があるため中断します。`);
+                                    controller.enqueue({
+                                        type: 'finish',
+                                        finishReason: 'stop',
+                                        usage: {
+                                            promptTokens: lastFinishPart.usage.inputTokens.total,
+                                            completionTokens: lastFinishPart.usage.outputTokens.total,
+                                        },
+                                        finishReasonV3: { unified: 'stop' as any, raw: 'tool-confirm-loop-detected' },
+                                    } as any);
+                                    break;
+                                }
+                            } else {
+                                autoConfirmCount++;
+                                if (autoConfirmCount >= MAX_AUTO_CONFIRM) {
+                                    break;
+                                }
+                            }
+
                             currentRequest = buildConfirmationRequest(mapper.taskId, this.modelId);
-                            // ループ継続して次を取得
                             continue;
                         }
-
-                        // 通常終了
                         break;
                     }
 
-                    // テキストパーツが開いていれば閉じる
-                    if (activeTextId !== undefined) {
-                        controller.enqueue({ type: 'text-end', id: activeTextId });
-                        activeTextId = undefined;
-                    }
-
-                    // マルチターン情報の保存
                     if (sessionId) {
                         await this.sessionStore.update(sessionId, {
-                            ...(mapper.contextId !== undefined && { contextId: mapper.contextId }),
-                            ...(mapper.taskId !== undefined && { taskId: mapper.taskId }),
-                            lastFinishReason: mapper.lastFinishReason as any,
+                            contextId: mapper.contextId || session.contextId,
+                            taskId: mapper.taskId || session.taskId,
+                            lastFinishReason: mapper.lastFinishReason || lastFinishPart?.finishReason,
+                            processedMessagesCount: options.prompt.length,
+                            inputRequired: lastFinishPart?.inputRequired,
+                            rawState: lastFinishPart?.rawState
                         });
                     }
 
+                    if (activeTextId !== undefined) controller.enqueue({ type: 'text-end', id: activeTextId });
                     controller.close();
                 } catch (error) {
-                    // エラー時は lastFinishReason をリセットして、次回の taskId 送信を防ぐ
-                    if (sessionId) {
-                        const currentSession = await this.sessionStore.get(sessionId);
-                        if (currentSession && Object.keys(currentSession).length > 0) {
-                            await this.sessionStore.update(sessionId, { lastFinishReason: undefined });
-                        }
-                    }
+                    if (sessionId) await this.sessionStore.update(sessionId, { lastFinishReason: undefined });
                     controller.error(error);
                 }
             },
@@ -598,35 +494,25 @@ export class OpenCodeGeminiA2AProvider {
 
         return {
             stream,
-            rawCall: {
-                rawPrompt: request.params.message,
-                rawSettings: request.params.configuration || {},
-            },
-            rawResponse: {
-                headers,
-            },
-            request: {
-                body: JSON.stringify(request),
-            },
+            rawCall: { rawPrompt: options.prompt, rawSettings: options },
+            rawResponse: { headers },
+            request: { body: JSON.stringify(request) },
             warnings: [],
         };
     }
 
-    async doGenerate(options: LanguageModelV1CallOptions) {
+    async doGenerate(options: LanguageModelV1CallOptions): Promise<LanguageModelV1CallResult> {
         const { stream: sdkStream, rawCall, rawResponse, request, warnings } = await this.doStream(options);
-
         const reader = sdkStream.getReader();
         let text = '';
         let reasoning = '';
         const toolCalls: LanguageModelV1FunctionToolCall[] = [];
-        const files: Array<{ data: string | Uint8Array; mimeType: string }> = [];
-        let finishReason: LanguageModelV1FinishReason = 'unknown';
+        const content: (LanguageModelV1TextPart | LanguageModelV1ToolCallPart)[] = [];
+        let finishReason: LanguageModelV1FinishReason = 'other';
         const usage = { promptTokens: 0, completionTokens: 0 };
-        let providerMetadata: Record<string, any> | undefined;
+        let providerMetadata: Record<string, any> = {};
         let inputRequired: boolean | undefined;
         let rawState: string | undefined;
-
-        const activeToolCalls = new Map<string, { toolCallId: string; name: string; args: string }>();
 
         try {
             while (true) {
@@ -634,77 +520,54 @@ export class OpenCodeGeminiA2AProvider {
                 if (done) break;
 
                 switch (value.type) {
-                    // v2 ストリームパーツ
-                    case 'stream-start':
-                    case 'text-start':
-                    case 'text-end':
-                    case 'reasoning-start':
-                    case 'reasoning-end':
-                        // ライフサイクルイベントはスキップ
-                        break;
                     case 'text-delta':
                         text += value.delta;
+                        if (content.length > 0 && content[content.length - 1].type === 'text') {
+                            (content[content.length - 1] as LanguageModelV1TextPart).text += value.delta;
+                        } else {
+                            content.push({ type: 'text', text: value.delta });
+                        }
                         break;
                     case 'reasoning-delta':
                         reasoning += value.delta;
                         break;
-                    case 'tool-input-start':
-                        activeToolCalls.set(value.id, { toolCallId: value.toolCallId, name: value.toolName, args: '' });
-                        break;
-                    case 'tool-input-delta':
-                        if (activeToolCalls.has(value.id)) {
-                            activeToolCalls.get(value.id)!.args += value.delta;
-                        }
-                        break;
-                    case 'tool-input-end':
-                        // 完了時に toolCalls に追加
-                        if (activeToolCalls.has(value.id)) {
-                            const call = activeToolCalls.get(value.id)!;
-                            toolCalls.push({
-                                toolCallType: 'function',
-                                toolCallId: call.toolCallId,
-                                toolName: call.name,
-                                args: call.args,
-                            });
-                            activeToolCalls.delete(value.id);
-                        }
+                    case 'tool-call':
+                        toolCalls.push({ toolCallType: 'function', toolCallId: value.toolCallId, toolName: value.toolName, args: value.args });
+                        content.push({ type: 'tool-call', toolCallId: value.toolCallId, toolName: value.toolName, args: value.args });
                         break;
                     case 'finish':
                         finishReason = value.finishReason;
                         if (value.usage) {
-                            usage.promptTokens = value.usage.promptTokens;
-                            usage.completionTokens = value.usage.completionTokens;
+                            usage.promptTokens = value.usage.promptTokens ?? 0;
+                            usage.completionTokens = value.usage.completionTokens ?? 0;
                         }
-                        if ('providerMetadata' in value) providerMetadata = (value as any).providerMetadata;
+                        if (value.providerMetadata) {
+                            providerMetadata = { ...providerMetadata, ...value.providerMetadata };
+                        }
+                        // V3 compatibility fields often passed in finish part by this provider
                         if ('inputRequired' in value) inputRequired = (value as any).inputRequired;
                         if ('rawState' in value) rawState = (value as any).rawState;
                         break;
-                    case 'file': {
-                        // マルチモーダルレスポンス: file パーツを蓄積
-                        const filePart = value as import('./utils/mapper').FileStreamPart;
-                        files.push({ data: filePart.data, mimeType: filePart.mimeType });
-                        break;
-                    }
                 }
             }
         } finally {
             reader.releaseLock();
         }
 
+        if (inputRequired !== undefined) providerMetadata.inputRequired = inputRequired;
+        if (rawState !== undefined) providerMetadata.rawState = rawState;
+
         return {
             text: text.length > 0 ? text : undefined,
             reasoning: reasoning.length > 0 ? reasoning : undefined,
             toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-            files: files.length > 0 ? files : undefined,
             finishReason,
             usage,
             rawCall,
             rawResponse,
             request,
             warnings,
-            ...(providerMetadata !== undefined ? { providerMetadata } : {}),
-            ...(inputRequired !== undefined ? { inputRequired } : {}),
-            ...(rawState !== undefined ? { rawState } : {})
+            providerMetadata: Object.keys(providerMetadata).length > 0 ? providerMetadata : undefined,
         };
     }
 }

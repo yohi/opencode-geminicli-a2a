@@ -12,6 +12,21 @@ describe('resolveConfig', () => {
         process.env = originalEnv;
     });
 
+    const defaultToolMapping = {
+        'read_file': 'read',
+        'write_file': 'write',
+        'run_shell_command': 'bash',
+        'bash': 'bash',
+        'list_directory': 'glob',
+        'read_multiple_files': 'read_multiple_files',
+        'create_directory': 'create_directory',
+        'search_files': 'grep',
+        'edit_file': 'edit',
+        'get_file_info': 'get_file_info',
+        'directory_tree': 'glob',
+        'move_file': 'move_file',
+    };
+
     it('should use default values when nothing is provided', () => {
         const config = resolveConfig();
         expect(config).toEqual({
@@ -19,6 +34,9 @@ describe('resolveConfig', () => {
             port: 41242,
             token: undefined,
             protocol: 'http',
+            generationConfig: undefined,
+            toolMapping: defaultToolMapping,
+            internalTools: undefined,
         });
     });
 
@@ -33,6 +51,9 @@ describe('resolveConfig', () => {
             port: 8080,
             token: 'secret-token',
             protocol: 'http',
+            generationConfig: undefined,
+            toolMapping: defaultToolMapping,
+            internalTools: undefined,
         });
     });
 
@@ -54,6 +75,9 @@ describe('resolveConfig', () => {
             port: 8888,
             token: 'opt-token',
             protocol: 'http',
+            generationConfig: undefined,
+            toolMapping: defaultToolMapping,
+            internalTools: undefined,
         });
     });
 
@@ -79,6 +103,9 @@ describe('resolveConfig', () => {
             port: 12345,      // defined in env
             token: 'opt-token', // opt prioritized over env
             protocol: 'https', // defined in env
+            generationConfig: undefined,
+            toolMapping: defaultToolMapping,
+            internalTools: undefined,
         });
     });
 
@@ -98,6 +125,9 @@ describe('resolveConfig', () => {
             port: 41242,
             token: undefined,
             protocol: 'http',
+            generationConfig: undefined,
+            toolMapping: defaultToolMapping,
+            internalTools: undefined,
         });
 
         const configWithOptions = resolveConfig({
@@ -110,6 +140,9 @@ describe('resolveConfig', () => {
             port: 1234,
             token: undefined,
             protocol: 'https',
+            generationConfig: undefined,
+            toolMapping: defaultToolMapping,
+            internalTools: undefined,
         });
     });
 
