@@ -9,7 +9,7 @@ import type {
     LanguageModelV1TextPart,
     LanguageModelV1ToolCallPart,
 } from '@ai-sdk/provider';
-import { resolveConfig, type OpenCodeProviderOptions } from './config';
+import { resolveConfig, type OpenCodeProviderOptions, ConfigManager } from './config';
 import { A2AClient } from './a2a-client';
 import { 
     mapPromptToA2AJsonRpcRequest, 
@@ -49,36 +49,50 @@ export class OpenCodeGeminiA2AProvider {
     readonly modelId: string;
     readonly modelID: string;
 
-    private client: A2AClient;
-    private sessionStore: SessionStore;
+    private client!: A2AClient;
+    private sessionStore!: SessionStore;
     private options?: OpenCodeProviderOptions;
     private fallbackConfig?: FallbackConfig;
+    private unregisterConfigWatcher?: () => void;
 
     constructor(modelId: string, options?: OpenCodeProviderOptions) {
         this.modelId = modelId;
         this.modelID = modelId;
+        this.options = options;
+        this.init();
+
+        if (options?.hotReload) {
+            this.unregisterConfigWatcher = ConfigManager.getInstance().onChange(() => {
+                Logger.info(`[Provider] Hot-reloading configuration for model ${this.modelId}`);
+                this.init();
+            });
+        }
+    }
+
+    private init() {
         try {
-            const router = options?.agents ? new DefaultMultiAgentRouter(options.agents) : undefined;
-            const resolved = router?.resolve(modelId);
+            const config = resolveConfig(this.options);
+            const router = config.agents ? new DefaultMultiAgentRouter(config.agents) : undefined;
+            const resolved = router?.resolve(this.modelId);
             const agentConfig = resolved?.endpoint;
             const modelConfig = resolved?.config;
 
-            const finalConfig = resolveConfig({
-                ...options,
-                host: agentConfig?.host ?? options?.host,
-                port: agentConfig?.port ?? options?.port,
-                token: agentConfig?.token ?? options?.token,
-                protocol: agentConfig?.protocol ?? options?.protocol,
-            });
+            const finalConfig = {
+                ...config,
+                host: agentConfig?.host ?? config.host,
+                port: agentConfig?.port ?? config.port,
+                token: agentConfig?.token ?? config.token,
+                protocol: agentConfig?.protocol ?? config.protocol,
+            };
 
             const defaultGenerationConfig = {
-                ...options?.generationConfig,
+                ...this.options?.generationConfig,
                 ...modelConfig?.options?.generationConfig,
             };
 
             this.client = new A2AClient(finalConfig);
-            this.sessionStore = options?.sessionStore ?? new InMemorySessionStore();
-            this.fallbackConfig = resolveFallbackConfig(options?.fallback);
+            this.sessionStore = this.options?.sessionStore ?? this.sessionStore ?? new InMemorySessionStore();
+            this.fallbackConfig = resolveFallbackConfig(this.options?.fallback);
 
             const defaultToolMapping: Record<string, string> = {
                 'docker-mcp-gateway_read_file': 'read',
@@ -94,7 +108,7 @@ export class OpenCodeGeminiA2AProvider {
             };
 
             this.options = {
-                ...options,
+                ...this.options,
                 host: finalConfig.host,
                 port: finalConfig.port,
                 token: finalConfig.token,
@@ -106,8 +120,15 @@ export class OpenCodeGeminiA2AProvider {
                 internalTools: finalConfig.internalTools,
             };
         } catch (err) {
-            Logger.error(`ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
-            throw err;
+            Logger.error(`ERROR IN MODEL INIT (${this.modelId}):`, err);
+            // In constructor, we throw. In init (hot-reload), we just log and keep old state if possible.
+            if (!this.client) throw err;
+        }
+    }
+
+    public dispose() {
+        if (this.unregisterConfigWatcher) {
+            this.unregisterConfigWatcher();
         }
     }
 

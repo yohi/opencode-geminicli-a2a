@@ -219,8 +219,11 @@ export class ServerManager {
         this.cleanupRegistered = true;
 
         const cleanupAndExit = (signal?: NodeJS.Signals) => {
+            Logger.info(`[ServerManager] Received ${signal || 'exit'}, cleaning up...`);
             this.dispose();
             if (signal) {
+                // Remove listener to avoid infinite recursion then kill itself
+                process.removeAllListeners(signal);
                 process.kill(process.pid, signal);
             }
         };
@@ -228,15 +231,29 @@ export class ServerManager {
         const exitHandler = () => this.dispose();
         const termHandler = () => cleanupAndExit('SIGTERM');
         const intHandler = () => cleanupAndExit('SIGINT');
+        const exceptionHandler = (err: Error) => {
+            Logger.error('[ServerManager] Uncaught Exception:', err);
+            this.dispose();
+            process.exit(1);
+        };
+        const rejectionHandler = (reason: any) => {
+            Logger.error('[ServerManager] Unhandled Rejection:', reason);
+            this.dispose();
+            process.exit(1);
+        };
 
         process.once('exit', exitHandler);
         process.once('SIGTERM', termHandler);
         process.once('SIGINT', intHandler);
+        process.on('uncaughtException', exceptionHandler);
+        process.on('unhandledRejection', rejectionHandler);
 
         this.cleanupHandlers.push(
             { event: 'exit', handler: exitHandler },
             { event: 'SIGTERM', handler: termHandler },
-            { event: 'SIGINT', handler: intHandler }
+            { event: 'SIGINT', handler: intHandler },
+            { event: 'uncaughtException', handler: exceptionHandler },
+            { event: 'unhandledRejection', handler: rejectionHandler }
         );
     }
 

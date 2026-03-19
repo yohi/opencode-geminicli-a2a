@@ -22,18 +22,23 @@ describe('mapper', () => {
                 { role: 'user', content: [{ type: 'text', text: 'Old message' }] },
                 { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
             ];
+            // When contextId is present, CRITICAL INSTRUCTION is NOT injected.
+            // But [USER]\n prefix IS injected for each user message.
             const req = mapPromptToA2AJsonRpcRequest(prompt as any, { contextId: 'ctx', processedMessagesCount: 1 });
-            expect(req.params.message.parts).toHaveLength(1);
-            expect((req.params.message.parts[0] as any).text).toBe('Hello');
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toBe('[USER]\n');
+            expect((req.params.message.parts[1] as any).text).toBe('Hello');
         });
 
         it('should handle system message', () => {
             const prompt = [
                 { role: 'system', content: 'You are a helpful assistant.' }
             ];
+            // No contextId, so CRITICAL INSTRUCTION IS injected.
             const req = mapPromptToA2AJsonRpcRequest(prompt as any);
-            expect(req.params.message.parts).toHaveLength(1);
-            expect((req.params.message.parts[0] as any).text).toBe('You are a helpful assistant.');
+            expect(req.params.message.parts).toHaveLength(2);
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            expect((req.params.message.parts[1] as any).text).toBe('[SYSTEM]\nYou are a helpful assistant.\n');
         });
 
         it('should include contextId when provided via options', () => {
@@ -194,7 +199,7 @@ describe('mapper', () => {
             if (toolCall && toolCall.type === 'tool-call') {
                 expect(toolCall.toolCallId).toBe('call-123');
                 expect(toolCall.toolName).toBe('getWeather');
-                expect(toolCall.args).toBe(JSON.stringify({ location: 'Tokyo', description: 'Execute tool via A2A' }));
+                expect(toolCall.args).toBe(JSON.stringify({ location: 'Tokyo', description: 'Execute getWeather via A2A (call-123)' }));
             } else {
                 // If not emitted because of buffering, we might need to adjust mapResult logic
                 // for the stateless wrapper to always emit if final is not present?
@@ -920,7 +925,7 @@ describe('mapper', () => {
                 expect(toolCall).toBeDefined();
                 if (toolCall && toolCall.type === 'tool-call') {
                     expect(toolCall.toolName).toBe('search');
-                    expect(toolCall.args).toBe(JSON.stringify({ q: 'AB', description: 'Execute tool via A2A' }));
+                    expect(toolCall.args).toBe(JSON.stringify({ q: 'AB', description: 'Execute search via A2A (c1)' }));
                 }
             });
 
