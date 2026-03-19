@@ -56,7 +56,7 @@ const ExternalConfigSchema = z.object({
     port: z.number().optional(),
     token: z.string().optional(),
     protocol: z.enum(['http', 'https']).optional(),
-    agents: z.array(z.any()).optional(),
+    agents: z.array(AgentEndpointSchema).optional(),
     toolMapping: z.record(z.string()).optional(),
     internalTools: z.array(z.string()).optional(),
 }).passthrough();

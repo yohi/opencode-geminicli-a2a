@@ -92,9 +92,9 @@ export class OpenCodeGeminiA2AProvider {
                 ...modelConfig?.options?.generationConfig,
             };
 
-            this.client = new A2AClient(finalConfig);
-            this.sessionStore = this.options?.sessionStore ?? this.sessionStore ?? new InMemorySessionStore();
-            this.fallbackConfig = resolveFallbackConfig(this.options?.fallback);
+            const newClient = new A2AClient(finalConfig);
+            const newSessionStore = this.options?.sessionStore ?? this.sessionStore ?? new InMemorySessionStore();
+            const newFallbackConfig = resolveFallbackConfig(this.options?.fallback);
 
             const defaultToolMapping: Record<string, string> = {
                 'docker-mcp-gateway_read_file': 'read',
@@ -109,18 +109,25 @@ export class OpenCodeGeminiA2AProvider {
                 ...(finalConfig.toolMapping || {})
             };
 
-            this.resolvedOptions = {
+            const newResolvedOptions: OpenCodeProviderOptions = {
                 ...this.options,
                 host: finalConfig.host,
                 port: finalConfig.port,
                 token: finalConfig.token,
                 protocol: finalConfig.protocol,
                 generationConfig: defaultGenerationConfig,
-                sessionStore: this.sessionStore,
-                fallback: this.fallbackConfig,
+                sessionStore: newSessionStore,
+                fallback: newFallbackConfig,
                 toolMapping: defaultToolMapping,
                 internalTools: finalConfig.internalTools,
             };
+
+            // Commit all changes at once
+            this.client = newClient;
+            this.sessionStore = newSessionStore;
+            this.fallbackConfig = newFallbackConfig;
+            this.resolvedOptions = newResolvedOptions;
+
         } catch (err) {
             Logger.error(`ERROR IN MODEL INIT (${this.modelId}):`, err);
             // In constructor, we throw. In init (hot-reload), we just log and keep old state if possible.

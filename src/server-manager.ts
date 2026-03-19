@@ -287,10 +287,16 @@ export class ServerManager {
         }
         this.cleanupHandlers = [];
         
-        // Also cleanup ConfigManager if it was watching
-        import('./config').then(({ ConfigManager }) => {
+        // Use a safe way to dispose ConfigManager if it was loaded.
+        // We avoid top-level static import to prevent circular dependency issues
+        // between config.ts and server-manager.ts (though config.ts imports server-manager for types only).
+        // Since this is cleanup, we attempt a required load if not already in cache.
+        try {
+            const { ConfigManager } = require('./config');
             ConfigManager.getInstance().dispose();
-        }).catch(() => {});
+        } catch (err) {
+            // Ignore if config cannot be loaded or already disposed
+        }
     }
 
     /** テスト用: インスタンスをリセットする */
