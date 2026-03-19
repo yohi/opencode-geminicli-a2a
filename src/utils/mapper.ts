@@ -21,8 +21,7 @@ export const DEFAULT_INTERNAL_TOOLS = [
     'save_memory',
     'cli_help',
     'codebase_investigator',
-    'generalist',
-    'run_shell_command'
+    'generalist'
 ];
 
 export interface ExtendedFinishPart {
@@ -152,18 +151,17 @@ export function mapPromptToA2AJsonRpcRequest(
 
     let newMessages = prompt;
     if (contextId && options.processedMessagesCount !== undefined && options.processedMessagesCount > 0) {
-        newMessages = prompt.slice(options.processedMessagesCount).filter(m => m.role !== 'assistant');
-        if (newMessages.length === 0) {
-            newMessages = prompt;
-        }
+        newMessages = prompt.slice(options.processedMessagesCount);
     }
 
     let parts: A2AJsonRpcRequest['params']['message']['parts'] = [];
 
-    parts.push({
-        kind: 'text',
-        text: `[SYSTEM]\nCRITICAL INSTRUCTION: When calling tools, you MUST use their exact full names as they appear in your 'Available tools' list. Do NOT use short aliases or guess prefixes! If a tool is listed WITH a prefix (e.g., 'docker-mcp-gateway_read_file'), you MUST include it. If it is listed WITHOUT a prefix (e.g., 'read'), you MUST NOT add one. The server will reject the tool call with an 'invalid' error if the name does not match exactly.\n`
-    });
+    if (!contextId) {
+        parts.push({
+            kind: 'text',
+            text: `[SYSTEM]\nCRITICAL INSTRUCTION: When calling tools, you MUST use their exact full names as they appear in your 'Available tools' list. Do NOT use short aliases or guess prefixes! If a tool is listed WITH a prefix (e.g., 'docker-mcp-gateway_read_file'), you MUST include it. If it is listed WITHOUT a prefix (e.g., 'read'), you MUST NOT add one. The server will reject the tool call with an 'invalid' error if the name does not match exactly.\n`
+        });
+    }
 
     for (const msg of newMessages) {
         if (msg.role === 'system') {
@@ -583,9 +581,8 @@ export class A2AStreamMapper {
                             if (args.cmd && !args.command) args.command = args.cmd;
 
                             if ((toolName === 'bash' || toolName === 'run_shell_command') && typeof args.command === 'string') {
-                                // Match both 'task(' and 'task '
-                                const trimmedCmd = args.command.trim();
-                                if (trimmedCmd.startsWith('task(') || trimmedCmd.startsWith('task ')) {
+                                // Block pseudocode calls like task(subject="foo") but allow legitimate shell commands
+                                if (/^\s*task\s*\(/i.test(args.command)) {
                                     args.command = `echo '[opencode-geminicli-a2a] Error: You cannot execute task() pseudocode inside a bash shell. You MUST use the dedicated "task" tool.'`;
                                 }
                             }
@@ -605,6 +602,8 @@ export class A2AStreamMapper {
                             'run_command': 'bash',
                             'exec_command': 'bash',
                             'shell': 'bash',
+                            // Normalize 'sequentialthinking' to its full MCP server/tool name format
+                            // to ensure correct routing in A2A server.
                             'sequentialthinking': 'sequential-thinking_sequentialthinking'
                         };
 
@@ -723,7 +722,7 @@ export class A2AStreamMapper {
                     
                     // Add description to satisfy OpenCode strict schemas
                     if (toolInfo.args && typeof toolInfo.args === 'object' && !('description' in (toolInfo.args as any))) {
-                        (toolInfo.args as any).description = "Execute tool via A2A";
+                        (toolInfo.args as any).description = `Execute ${originalToolName} via A2A (${toolCallId})`;
                     }
 
                     if (isInternalToolConfirmation) {

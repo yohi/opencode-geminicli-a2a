@@ -5,6 +5,9 @@ import type {
     LanguageModelV1FunctionToolCall,
     LanguageModelV1FinishReason,
     LanguageModelV1StreamResult,
+    LanguageModelV1CallResult,
+    LanguageModelV1TextPart,
+    LanguageModelV1ToolCallPart,
 } from '@ai-sdk/provider';
 import { resolveConfig, type OpenCodeProviderOptions } from './config';
 import { A2AClient } from './a2a-client';
@@ -233,17 +236,25 @@ export class OpenCodeGeminiA2AProvider {
     ): Promise<LanguageModelV1StreamResult> {
         if (!this.fallbackConfig) throw originalError;
 
+        const fallbackCount = (callOptions as any)._fallbackCount ?? 0;
+        if (fallbackCount >= 3) {
+            throw originalError;
+        }
+
         const nextModelId = getNextFallbackModel(this.modelId, this.fallbackConfig);
         if (!nextModelId) {
             throw originalError;
         }
 
         if (process.env['DEBUG_OPENCODE']) {
-            console.warn(`[opencode-geminicli-a2a] Falling back from ${this.modelId} to ${nextModelId}`);
+            console.warn(`[opencode-geminicli-a2a] Falling back from ${this.modelId} to ${nextModelId} (level ${fallbackCount + 1})`);
         }
 
         const fallbackProvider = new OpenCodeGeminiA2AProvider(nextModelId, this.options);
-        return fallbackProvider.doStream(callOptions);
+        return fallbackProvider.doStream({
+            ...callOptions,
+            _fallbackCount: fallbackCount + 1
+        } as any);
     }
 
     private async _doStreamInternal(options: LanguageModelV1CallOptions) {
@@ -274,23 +285,10 @@ export class OpenCodeGeminiA2AProvider {
             throw error;
         }
 
-        try {
-            const keys = Object.keys(options);
-            Logger.info(`[Debug] options keys: ${keys.join(', ')}`);
-        } catch(e) {}
-
         const rawToolsInput = options.mode?.type === 'regular' ? options.mode.tools : (options as any).tools;
         const clientTools = Array.isArray(rawToolsInput)
             ? rawToolsInput.map((t: any) => t.name || t.id || t.function?.name || t.type).filter(Boolean) as string[]
             : (rawToolsInput && typeof rawToolsInput === 'object' ? Object.keys(rawToolsInput) : undefined);
-
-        if (clientTools) {
-            Logger.info(`[Debug] Parsed clientTools (${clientTools.length}): ${clientTools.slice(0, 5).join(', ')} ...`);
-            try {
-                const bashDef = rawToolsInput?.['bash'] ?? rawToolsInput?.find?.((t: any) => t.name === 'bash');
-                require('fs').writeFileSync('/tmp/bash_schema.json', JSON.stringify(bashDef, null, 2));
-            } catch(e) {}
-        }
 
         const mapper = new A2AStreamMapper({
             toolMapping: this.options?.toolMapping,
@@ -310,13 +308,13 @@ export class OpenCodeGeminiA2AProvider {
                 const MAX_TOOL_CONFIRM = 1;           // tool-call-confirmation 用 (invalid ツールのリトライループ防止)
 
                 let firstResponse: any = { stream: responseStream, headers: headers || {} };
+                let lastFinishPart: ExtendedFinishPart | undefined;
 
                 try {
                     controller.enqueue({ type: 'stream-start' });
 
                     while (autoConfirmCount < MAX_AUTO_CONFIRM) {
                         let hasFinished = false;
-                        let lastFinishPart: ExtendedFinishPart | undefined;
                         let response = firstResponse || await this.client.chatStream({ request: currentRequest, abortSignal: options.abortSignal });
                         firstResponse = undefined;
 
@@ -383,8 +381,8 @@ export class OpenCodeGeminiA2AProvider {
                                                 toolCallId: part.toolCallId,
                                                 toolName: part.toolName,
                                                 args: part.args,
-                                                input: part.args,
-                                            } as any);
+                                                input: part.args, // V3 compatible
+                                            } as LanguageModelV1StreamPart);
                                             break;
                                         }
                                         case 'file': {
@@ -439,15 +437,6 @@ export class OpenCodeGeminiA2AProvider {
                             return;
                         }
 
-                        if (sessionId) {
-                            await this.sessionStore.update(sessionId, {
-                                contextId: mapper.contextId || session.contextId,
-                                taskId: mapper.taskId || session.taskId,
-                                lastFinishReason: mapper.lastFinishReason || lastFinishPart?.finishReason,
-                                processedMessagesCount: options.prompt.length
-                            });
-                        }
-
                         if (isAutoConfirmTarget(lastFinishPart) && mapper.taskId) {
                             const isToolConfirm = lastFinishPart?.coderAgentKind === 'tool-call-confirmation';
 
@@ -480,6 +469,16 @@ export class OpenCodeGeminiA2AProvider {
                         }
                         break;
                     }
+
+                    if (sessionId) {
+                        await this.sessionStore.update(sessionId, {
+                            contextId: mapper.contextId || session.contextId,
+                            taskId: mapper.taskId || session.taskId,
+                            lastFinishReason: mapper.lastFinishReason || lastFinishPart?.finishReason,
+                            processedMessagesCount: options.prompt.length
+                        });
+                    }
+
                     if (activeTextId !== undefined) controller.enqueue({ type: 'text-end', id: activeTextId });
                     controller.close();
                 } catch (error) {
@@ -498,17 +497,16 @@ export class OpenCodeGeminiA2AProvider {
         };
     }
 
-    async doGenerate(options: LanguageModelV1CallOptions) {
+    async doGenerate(options: LanguageModelV1CallOptions): Promise<LanguageModelV1CallResult> {
         const { stream: sdkStream, rawCall, rawResponse, request, warnings } = await this.doStream(options);
         const reader = sdkStream.getReader();
         let text = '';
         let reasoning = '';
         const toolCalls: LanguageModelV1FunctionToolCall[] = [];
-        const content: any[] = [];
-        const files: Array<{ data: string | Uint8Array; mimeType: string }> = [];
-        let finishReason: any = 'unknown';
+        const content: (LanguageModelV1TextPart | LanguageModelV1ToolCallPart)[] = [];
+        let finishReason: LanguageModelV1FinishReason = 'other';
         const usage = { promptTokens: 0, completionTokens: 0 };
-        let providerMetadata: Record<string, any> | undefined;
+        let providerMetadata: Record<string, any> = {};
         let inputRequired: boolean | undefined;
         let rawState: string | undefined;
 
@@ -520,17 +518,18 @@ export class OpenCodeGeminiA2AProvider {
                 switch (value.type) {
                     case 'text-delta':
                         text += value.delta;
-                        if (content.length > 0 && content[content.length - 1].type === 'text') content[content.length - 1].text += value.delta;
-                        else content.push({ type: 'text', text: value.delta });
+                        if (content.length > 0 && content[content.length - 1].type === 'text') {
+                            (content[content.length - 1] as LanguageModelV1TextPart).text += value.delta;
+                        } else {
+                            content.push({ type: 'text', text: value.delta });
+                        }
                         break;
                     case 'reasoning-delta':
                         reasoning += value.delta;
-                        if (content.length > 0 && content[content.length - 1].type === 'reasoning') content[content.length - 1].text += value.delta;
-                        else content.push({ type: 'reasoning', text: value.delta });
                         break;
                     case 'tool-call':
-                        toolCalls.push({ toolCallType: 'function', toolCallId: value.toolCallId, toolName: value.toolName, args: value.input });
-                        content.push({ type: 'tool-call', toolCallId: value.toolCallId, toolName: value.toolName, input: value.input });
+                        toolCalls.push({ toolCallType: 'function', toolCallId: value.toolCallId, toolName: value.toolName, args: JSON.stringify(value.args) });
+                        content.push({ type: 'tool-call', toolCallId: value.toolCallId, toolName: value.toolName, args: value.args });
                         break;
                     case 'finish':
                         finishReason = value.finishReason;
@@ -538,41 +537,33 @@ export class OpenCodeGeminiA2AProvider {
                             usage.promptTokens = value.usage.promptTokens ?? 0;
                             usage.completionTokens = value.usage.completionTokens ?? 0;
                         }
-                        if ('providerMetadata' in value) providerMetadata = (value as any).providerMetadata;
+                        if (value.providerMetadata) {
+                            providerMetadata = { ...providerMetadata, ...value.providerMetadata };
+                        }
+                        // V3 compatibility fields often passed in finish part by this provider
                         if ('inputRequired' in value) inputRequired = (value as any).inputRequired;
                         if ('rawState' in value) rawState = (value as any).rawState;
                         break;
-                    case 'file': {
-                        const filePart = value as import('./utils/mapper').FileStreamPart;
-                        const mediaType = filePart.mediaType || filePart.mimeType;
-                        files.push({ data: filePart.data, mimeType: mediaType });
-                        content.push({ type: 'file', data: filePart.data, mediaType });
-                        break;
-                    }
                 }
             }
         } finally {
             reader.releaseLock();
         }
 
-        const finalFinishReasonV3 = (typeof finishReason === 'string')
-            ? { unified: (finishReason === 'unknown' ? 'stop' : finishReason) as any, raw: rawState || finishReason }
-            : finishReason;
+        if (inputRequired !== undefined) providerMetadata.inputRequired = inputRequired;
+        if (rawState !== undefined) providerMetadata.rawState = rawState;
 
         return {
             text: text.length > 0 ? text : undefined,
             reasoning: reasoning.length > 0 ? reasoning : undefined,
             toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-            content: content.length > 0 ? content : undefined,
-            files: files.length > 0 ? files : undefined,
-            finishReason: (typeof finishReason === 'object' ? finishReason.unified : finishReason),
-            finishReasonV3: finalFinishReasonV3,
+            finishReason,
             usage,
-            usageV3: { inputTokens: { total: usage.promptTokens }, outputTokens: { total: usage.completionTokens } },
-            rawCall, rawResponse, request, warnings,
-            ...(providerMetadata !== undefined ? { providerMetadata } : {}),
-            ...(inputRequired !== undefined ? { inputRequired } : {}),
-            ...(rawState !== undefined ? { rawState } : {})
-        } as any;
+            rawCall,
+            rawResponse,
+            request,
+            warnings,
+            providerMetadata: Object.keys(providerMetadata).length > 0 ? providerMetadata : undefined,
+        };
     }
 }

@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapPromptToA2AJsonRpcRequest, A2AStreamMapper } from './mapper';
-import type { LanguageModelV1Prompt } from '@ai-sdk/provider';
+import { A2AStreamMapper } from './mapper';
 import type { A2AResponseResult } from '../schemas';
 
 describe('mapper tool name mapping', () => {

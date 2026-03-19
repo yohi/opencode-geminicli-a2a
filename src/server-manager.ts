@@ -142,7 +142,7 @@ export class ServerManager {
             CODER_AGENT_PORT: String(port),
             CODER_AGENT_HOST: host,
             A2A_GEMINI_MODEL: modelId,
-            GEMINI_AUTO_APPROVE: 'true',
+            GEMINI_AUTO_APPROVE: 'false',
             ...config.env,
         };
 
