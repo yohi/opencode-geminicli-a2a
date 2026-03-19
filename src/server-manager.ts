@@ -219,24 +219,60 @@ export class ServerManager {
         this.cleanupRegistered = true;
 
         const cleanupAndExit = (signal?: NodeJS.Signals) => {
-            this.dispose();
+            Logger.info(`[ServerManager] Received ${signal || 'exit'}, cleaning up...`);
+            try {
+                this.dispose();
+            } catch (err) {
+                Logger.error('[ServerManager] Error during dispose in signal handler:', err);
+            }
             if (signal) {
+                // Remove this handler to avoid infinite recursion then kill itself
+                const h = this.cleanupHandlers.find(ch => ch.event === signal);
+                if (h) process.off(signal as any, h.handler);
                 process.kill(process.pid, signal);
             }
         };
 
-        const exitHandler = () => this.dispose();
+        const exitHandler = () => {
+            try {
+                this.dispose();
+            } catch (err) {
+                Logger.error('[ServerManager] Error during dispose in exit handler:', err);
+            }
+        };
         const termHandler = () => cleanupAndExit('SIGTERM');
         const intHandler = () => cleanupAndExit('SIGINT');
+        const exceptionHandler = (err: Error) => {
+            Logger.error('[ServerManager] Uncaught Exception:', err);
+            try {
+                this.dispose();
+            } catch (disposeErr) {
+                Logger.error('[ServerManager] Error during dispose in exception handler:', disposeErr);
+            }
+            process.exit(1);
+        };
+        const rejectionHandler = (reason: any) => {
+            Logger.error('[ServerManager] Unhandled Rejection:', reason);
+            try {
+                this.dispose();
+            } catch (disposeErr) {
+                Logger.error('[ServerManager] Error during dispose in rejection handler:', disposeErr);
+            }
+            process.exit(1);
+        };
 
         process.once('exit', exitHandler);
         process.once('SIGTERM', termHandler);
         process.once('SIGINT', intHandler);
+        process.once('uncaughtException', exceptionHandler);
+        process.once('unhandledRejection', rejectionHandler);
 
         this.cleanupHandlers.push(
             { event: 'exit', handler: exitHandler },
             { event: 'SIGTERM', handler: termHandler },
-            { event: 'SIGINT', handler: intHandler }
+            { event: 'SIGINT', handler: intHandler },
+            { event: 'uncaughtException', handler: exceptionHandler },
+            { event: 'unhandledRejection', handler: rejectionHandler }
         );
     }
 
@@ -250,6 +286,17 @@ export class ServerManager {
             process.removeListener(event, handler);
         }
         this.cleanupHandlers = [];
+        
+        // Use a safe way to dispose ConfigManager if it was loaded.
+        // We avoid top-level static import to prevent circular dependency issues
+        // between config.ts and server-manager.ts (though config.ts imports server-manager for types only).
+        // Since this is cleanup, we attempt a required load if not already in cache.
+        try {
+            const { ConfigManager } = require('./config');
+            ConfigManager.getInstance().dispose();
+        } catch (err) {
+            // Ignore if config cannot be loaded or already disposed
+        }
     }
 
     /** テスト用: インスタンスをリセットする */

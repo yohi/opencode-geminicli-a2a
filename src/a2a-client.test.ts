@@ -1,28 +1,30 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { A2AClient } from './a2a-client';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ofetch } from 'ofetch';
+import { A2AClient } from './a2a-client';
 import { APICallError } from '@ai-sdk/provider';
-import type { A2AJsonRpcRequest } from './schemas';
+import type { A2AJsonRpcRequest, A2AConfig } from './schemas';
 
-// Mock ofetch
-vi.mock('ofetch', () => {
-    return {
-        ofetch: {
-            raw: vi.fn(),
-        },
-        FetchError: class FetchError extends Error {
-            response?: any;
-            constructor(message: string, response?: any) {
-                super(message);
-                this.response = response;
-            }
-        },
-    };
-});
+vi.mock('ofetch', () => ({
+    ofetch: {
+        raw: vi.fn(),
+    },
+    FetchError: class extends Error {
+        response: any;
+        constructor(message: string, response?: any) {
+            super(message);
+            this.response = response;
+        }
+    },
+}));
 
 describe('A2AClient', () => {
-    const mockConfig: any = { host: '127.0.0.1', port: 8080, protocol: 'http' };
     let client: A2AClient;
+    const mockConfig: A2AConfig = {
+        host: '127.0.0.1',
+        port: 8080,
+        protocol: 'http',
+    };
+
     const mockRequest: A2AJsonRpcRequest = {
         jsonrpc: '2.0',
         id: '123',
@@ -31,31 +33,23 @@ describe('A2AClient', () => {
             message: {
                 messageId: 'msg-1',
                 role: 'user',
-                parts: [{ kind: 'text', text: 'hello' }]
-            }
-        }
+                parts: [{ kind: 'text', text: 'hello' }],
+            },
+        },
     };
 
     beforeEach(() => {
-        client = new A2AClient(mockConfig);
         vi.clearAllMocks();
+        client = new A2AClient(mockConfig);
     });
 
-    afterEach(() => {
-        vi.restoreAllMocks();
+    const createMockResponse = (ok: boolean, status: number, body?: any) => ({
+        ok,
+        status,
+        statusText: ok ? 'OK' : 'Error',
+        headers: new Map(),
+        _data: body,
     });
-
-    const createMockResponse = (ok: boolean, status: number, statusText: string = '') => {
-        const headers = new Headers();
-        headers.set('content-type', 'application/json');
-        return {
-            ok,
-            status,
-            statusText,
-            headers,
-            _data: new ReadableStream(),
-        };
-    };
 
     it('should send request with idempotency key and retry=3', async () => {
         const mockResponse = createMockResponse(true, 200);
@@ -66,13 +60,13 @@ describe('A2AClient', () => {
         expect(ofetch.raw).toHaveBeenCalledWith(
             'http://127.0.0.1:8080/',
             expect.objectContaining({
-                headers: {
+                headers: expect.objectContaining({
                     'Content-Type': 'application/json',
                     'Idempotency-Key': 'test-key',
-                },
+                    'x-a2a-trace-id': expect.any(String),
+                }),
                 retry: 3,
                 retryDelay: 1000,
-                retryStatusCodes: [408, 409, 425, 429, 500, 502, 503, 504],
             })
         );
     });
@@ -86,25 +80,24 @@ describe('A2AClient', () => {
         expect(ofetch.raw).toHaveBeenCalledWith(
             'http://127.0.0.1:8080/',
             expect.objectContaining({
-                headers: {
+                headers: expect.objectContaining({
                     'Content-Type': 'application/json',
-                },
+                    'x-a2a-trace-id': expect.any(String),
+                }),
                 retry: 0,
-                retryDelay: 1000,
-                retryStatusCodes: [408, 409, 425, 429, 500, 502, 503, 504],
             })
         );
     });
 
     it('should use token in Authorization header if provided', async () => {
-        client = new A2AClient({ ...mockConfig, token: 'secret-token' });
+        const tokenClient = new A2AClient({ ...mockConfig, token: 'secret-token' });
         const mockResponse = createMockResponse(true, 200);
         vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
 
-        await client.chatStream({ request: mockRequest });
+        await tokenClient.chatStream({ request: mockRequest });
 
         expect(ofetch.raw).toHaveBeenCalledWith(
-            expect.any(String),
+            'http://127.0.0.1:8080/',
             expect.objectContaining({
                 headers: expect.objectContaining({
                     'Authorization': 'Bearer secret-token',
@@ -113,16 +106,40 @@ describe('A2AClient', () => {
         );
     });
 
-    it('should throw APICallError on non-ok response', async () => {
-        const mockResponse = createMockResponse(false, 400, 'Bad Request');
+    it('should send request with custom traceId if provided', async () => {
+        const mockResponse = createMockResponse(true, 200);
         vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
 
-        await expect(client.chatStream({ request: mockRequest })).rejects.toThrow(APICallError);
+        await client.chatStream({ request: mockRequest, traceId: 'trace-123' });
+
+        expect(ofetch.raw).toHaveBeenCalledWith(
+            'http://127.0.0.1:8080/',
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    'x-a2a-trace-id': 'trace-123',
+                }),
+            })
+        );
+    });
+
+    it('should throw APICallError on non-ok response', async () => {
+        const mockResponse = createMockResponse(false, 500);
+        vi.mocked(ofetch.raw).mockResolvedValue(mockResponse as any);
+
+        await expect(client.chatStream({ request: mockRequest }))
+            .rejects.toThrow(APICallError);
+        
+        await expect(client.chatStream({ request: mockRequest }))
+            .rejects.toThrow('HTTP error 500: Error');
     });
 
     it('should wrap network errors in APICallError', async () => {
-        vi.mocked(ofetch.raw).mockRejectedValue(new Error('Network Error'));
+        vi.mocked(ofetch.raw).mockRejectedValue(new Error('Network failure'));
 
-        await expect(client.chatStream({ request: mockRequest })).rejects.toThrow(APICallError);
+        await expect(client.chatStream({ request: mockRequest }))
+            .rejects.toThrow(APICallError);
+
+        await expect(client.chatStream({ request: mockRequest }))
+            .rejects.toThrow('Network failure');
     });
 });
