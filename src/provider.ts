@@ -355,7 +355,7 @@ export class OpenCodeGeminiA2AProvider {
 
                     while (autoConfirmCount < MAX_AUTO_CONFIRM) {
                         let hasFinished = false;
-                        let response = firstResponse || await this.client.chatStream({ request: currentRequest, abortSignal: options.abortSignal });
+                        let response = firstResponse || await this.client!.chatStream({ request: currentRequest, abortSignal: options.abortSignal });
                         firstResponse = undefined;
 
                         mapper.startNewTurn();
