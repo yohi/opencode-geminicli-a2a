@@ -847,10 +847,6 @@ export class A2AStreamMapper {
                             };
                         }
                     } else if (isInvalidToolName || isUnknownToClient) {
-                                description: `Duplicate tool call suppressed` 
-                            };
-                        }
-                    } else if (isInvalidToolName || isUnknownToClient) {
                         Logger.info(`[Workaround] Intercepted hallucinated/invalid tool call '${toolInfo.toolName}' (mapped to '${originalToolName}'). Rewriting to a safe 'bash' call.`);
                         
                         const badName = originalToolName;
@@ -962,9 +958,7 @@ export class A2AStreamMapper {
                 };
 
                 let coderAgentKindValue: string | undefined = undefined;
-                if (hasInternalTools && !isInternalToolConfirmation) {
-                    coderAgentKindValue = 'internal-tool-call';
-                } else if (this._currentCoderAgentKind) {
+                if (this._currentCoderAgentKind) {
                     coderAgentKindValue = this._currentCoderAgentKind;
                 } else if (isInternalToolConfirmation) {
                     coderAgentKindValue = 'tool-call-confirmation';

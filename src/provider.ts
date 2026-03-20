@@ -175,7 +175,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
         return resolveConfig(this.options);
     }
 
-<<<<<<< HEAD
     async doStream(options: LanguageModelV2CallOptions): Promise<{
         stream: ReadableStream<LanguageModelV2StreamPart>;
         request?: { body?: string };
@@ -192,29 +191,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
             session.taskId = undefined;
             if (sessionId && sessionId !== 'undefined') {
                 await this.sessionStore.update(sessionId, session);
-=======
-        // Sticky fallback check
-        const opencodeMetadata = options.providerMetadata?.opencode;
-        let sessionId = opencodeMetadata?.sessionId ? String(opencodeMetadata.sessionId).trim() : undefined;
-        if (sessionId && !(options as any)._isFallbackInstance) {
-            const session = await this.sessionStore.get(sessionId);
-            if (session?.failedModelIds?.includes(this.modelId)) {
-                // The originally requested model failed previously in this session.
-                // We should preemptively trigger the fallback logic instead of waiting for a quota error.
-                Logger.info(`[opencode-geminicli-a2a] Preemptively falling back from ${this.modelId} as it failed previously in this session.`);
-                const fakeError = new Error("Sticky Quota Fallback");
-                (fakeError as any).status = 429;
-                return this._attemptFallback(options, fakeError);
-            }
-        }
-
-        let result: LanguageModelV1StreamResult;
-        try {
-            result = await this._doStreamInternal(options);
-        } catch (error) {
-            if (this.fallbackConfig && isQuotaError(error, this.fallbackConfig)) {
-                return this._attemptFallback(options, error);
->>>>>>> 7a73656 (fix(provider): resolve TypeError chunk.delta.length during loop interrupt)
             }
         }
         
@@ -376,7 +352,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                 let activeReasoningId: string | undefined;
                 let isControllerClosed = false;
 
-<<<<<<< HEAD
                 const safeEnqueue = (part: LanguageModelV2StreamPart) => {
                     if (!isControllerClosed) {
                         try {
@@ -384,31 +359,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         } catch (e) {
                             Logger.warn('[Provider] controller closed prematurely');
                             isControllerClosed = true;
-=======
-                        if (value?.type === 'stream-start') {
-                            if (streamStartEmitted) continue;
-                            streamStartEmitted = true;
-                        }
-
-                        controller.enqueue(value);
-                        return;
-                    } catch (error) {
-                        if (!fallbackAttempted && isQuotaError(error, fallbackConfig)) {
-                            fallbackAttempted = true;
-                            Logger.info(`[opencode-geminicli-a2a] Stream error detected. Attempting fallback...`);
-                            try {
-                                const fallbackResult = await self._attemptFallback(options, error);
-                                currentReader.releaseLock();
-                                currentReader = fallbackResult.stream.getReader();
-                                continue;
-                            } catch (fallbackError) {
-                                controller.error(fallbackError);
-                                return;
-                            }
-                        } else {
-                            controller.error(error);
-                            return;
->>>>>>> 7a73656 (fix(provider): resolve TypeError chunk.delta.length during loop interrupt)
                         }
                     }
                 };
@@ -462,7 +412,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     throw new Error('EXECUTION_TIMEOUT');
                                 }
 
-<<<<<<< HEAD
                                 let hasFinishedInThisTurn = false;
                                 const combinedSignal = options.abortSignal 
                                     ? anySignal([options.abortSignal, timeoutAbortController.signal])
@@ -529,144 +478,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                                 default:
                                                     safeEnqueue(part as any);
                                                     break;
-=======
-        Logger.info(`[opencode-geminicli-a2a] Falling back from ${this.modelId} to ${nextModelId} (level ${fallbackCount + 1})`);
-
-        // Save fallback model to session for sticky fallback on subsequent turns
-        const opencodeMetadata = callOptions.providerMetadata?.opencode;
-        const sessionId = opencodeMetadata?.sessionId ? String(opencodeMetadata.sessionId).trim() : undefined;
-        if (sessionId) {
-            const session = await this.sessionStore.get(sessionId) || {};
-            const failedIds = session.failedModelIds || [];
-            if (!failedIds.includes(this.modelId)) {
-                failedIds.push(this.modelId);
-                await this.sessionStore.update(sessionId, { failedModelIds: failedIds });
-            }
-        }
-
-        const fallbackProvider = new OpenCodeGeminiA2AProvider(nextModelId, {
-            ...this.options,
-            hotReload: false, // フォールバックインスタンスはホットリロードを監視しない
-        });
-        return fallbackProvider.doStream({
-            ...callOptions,
-            _fallbackCount: fallbackCount + 1,
-            _isFallbackInstance: true
-        } as any);
-    }
-
-    private async _doStreamInternal(options: LanguageModelV1CallOptions) {
-        let sessionId: string | undefined = undefined;
-        const opencodeMetadata = options.providerMetadata?.opencode;
-        if (opencodeMetadata?.sessionId) sessionId = String(opencodeMetadata.sessionId).trim();
-        if (!sessionId) {
-            if (!this.autoGeneratedSessionId) {
-                this.autoGeneratedSessionId = `cli-session-auto-${crypto.randomUUID()}`;
-                Logger.debug(`[Provider] Generated stable auto-session ID for instance: ${this.autoGeneratedSessionId}`);
-            }
-            sessionId = this.autoGeneratedSessionId;
-        }
-
-        const session = await this.sessionStore.get(sessionId) || {};
-        if (!session.fallbackCounters) session.fallbackCounters = {};
-        if (!session.dynamicToolMapping) session.dynamicToolMapping = {};
-        if (opencodeMetadata?.resetContext === true && sessionId) {
-            await this.sessionStore.resetSession(sessionId);
-            delete session.contextId;
-            delete session.taskId;
-            delete session.lastFinishReason;
-            delete session.inputRequired;
-            delete session.rawState;
-            session.fallbackCounters = {};
-            session.dynamicToolMapping = {};
-        }
-
-        const request = this.createA2ARequest(options, session);
-        const idempotencyKey = (options.providerMetadata?.opencode?.idempotencyKey as string) || undefined;
-
-        let responseStream;
-        let headers;
-        try {
-            const response = await this.client!.chatStream({ request, idempotencyKey, abortSignal: options.abortSignal });
-            responseStream = response.stream;
-            headers = response.headers;
-        } catch (error) {
-            if (sessionId) await this.sessionStore.update(sessionId, { lastFinishReason: undefined });
-            throw error;
-        }
-
-        const rawToolsInput = options.mode?.type === 'regular' ? options.mode.tools : (options as any).tools;
-        const clientTools = Array.isArray(rawToolsInput)
-            ? rawToolsInput.map((t: any) => t.name || t.id || t.function?.name || t.type).filter(Boolean) as string[]
-            : (rawToolsInput && typeof rawToolsInput === 'object' ? Object.keys(rawToolsInput) : undefined);
-
-        const inputPrompt = options.prompt || [];
-        const lastMessage = inputPrompt[inputPrompt.length - 1];
-        // OpenCode が新しいユーザープロンプトを投げてきたら、過去の内部ループ状態をリセットする
-        const isNewUserTurn = lastMessage?.role === 'user';
-        
-        const frequencyContextId = session.contextId;
-
-        if (isNewUserTurn && sessionId) {
-            session.toolCallFrequency = {};
-            if (frequencyContextId) {
-                this.contextToolFrequency.delete(frequencyContextId);
-            }
-        }
-
-        // 優先順位: プロバイダーインスタンスレベル(contextIdキー) > セッションストア
-        const instanceFreq = frequencyContextId
-            ? this.contextToolFrequency.get(frequencyContextId)
-            : undefined;
-            
-        const mapper = new A2AStreamMapper({
-            toolMapping: this.resolvedOptions?.toolMapping,
-            internalTools: this.resolvedOptions?.internalTools,
-            clientTools,
-            // インスタンスレベルの頻度を優先、なければセッションストアのものを使う
-            initialToolCallFrequency: instanceFreq ?? session.toolCallFrequency,
-        });
-        let textPartCounter = 0;
-        let reasoningPartCounter = 0;
-        let activeTextId: string | undefined;
-
-        const stream = new ReadableStream<any>({
-            start: async (controller) => {
-                let currentRequest = request;
-                let autoConfirmCount = 0;
-                let toolCallConfirmCount = 0;
-                const MAX_AUTO_CONFIRM = 50;          // internal-tool-call 用 (codebase_investigator 等の長時間実行エージェント対応のため拡大)
-                const MAX_TOOL_CONFIRM = 1;           // tool-call-confirmation 用 (invalid ツールのリトライループ防止)
-
-                let firstResponse: any = { stream: responseStream, headers: headers || {} };
-                let lastFinishPart: ExtendedFinishPart | undefined;
-
-                try {
-                    controller.enqueue({ type: 'stream-start' });
-
-                    while (autoConfirmCount < MAX_AUTO_CONFIRM) {
-                        let hasFinished = false;
-                        let response = firstResponse || await this.client!.chatStream({ request: currentRequest, abortSignal: options.abortSignal });
-                        firstResponse = undefined;
-
-                        mapper.startNewTurn();
-                        // ウォッチドッグでラップ: チャンクが CHUNK_TIMEOUT_MS 来なければタイムアウトエラー
-                        const chunkTimeoutMs = this.options?.chunkTimeoutMs ?? DEFAULT_CHUNK_TIMEOUT_MS;
-                        const chunkGenerator = withChunkTimeout(
-                            parseA2AStream(response.stream),
-                            chunkTimeoutMs,
-                        );
-
-                        for await (const chunk of chunkGenerator) {
-                            if ('result' in chunk && chunk.result) {
-                                const parts = mapper.mapResult(chunk.result);
-                                for (const part of parts) {
-                                    switch (part.type) {
-                                        case 'text-delta': {
-                                            if (activeTextId === undefined) {
-                                                activeTextId = `text-${textPartCounter++}`;
-                                                controller.enqueue({ type: 'text-start', id: activeTextId });
->>>>>>> 7a73656 (fix(provider): resolve TypeError chunk.delta.length during loop interrupt)
                                             }
                                         }
                                     } else if ('error' in chunk && chunk.error) {
@@ -678,7 +489,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     throw new Error('A2A stream disconnected before sending final status-update.');
                                 }
 
-<<<<<<< HEAD
                                 if (lastFinishPart?.shouldInterruptLoop) {
                                     Logger.warn(`[auto-confirm] Loop detected. Force terminating.`);
                                     closeReasoning();
@@ -690,45 +500,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         usage: {
                                             inputTokens: { total: lastFinishPart.usage.promptTokens || 0 },
                                             outputTokens: { total: lastFinishPart.usage.completionTokens || 0 },
-=======
-                        if (isAutoConfirmTarget(lastFinishPart) && mapper.taskId) {
-                            if (lastFinishPart?.shouldInterruptLoop) {
-                                Logger.warn(`[auto-confirm] 内部ルールの重複検知によりループを強制終了.`);
-                                const interruptId = `text-${textPartCounter++}`;
-                                controller.enqueue({ type: 'text-start', id: interruptId });
-                                controller.enqueue({
-                                    type: 'text-delta',
-                                    id: interruptId,
-                                    delta: `\n\n[opencode-geminicli-a2a] ⚠️ エージェントが同一の内部ツールを何度も呼び出したため、ループを強制中断しました。\n`
-                                });
-                                controller.enqueue({ type: 'text-end', id: interruptId });
-                                controller.enqueue({
-                                    type: 'finish',
-                                    finishReason: 'stop',
-                                    usage: {
-                                        promptTokens: lastFinishPart?.usage?.inputTokens?.total || 0,
-                                        completionTokens: lastFinishPart?.usage?.outputTokens?.total || 0,
-                                    },
-                                    finishReasonV3: { unified: 'stop' as any, raw: 'internal-loop-detected' },
-                                } as any);
-                                break;
-                            }
-
-                            const isToolConfirm = lastFinishPart?.coderAgentKind === 'tool-call-confirmation';
-
-                            if (isToolConfirm) {
-                                toolCallConfirmCount++;
-                                if (toolCallConfirmCount > MAX_TOOL_CONFIRM) {
-                                    // invalid なツール（read_file 等）によるループを検知。
-                                    // これ以上 "Proceed" を送るとループするため、finish を emit して終了する。
-                                    Logger.warn(`[auto-confirm] tool-call-confirmation が ${toolCallConfirmCount} 回発生。ループの可能性があるため中断します。`);
-                                    controller.enqueue({
-                                        type: 'finish',
-                                        finishReason: 'stop',
-                                        usage: {
-                                            promptTokens: lastFinishPart?.usage?.inputTokens?.total || 0,
-                                            completionTokens: lastFinishPart?.usage?.outputTokens?.total || 0,
->>>>>>> 7a73656 (fix(provider): resolve TypeError chunk.delta.length during loop interrupt)
                                         },
                                     } as any);
                                     
@@ -770,7 +541,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     }
                                 }
 
-<<<<<<< HEAD
                                 const isToolCallConfirm = lastFinishPart.coderAgentKind === 'tool-call-confirmation' && lastFinishPart.hasExposedTools === true;
                                 if (isToolCallConfirm && lastFinishPart.taskId) {
                                     if (toolCallConfirmCount < MAX_TOOL_CONFIRM) {
@@ -796,22 +566,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 }
 
                                 break;
-=======
-                                const internalToolNames = lastFinishPart?.internalToolNames?.length ? lastFinishPart.internalToolNames.join(', ') : '';
-                                const msgDelta = internalToolNames 
-                                    ? `⟳ 内部ツール実行中: [${internalToolNames}] (ターン ${autoConfirmCount})\n`
-                                    : `⟳ エージェントが内部処理を継続中... (ターン ${autoConfirmCount})\n`;
-
-                                // Option 3: ループ継続中にプログレスを emit してユーザーに「生きてる」ことを伝える
-                                const progressId = `reasoning-${reasoningPartCounter++}`;
-                                controller.enqueue({ type: 'reasoning-start', id: progressId });
-                                controller.enqueue({
-                                    type: 'reasoning-delta',
-                                    id: progressId,
-                                    delta: msgDelta,
-                                });
-                                controller.enqueue({ type: 'reasoning-end', id: progressId });
->>>>>>> 7a73656 (fix(provider): resolve TypeError chunk.delta.length during loop interrupt)
                             }
                         };
 
@@ -857,38 +611,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         }
                         safeClose();
                     }
-<<<<<<< HEAD
                 })();
-=======
-
-                    if (sessionId) {
-                        const updatedFreq = mapper.currentToolCallFrequency;
-                        // A2A contextId が確定したらプロバイダーインスタンスレベルで保存
-                        // セッションIDの安定性に依存せず、contextId を安定キーとして使う
-                        const updatedContextId = mapper.contextId || session.contextId;
-                        if (updatedContextId) {
-                            this.contextToolFrequency.set(updatedContextId, updatedFreq);
-                        }
-                        await this.sessionStore.update(sessionId, {
-                            contextId: mapper.contextId || session.contextId,
-                            taskId: mapper.taskId || session.taskId,
-                            lastFinishReason: mapper.lastFinishReason || lastFinishPart?.finishReason,
-                            processedMessagesCount: options.prompt.length,
-                            inputRequired: lastFinishPart?.inputRequired,
-                            rawState: lastFinishPart?.rawState,
-                            fallbackCounters: session.fallbackCounters,
-                            dynamicToolMapping: session.dynamicToolMapping,
-                            toolCallFrequency: updatedFreq,
-                        });
-                    }
-
-                    if (activeTextId !== undefined) controller.enqueue({ type: 'text-end', id: activeTextId });
-                    controller.close();
-                } catch (error) {
-                    if (sessionId) await this.sessionStore.update(sessionId, { lastFinishReason: undefined });
-                    controller.error(error);
-                }
->>>>>>> 7a73656 (fix(provider): resolve TypeError chunk.delta.length during loop interrupt)
             },
         });
 
