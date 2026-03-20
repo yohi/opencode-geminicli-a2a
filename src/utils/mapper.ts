@@ -958,7 +958,9 @@ export class A2AStreamMapper {
                 };
 
                 let coderAgentKindValue: string | undefined = undefined;
-                if (this._currentCoderAgentKind) {
+                if (hasInternalTools && !isInternalToolConfirmation) {
+                    coderAgentKindValue = 'internal-tool-call';
+                } else if (this._currentCoderAgentKind) {
                     coderAgentKindValue = this._currentCoderAgentKind;
                 } else if (isInternalToolConfirmation) {
                     coderAgentKindValue = 'tool-call-confirmation';

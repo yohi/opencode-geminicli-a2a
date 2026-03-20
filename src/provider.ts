@@ -63,18 +63,29 @@ function anySignal(signals: (AbortSignal | undefined)[]): AbortSignal {
 
 function isAutoConfirmTarget(part: ExtendedFinishPart | undefined, textPartCounter: number = 0): boolean {
     if (!part) return false;
+    
+    // If AI has already spoken to the user in this turn (textPartCounter > 0),
+    // we should NOT auto-confirm unless it's a known background agent like codebase_investigator.
+    // This prevents "Proceed" loops after greetings or turn-ending tool calls.
     const hasSpoken = textPartCounter > 0;
+
     if (part.coderAgentKind === 'tool-call-confirmation') {
         return part.inputRequired === true && part.hasExposedTools !== true;
     }
+    
     const isInternalRecall = part.coderAgentKind === 'internal-tool-call';
     const isBackgroundAgent = part.coderAgentKind === 'codebase_investigator' || part.coderAgentKind === 'generalist';
+
     if (isBackgroundAgent) {
         return part.inputRequired === true && part.hasExposedTools !== true;
     }
+
     if (isInternalRecall) {
+        // Only auto-confirm internal tools if AI has NOT spoken to the user yet.
+        // If it has spoken, it's likely finished its turn (e.g., activate_skill followed by "Hello").
         return !hasSpoken && part.inputRequired === true && part.hasExposedTools !== true;
     }
+
     return false;
 }
 
