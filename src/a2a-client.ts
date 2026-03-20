@@ -2,6 +2,7 @@ import { ofetch, FetchError } from 'ofetch';
 import { APICallError } from '@ai-sdk/provider';
 import type { A2AConfig, A2AJsonRpcRequest } from './schemas';
 import { Logger } from './utils/logger';
+import crypto from 'node:crypto';
 
 const RETRY_STATUS_CODES = [408, 409, 425, 429, 500, 502, 503, 504];
 
@@ -9,6 +10,7 @@ export interface ChatStreamOptions {
     request: A2AJsonRpcRequest;
     idempotencyKey?: string;
     abortSignal?: AbortSignal;
+    traceId?: string;
 }
 
 export interface ChatStreamResponse {
@@ -31,9 +33,11 @@ export class A2AClient {
     /**
      * チャットリクエストを送信し、ストリームとレスポンスメタデータを返す
      */
-    async chatStream({ request, idempotencyKey, abortSignal }: ChatStreamOptions): Promise<ChatStreamResponse> {
+    async chatStream({ request, idempotencyKey, abortSignal, traceId }: ChatStreamOptions): Promise<ChatStreamResponse> {
+        const finalTraceId = traceId || crypto.randomUUID();
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
+            'x-a2a-trace-id': finalTraceId,
         };
 
         if (idempotencyKey) {
