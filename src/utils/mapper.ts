@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { Logger } from './logger';
 
 /**
- * Gemini CLI A2A サーバーのデフォルト内部ツールリスト。
+ * Gemini CLI A2A サーバーেরデフォルト内部ツールリスト。
  * これらは OpenCode 側には露出させず、プロバイダー層で自動承認（auto-confirm）する。
  */
 export const DEFAULT_INTERNAL_TOOLS = [
@@ -813,17 +813,23 @@ export class A2AStreamMapper {
                         delete argsForKey.description;
                     }
 
+                    // DEFAULT_INTERNAL_TOOLS に含まれるツール（activate_skill 等）は
+                    // clientTools に存在しなくても「未知ツール」扱いにしない。
+                    // ただし、2回目以降の呼び出しの場合は OpenCode 側に露出させることで 
+                    // 履歴に刻み込み、無限ループを抑制する。
+                    const metaTools = ['activate_skill', 'load_skill', 'search_skills', 'search_skills_by_id', 'search_skills_by_name'];
+                    const isMetaTool = metaTools.includes(toolInfo.toolName) || metaTools.includes(originalToolName);
+                    
+                    const argsKey = `${toolInfo.toolName}::${JSON.stringify(argsForKey)}`;
+                    const freq = (this.toolCallFrequency.get(argsKey) ?? 0);
+
                     const isInvalidToolName = toolInfo.toolName === 'invalid';
-                    let isInternalTool = this.internalTools.has(toolInfo.toolName) || this.internalTools.has(originalToolName);
+                    let isInternalTool = (this.internalTools.has(toolInfo.toolName) || this.internalTools.has(originalToolName))
+                        && !(isMetaTool && freq >= 1);
                     
                     const isUnknownToClient = this.clientTools
                         ? (!this.clientTools.has(originalToolName) && !isInternalTool)
                         : false;
-
-                    const argsKey = isInternalTool 
-                        ? `${toolInfo.toolName}::name-only`
-                        : `${toolInfo.toolName}::${JSON.stringify(argsForKey)}`;
-                    const freq = (this.toolCallFrequency.get(argsKey) ?? 0);
 
                     // 重複実行ループカウントをすべてのツール（未知・既知問わず）に対して記録
                     const currentFreq = freq + 1;
