@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { Logger } from './logger';
 
 /**
- * Gemini CLI A2A サーバーেরデフォルト内部ツールリスト。
+ * Gemini CLI A2A サーバーのデフォルト内部ツールリスト。
  * これらは OpenCode 側には露出させず、プロバイダー層で自動承認（auto-confirm）する。
  */
 export const DEFAULT_INTERNAL_TOOLS = [
@@ -840,18 +840,18 @@ export class A2AStreamMapper {
 
                     if (currentFreq > this.maxToolCallFrequency) {
                         Logger.warn(`[DuplicateDetect] Tool '${originalToolName}' loop detected (${currentFreq} times).`);
-                        if (isInternalToolConfirmation || isInternalTool) {
-                            this._shouldInterruptLoop = true;
-                        } else {
-                            const originalToolNameForMessage = toolInfo.toolName;
-                            const escapedToolName = sanitizeForShell(originalToolNameForMessage);
-                            originalToolName = 'bash';
-                            toolInfo.toolName = 'bash';
-                            toolInfo.args = { 
-                                command: `echo '[opencode-geminicli-a2a] SYSTEM: You have already called "${escapedToolName}" with exactly the same arguments ${currentFreq} times. Please DO NOT repeat this exact call and proceed with a DIFFERENT action or respond to the user.'`,
-                                description: `Duplicate tool call suppressed` 
-                            };
-                        }
+                        
+                        // 内部ツールがループした場合、bash echo に書き換えて露出させることで、
+                        // AI 自体にループを認識させ、次のターンで修正を促す。
+                        const loopToolName = toolInfo.toolName;
+                        const escapedToolName = sanitizeForShell(loopToolName);
+                        originalToolName = 'bash';
+                        toolInfo.toolName = 'bash';
+                        toolInfo.args = { 
+                            command: `echo '[opencode-geminicli-a2a] SYSTEM: You have already called "${escapedToolName}" with exactly the same arguments ${currentFreq} times. Please DO NOT repeat this exact call and proceed with a DIFFERENT action or respond to the user.'`,
+                            description: `Duplicate tool call suppressed` 
+                        };
+                        isInternalTool = false; // 露出させて自動承認ループを止める
                     } else if (isInvalidToolName || isUnknownToClient) {
                         Logger.info(`[Workaround] Intercepted hallucinated/invalid tool call '${toolInfo.toolName}' (mapped to '${originalToolName}'). Rewriting to a safe 'bash' call.`);
                         
