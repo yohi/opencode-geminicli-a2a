@@ -61,7 +61,7 @@ function anySignal(signals: (AbortSignal | undefined)[]): AbortSignal {
     return controller.signal;
 }
 
-function isAutoConfirmTarget(part: ExtendedFinishPart | undefined, textPartCounter: number = 0): boolean {
+function isAutoConfirmTarget(part: ExtendedFinishPart | undefined, textPartCounter: number = 0, autoConfirmCount: number = 0): boolean {
     if (!part) return false;
     
     // If AI has already spoken to the user in this turn (textPartCounter > 0),
@@ -76,6 +76,11 @@ function isAutoConfirmTarget(part: ExtendedFinishPart | undefined, textPartCount
     const isInternalRecall = part.coderAgentKind === 'internal-tool-call';
     const isBackgroundAgent = part.coderAgentKind === 'codebase_investigator' || part.coderAgentKind === 'generalist';
 
+    // Meta tools like activate_skill or search_skills tend to loop if auto-confirmed
+    // multiple times without user context update.
+    const metaTools = ['activate_skill', 'load_skill', 'search_skills', 'search_skills_by_id', 'search_skills_by_name'];
+    const hasMetaTool = part.internalToolNames?.some(name => metaTools.includes(name));
+
     if (isBackgroundAgent) {
         return part.inputRequired === true && part.hasExposedTools !== true;
     }
@@ -83,6 +88,10 @@ function isAutoConfirmTarget(part: ExtendedFinishPart | undefined, textPartCount
     if (isInternalRecall) {
         // Only auto-confirm internal tools if AI has NOT spoken to the user yet.
         // If it has spoken, it's likely finished its turn (e.g., activate_skill followed by "Hello").
+        
+        // Also, skip auto-confirm if it's a meta tool being repeated, to force turn completion.
+        if (hasMetaTool && autoConfirmCount >= 1) return false;
+
         return !hasSpoken && part.inputRequired === true && part.hasExposedTools !== true;
     }
 
@@ -471,7 +480,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                                 case 'finish': {
                                                     hasFinishedInThisTurn = true;
                                                     lastFinishPart = part as ExtendedFinishPart;
-                                                    if (!isAutoConfirmTarget(lastFinishPart, textPartCounter)) {
+                                                    if (!isAutoConfirmTarget(lastFinishPart, textPartCounter, autoConfirmCount)) {
                                                         closeText();
                                                         closeReasoning();
                                                         const unifiedFinishReason = (lastFinishPart.finishReason === 'unknown' ? 'stop' : lastFinishPart.finishReason);
@@ -525,7 +534,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     break;
                                 }
 
-                                const canAutoConfirm = isAutoConfirmTarget(lastFinishPart!, textPartCounter);
+                                const canAutoConfirm = isAutoConfirmTarget(lastFinishPart!, textPartCounter, autoConfirmCount);
                                 if (canAutoConfirm && lastFinishPart.taskId) {
                                     if (autoConfirmCount < MAX_AUTO_CONFIRM) {
                                         autoConfirmCount++;
