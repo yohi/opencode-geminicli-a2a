@@ -840,18 +840,18 @@ export class A2AStreamMapper {
 
                     if (currentFreq > this.maxToolCallFrequency) {
                         Logger.warn(`[DuplicateDetect] Tool '${originalToolName}' loop detected (${currentFreq} times).`);
-                        
-                        // 内部ツールがループした場合、bash echo に書き換えて露出させることで、
-                        // AI 自体にループを認識させ、次のターンで修正を促す。
-                        const loopToolName = toolInfo.toolName;
-                        const escapedToolName = sanitizeForShell(loopToolName);
-                        originalToolName = 'bash';
-                        toolInfo.toolName = 'bash';
-                        toolInfo.args = { 
-                            command: `echo '[opencode-geminicli-a2a] SYSTEM: You have already called "${escapedToolName}" with exactly the same arguments ${currentFreq} times. Please DO NOT repeat this exact call and proceed with a DIFFERENT action or respond to the user.'`,
-                            description: `Duplicate tool call suppressed` 
-                        };
-                        isInternalTool = false; // 露出させて自動承認ループを止める
+                        if (isInternalToolConfirmation || isInternalTool) {
+                            this._shouldInterruptLoop = true;
+                        } else {
+                            const originalToolNameForMessage = toolInfo.toolName;
+                            const escapedToolName = sanitizeForShell(originalToolNameForMessage);
+                            originalToolName = 'bash';
+                            toolInfo.toolName = 'bash';
+                            toolInfo.args = { 
+                                command: `echo '[opencode-geminicli-a2a] SYSTEM: You have already called "${escapedToolName}" with exactly the same arguments ${currentFreq} times. Please DO NOT repeat this exact call and proceed with a DIFFERENT action or respond to the user.'`,
+                                description: `Duplicate tool call suppressed` 
+                            };
+                        }
                     } else if (isInvalidToolName || isUnknownToClient) {
                         Logger.info(`[Workaround] Intercepted hallucinated/invalid tool call '${toolInfo.toolName}' (mapped to '${originalToolName}'). Rewriting to a safe 'bash' call.`);
                         

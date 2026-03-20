@@ -629,6 +629,13 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     },
                                     finishReasonV3: { unified: 'stop' as any, raw: 'internal-loop-detected' },
                                 } as any);
+                                
+                                // A2Aサーバーがinput-requiredのままでハングしないよう、Cancelを送信する
+                                const cancelParam = buildConfirmationRequest(mapper.taskId, this.modelId, false);
+                                this.client!.chatStream({ request: cancelParam }).catch((err: any) => {
+                                    Logger.error(`[Provider] Failed to send loop-interrupt Cancel to A2A server:`, err);
+                                });
+                                
                                 break;
                             }
 

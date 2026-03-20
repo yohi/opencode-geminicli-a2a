@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mapPromptToA2AJsonRpcRequest, mapA2AResponseToStreamParts, A2AStreamMapper } from './mapper';
+import type { LanguageModelV1Prompt } from '@ai-sdk/provider';
 import type { A2AResponseResult } from '../schemas';
 
 describe('mapper', () => {
@@ -91,8 +92,8 @@ describe('mapper', () => {
             });
         });
 
-        describe('loop detection and bash fallback', () => {
-            it('should redirect looping internal tools to bash fallback', () => {
+        describe('loop detection', () => {
+            it('should set shouldInterruptLoop when internal tool loops', () => {
                 const mapper = new A2AStreamMapper({ maxToolCallFrequency: 2 });
                 
                 const createToolCallResult = (callId: string): A2AResponseResult => ({
@@ -116,13 +117,9 @@ describe('mapper', () => {
                 // Call 3 (Loop!)
                 const parts = mapper.mapResult(createToolCallResult('c3'));
                 
-                const toolCall = parts.find(p => p.type === 'tool-call');
-                expect(toolCall).toBeDefined();
-                if (toolCall && toolCall.type === 'tool-call') {
-                    expect(toolCall.toolName).toBe('bash');
-                    const args = JSON.parse(toolCall.args);
-                    expect(args.command).toContain('SYSTEM: You have already called "activate_skill"');
-                }
+                const finishPart = parts.find(p => p.type === 'finish') as any;
+                expect(finishPart).toBeDefined();
+                expect(finishPart.shouldInterruptLoop).toBe(true);
             });
         });
     });
