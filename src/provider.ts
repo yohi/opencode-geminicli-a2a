@@ -9,7 +9,7 @@ import type {
     LanguageModelV1TextPart,
     LanguageModelV1ToolCallPart,
 } from '@ai-sdk/provider';
-import { resolveConfig, type OpenCodeProviderOptions } from './config';
+import { resolveConfig, type OpenCodeProviderOptions, ConfigManager } from './config';
 import { A2AClient } from './a2a-client';
 import { 
     mapPromptToA2AJsonRpcRequest, 
@@ -49,36 +49,54 @@ export class OpenCodeGeminiA2AProvider {
     readonly modelId: string;
     readonly modelID: string;
 
-    private client: A2AClient;
+    private client: A2AClient | null = null;
     private sessionStore: SessionStore;
     private options?: OpenCodeProviderOptions;
+    /** 解決済みの実行時設定。ホットリロード時に再構築される */
+    private resolvedOptions?: OpenCodeProviderOptions;
     private fallbackConfig?: FallbackConfig;
+    private unregisterConfigWatcher?: () => void;
 
     constructor(modelId: string, options?: OpenCodeProviderOptions) {
         this.modelId = modelId;
         this.modelID = modelId;
+        this.options = options;
+        // 最小限の初期化。詳細は init() で設定される。
+        this.sessionStore = options?.sessionStore ?? new InMemorySessionStore();
+        this.init();
+
+        if (options?.hotReload) {
+            this.unregisterConfigWatcher = ConfigManager.getInstance().onChange(() => {
+                Logger.info(`[Provider] Hot-reloading configuration for model ${this.modelId}`);
+                this.init();
+            });
+        }
+    }
+
+    private init() {
         try {
-            const router = options?.agents ? new DefaultMultiAgentRouter(options.agents) : undefined;
-            const resolved = router?.resolve(modelId);
+            const config = resolveConfig(this.options);
+            const router = config.agents ? new DefaultMultiAgentRouter(config.agents) : undefined;
+            const resolved = router?.resolve(this.modelId);
             const agentConfig = resolved?.endpoint;
             const modelConfig = resolved?.config;
 
-            const finalConfig = resolveConfig({
-                ...options,
-                host: agentConfig?.host ?? options?.host,
-                port: agentConfig?.port ?? options?.port,
-                token: agentConfig?.token ?? options?.token,
-                protocol: agentConfig?.protocol ?? options?.protocol,
-            });
+            const finalConfig = {
+                ...config,
+                host: agentConfig?.host ?? config.host,
+                port: agentConfig?.port ?? config.port,
+                token: agentConfig?.token ?? config.token,
+                protocol: agentConfig?.protocol ?? config.protocol,
+            };
 
             const defaultGenerationConfig = {
-                ...options?.generationConfig,
+                ...this.options?.generationConfig,
                 ...modelConfig?.options?.generationConfig,
             };
 
-            this.client = new A2AClient(finalConfig);
-            this.sessionStore = options?.sessionStore ?? new InMemorySessionStore();
-            this.fallbackConfig = resolveFallbackConfig(options?.fallback);
+            const newClient = new A2AClient(finalConfig);
+            const newSessionStore = this.options?.sessionStore ?? this.sessionStore ?? new InMemorySessionStore();
+            const newFallbackConfig = resolveFallbackConfig(this.options?.fallback);
 
             const defaultToolMapping: Record<string, string> = {
                 'docker-mcp-gateway_read_file': 'read',
@@ -93,21 +111,36 @@ export class OpenCodeGeminiA2AProvider {
                 ...(finalConfig.toolMapping || {})
             };
 
-            this.options = {
-                ...options,
+            const newResolvedOptions: OpenCodeProviderOptions = {
+                ...this.options,
                 host: finalConfig.host,
                 port: finalConfig.port,
                 token: finalConfig.token,
                 protocol: finalConfig.protocol,
                 generationConfig: defaultGenerationConfig,
-                sessionStore: this.sessionStore,
-                fallback: this.fallbackConfig,
+                sessionStore: newSessionStore,
+                fallback: newFallbackConfig,
                 toolMapping: defaultToolMapping,
                 internalTools: finalConfig.internalTools,
             };
+
+            // Commit all changes at once
+            this.client = newClient;
+            this.sessionStore = newSessionStore;
+            this.fallbackConfig = newFallbackConfig;
+            this.resolvedOptions = newResolvedOptions;
+
         } catch (err) {
-            Logger.error(`ERROR IN MODEL CONSTRUCTOR (${modelId}):`, err);
-            throw err;
+            Logger.error(`ERROR IN MODEL INIT (${this.modelId}):`, err);
+            // In constructor, we throw if client is not yet established.
+            // In init (hot-reload), we just log and keep old state if possible.
+            if (!this.client) throw err;
+        }
+    }
+
+    public dispose() {
+        if (this.unregisterConfigWatcher) {
+            this.unregisterConfigWatcher();
         }
     }
 
@@ -118,7 +151,7 @@ export class OpenCodeGeminiA2AProvider {
         // formatToolResults() によりテキスト化されてメッセージ本文に混入する。
 
         const mergedGenerationConfig = {
-            ...this.options?.generationConfig,
+            ...this.resolvedOptions?.generationConfig,
             ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
             ...(options.topP !== undefined ? { topP: options.topP } : {}),
             ...(options.topK !== undefined ? { topK: options.topK } : {}),
@@ -133,8 +166,8 @@ export class OpenCodeGeminiA2AProvider {
         );
 
         const mapOptions: MapPromptOptions = { 
-            toolMapping: this.options?.toolMapping,
-            internalTools: this.options?.internalTools
+            toolMapping: this.resolvedOptions?.toolMapping,
+            internalTools: this.resolvedOptions?.internalTools
         };
         if (Object.keys(filteredConfig).length > 0) {
             mapOptions.generationConfig = filteredConfig;
@@ -160,6 +193,8 @@ export class OpenCodeGeminiA2AProvider {
     }
 
     async doStream(options: LanguageModelV1CallOptions): Promise<LanguageModelV1StreamResult> {
+        if (!this.client) throw new Error('A2AClient is not initialized.');
+
         let result: LanguageModelV1StreamResult;
         try {
             result = await this._doStreamInternal(options);
@@ -250,7 +285,10 @@ export class OpenCodeGeminiA2AProvider {
             console.warn(`[opencode-geminicli-a2a] Falling back from ${this.modelId} to ${nextModelId} (level ${fallbackCount + 1})`);
         }
 
-        const fallbackProvider = new OpenCodeGeminiA2AProvider(nextModelId, this.options);
+        const fallbackProvider = new OpenCodeGeminiA2AProvider(nextModelId, {
+            ...this.options,
+            hotReload: false, // フォールバックインスタンスはホットリロードを監視しない
+        });
         return fallbackProvider.doStream({
             ...callOptions,
             _fallbackCount: fallbackCount + 1
@@ -279,7 +317,7 @@ export class OpenCodeGeminiA2AProvider {
         let responseStream;
         let headers;
         try {
-            const response = await this.client.chatStream({ request, idempotencyKey, abortSignal: options.abortSignal });
+            const response = await this.client!.chatStream({ request, idempotencyKey, abortSignal: options.abortSignal });
             responseStream = response.stream;
             headers = response.headers;
         } catch (error) {
@@ -293,8 +331,8 @@ export class OpenCodeGeminiA2AProvider {
             : (rawToolsInput && typeof rawToolsInput === 'object' ? Object.keys(rawToolsInput) : undefined);
 
         const mapper = new A2AStreamMapper({
-            toolMapping: this.options?.toolMapping,
-            internalTools: this.options?.internalTools,
+            toolMapping: this.resolvedOptions?.toolMapping,
+            internalTools: this.resolvedOptions?.internalTools,
             clientTools
         });
         let textPartCounter = 0;
@@ -317,7 +355,7 @@ export class OpenCodeGeminiA2AProvider {
 
                     while (autoConfirmCount < MAX_AUTO_CONFIRM) {
                         let hasFinished = false;
-                        let response = firstResponse || await this.client.chatStream({ request: currentRequest, abortSignal: options.abortSignal });
+                        let response = firstResponse || await this.client!.chatStream({ request: currentRequest, abortSignal: options.abortSignal });
                         firstResponse = undefined;
 
                         mapper.startNewTurn();
