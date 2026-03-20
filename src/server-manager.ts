@@ -383,37 +383,15 @@ export class ServerManager {
         };
         const termHandler = () => cleanupAndExit('SIGTERM');
         const intHandler = () => cleanupAndExit('SIGINT');
-        const exceptionHandler = (err: Error) => {
-            Logger.error('[ServerManager] Uncaught Exception:', err);
-            try {
-                this.dispose();
-            } catch (disposeErr) {
-                Logger.error('[ServerManager] Error during dispose in exception handler:', disposeErr);
-            }
-            process.exit(1);
-        };
-        const rejectionHandler = (reason: any) => {
-            Logger.error('[ServerManager] Unhandled Rejection:', reason);
-            try {
-                this.dispose();
-            } catch (disposeErr) {
-                Logger.error('[ServerManager] Error during dispose in rejection handler:', disposeErr);
-            }
-            process.exit(1);
-        };
 
         process.once('exit', exitHandler);
         process.once('SIGTERM', termHandler);
         process.once('SIGINT', intHandler);
-        process.once('uncaughtException', exceptionHandler);
-        process.once('unhandledRejection', rejectionHandler);
 
         this.cleanupHandlers.push(
             { event: 'exit', handler: exitHandler },
             { event: 'SIGTERM', handler: termHandler },
-            { event: 'SIGINT', handler: intHandler },
-            { event: 'uncaughtException', handler: exceptionHandler },
-            { event: 'unhandledRejection', handler: rejectionHandler }
+            { event: 'SIGINT', handler: intHandler }
         );
     }
 
