@@ -600,11 +600,25 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
             ? rawToolsInput.map((t: any) => t.name || t.id || t.function?.name || t.type).filter(Boolean) as string[]
             : (rawToolsInput && typeof rawToolsInput === 'object' ? Object.keys(rawToolsInput) : undefined);
 
-        // 優先順位: プロバイダーインスタンスレベル(contextIdキー) > セッションストア
+        const inputPrompt = options.prompt || [];
+        const lastMessage = inputPrompt[inputPrompt.length - 1];
+        // OpenCode が新しいユーザープロンプトを投げてきたら、過去の内部ループ状態をリセットする
+        const isNewUserTurn = lastMessage?.role === 'user';
+        
         const frequencyContextId = session.contextId;
+
+        if (isNewUserTurn && sessionId) {
+            session.toolCallFrequency = {};
+            if (frequencyContextId) {
+                this.contextToolFrequency.delete(frequencyContextId);
+            }
+        }
+
+        // 優先順位: プロバイダーインスタンスレベル(contextIdキー) > セッションストア
         const instanceFreq = frequencyContextId
             ? this.contextToolFrequency.get(frequencyContextId)
             : undefined;
+            
         const mapper = new A2AStreamMapper({
             toolMapping: this.resolvedOptions?.toolMapping,
             internalTools: this.resolvedOptions?.internalTools,
