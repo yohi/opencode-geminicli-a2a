@@ -847,6 +847,10 @@ export class A2AStreamMapper {
                             };
                         }
                     } else if (isInvalidToolName || isUnknownToClient) {
+                                description: `Duplicate tool call suppressed` 
+                            };
+                        }
+                    } else if (isInvalidToolName || isUnknownToClient) {
                         Logger.info(`[Workaround] Intercepted hallucinated/invalid tool call '${toolInfo.toolName}' (mapped to '${originalToolName}'). Rewriting to a safe 'bash' call.`);
                         
                         const badName = originalToolName;
