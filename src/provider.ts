@@ -663,7 +663,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         break;
                     }
                     case 'reasoning-delta': {
-                        const delta = (value as any).reasoningDelta;
+                        const delta = (value as any).delta || (value as any).reasoningDelta;
                         if (delta) {
                             reasoning += delta;
                         }
