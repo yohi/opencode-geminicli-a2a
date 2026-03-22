@@ -2,6 +2,7 @@ import type {
     LanguageModelV2Prompt,
     LanguageModelV2StreamPart,
     LanguageModelV2FinishReason,
+    LanguageModelV2CallOptions,
 } from '@ai-sdk/provider';
 import type { A2AJsonRpcRequest, A2AResponseResult, Tool } from '../schemas';
 import crypto from 'node:crypto';
@@ -28,7 +29,8 @@ export interface ExtendedFinishPart {
     type: 'finish';
     finishReason: LanguageModelV2FinishReason;
     usage: {
-        promptTokens: number; completionTokens: number;
+        promptTokens: number; 
+        completionTokens: number;
     };
     providerMetadata?: Record<string, any>;
     inputRequired?: boolean;
@@ -314,7 +316,7 @@ function extractUserParts(message: LanguageModelV2Prompt[number]): A2AJsonRpcReq
         ? [{ type: 'text' as const, text: message.content }]
         : message.content) as UserContentPart[];
 
-    return content.map((part) => {
+    return content.map((part: any) => {
         if (part.type === 'text') {
             return { kind: 'text' as const, text: part.text };
         } else if (part.type === 'image') {
@@ -357,7 +359,7 @@ function extractUserParts(message: LanguageModelV2Prompt[number]): A2AJsonRpcReq
         }
 
         return null;
-    }).filter((p): p is NonNullable<typeof p> => p !== null);
+    }).filter((p: any): p is NonNullable<typeof p> => p !== null);
 }
 
 /**
@@ -373,11 +375,10 @@ interface ToolResultPart {
 }
 
 function formatToolResults(
-    content: unknown[],
+    content: any[],
     toolMapping?: Record<string, string>
 ): string {
-    const parts = content as ToolResultPart[];
-    return parts.map((part) => {
+    return content.map((part: any) => {
         const resultVal = part.result !== undefined ? part.result : part.content;
         const resultStr = typeof resultVal === 'string'
             ? resultVal

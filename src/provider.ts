@@ -4,8 +4,6 @@ import {
     type LanguageModelV2CallOptions,
     type LanguageModelV2StreamPart,
     type LanguageModelV2FinishReason,
-    type LanguageModelV2TextPart,
-    type LanguageModelV2ToolCallPart,
 } from '@ai-sdk/provider';
 import { resolveConfig, type OpenCodeProviderOptions, ConfigManager } from './config';
 import { A2AClient } from './a2a-client';
@@ -15,12 +13,10 @@ import {
     buildConfirmationRequest,
     type MapPromptOptions, 
     type ExtendedFinishPart,
-    type A2AResponseResult
 } from './utils/mapper';
 import { parseA2AStream } from './utils/stream';
-import type { A2AJsonRpcRequest, A2AConfig, Tool } from './schemas';
-import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
-import { isQuotaError, getNextFallbackModel, resolveFallbackConfig, type FallbackConfig } from './fallback';
+import { type SessionStore, InMemorySessionStore } from './session';
+import { isQuotaError, getNextFallbackModel, resolveFallbackConfig } from './fallback';
 import { DefaultMultiAgentRouter } from './router';
 import { Logger } from './utils/logger';
 
@@ -411,7 +407,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         activeTextId = `text-${textPartCounter++}`;
                         safeEnqueue({ type: 'text-start', id: activeTextId } as any);
                     }
-                    safeEnqueue({ type: 'text-delta', id: activeTextId, delta } as any);
+                    safeEnqueue({ type: 'text-delta', id: activeTextId, textDelta: delta } as any);
                 };
 
                 (async () => {
@@ -452,7 +448,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         for (const part of parts) {
                                             switch (part.type) {
                                                 case 'text-delta': {
-                                                    enqueueText((part as any).textDelta || (part as any).delta);
+                                                    enqueueText((part as any).textDelta);
                                                     break;
                                                 }
                                                 case 'reasoning-delta': {
@@ -656,7 +652,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
 
                 switch (value.type) {
                     case 'text-delta': {
-                        const delta = (value as any).textDelta || (value as any).delta;
+                        const delta = (value as any).textDelta;
                         if (delta) {
                             if (content.length > 0 && content[content.length - 1].type === 'text') {
                                 (content[content.length - 1] as any).text += delta;
@@ -667,7 +663,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         break;
                     }
                     case 'reasoning-delta': {
-                        const delta = (value as any).delta || (value as any).reasoningDelta;
+                        const delta = (value as any).reasoningDelta;
                         if (delta) {
                             reasoning += delta;
                         }
