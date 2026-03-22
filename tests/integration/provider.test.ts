@@ -95,12 +95,11 @@ describe('Integration: Gemini CLI A2A Provider', () => {
         }
 
         // v2 ストリーム形式:
-        // 最初は text-start が来て ID が振られる (enqueueText 内)
-        // 実装上は text-start -> text-delta(delta:"Integration ") -> text-delta(delta:"success!") -> text-end -> finish
+        // 実装上は text-start -> text-delta(textDelta:"Integration ") -> text-delta(textDelta:"success!") -> text-end -> finish
         expect(parts.some(p => p.type === 'text-delta')).toBe(true);
         const textParts = parts.filter(p => p.type === 'text-delta');
-        expect(textParts[0]).toMatchObject({ type: 'text-delta', delta: 'Integration ' });
-        expect(textParts[1]).toMatchObject({ type: 'text-delta', delta: 'success!' });
+        expect(textParts[0]).toMatchObject({ type: 'text-delta', textDelta: 'Integration ' });
+        expect(textParts[1]).toMatchObject({ type: 'text-delta', textDelta: 'success!' });
         
         const finishPart = parts.find(p => p.type === 'finish');
         expect(finishPart).toMatchObject({ type: 'finish', finishReason: 'stop' });

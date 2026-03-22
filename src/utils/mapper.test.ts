@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mapPromptToA2AJsonRpcRequest, mapA2AResponseToStreamParts, A2AStreamMapper } from './mapper';
-import type { LanguageModelV1Prompt } from '@ai-sdk/provider';
+import type { LanguageModelV2Prompt } from '@ai-sdk/provider';
 import type { A2AResponseResult } from '../schemas';
 
 describe('mapper', () => {
@@ -52,7 +52,7 @@ describe('mapper', () => {
             const parts = mapA2AResponseToStreamParts(result);
             expect(parts[0].type).toBe('text-delta');
             if (parts[0].type === 'text-delta') {
-                expect(parts[0].delta).toBe('hello');
+                expect(parts[0].textDelta).toBe('hello');
             }
         });
 
@@ -85,10 +85,10 @@ describe('mapper', () => {
                 });
 
                 const parts1 = mapper.mapResult(makeUpdate('A'));
-                if (parts1[0].type === 'text-delta') expect(parts1[0].delta).toBe('A');
+                if (parts1[0].type === 'text-delta') expect(parts1[0].textDelta).toBe('A');
 
                 const parts2 = mapper.mapResult(makeUpdate('AB'));
-                if (parts2[0].type === 'text-delta') expect(parts2[0].delta).toBe('B');
+                if (parts2[0].type === 'text-delta') expect(parts2[0].textDelta).toBe('B');
             });
         });
 

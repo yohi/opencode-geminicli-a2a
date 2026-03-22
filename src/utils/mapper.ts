@@ -127,6 +127,8 @@ export interface MapPromptOptions {
         seed?: number;
         responseFormat?: any;
     };
+    /** ツール選択の制約 */
+    toolChoice?: LanguageModelV2CallOptions['toolChoice'];
 }
 
 /**
@@ -393,7 +395,7 @@ function buildRequest(
     content: string | A2AJsonRpcRequest['params']['message']['parts'],
     options: MapPromptOptions
 ): A2AJsonRpcRequest {
-    const { tools, contextId, taskId, modelId, generationConfig, toolMapping } = options;
+    const { tools, contextId, taskId, modelId, generationConfig, toolMapping, toolChoice } = options;
 
     // ツール名のマッピング適用し、OpenAIスキーマのラッパーを解除する
     const mappedTools = tools?.map(tool => {
@@ -427,7 +429,8 @@ function buildRequest(
             },
             configuration: {
                 blocking: false,
-                ...(mappedTools && mappedTools.length > 0 ? { tools: mappedTools } : {})
+                ...(mappedTools && mappedTools.length > 0 ? { tools: mappedTools } : {}),
+                ...(toolChoice ? { toolChoice } : {}),
             },
             ...(generationConfig ? { generationConfig } : {}),
             ...(modelId ? { model: modelId } : {}),
@@ -606,12 +609,12 @@ export class A2AStreamMapper {
                             if (isReasoning) {
                                 parts.push({
                                     type: 'reasoning-delta',
-                                    delta: delta,
+                                    reasoningDelta: delta,
                                 } as any);
                             } else {
                                 parts.push({
                                     type: 'text-delta',
-                                    delta: delta,
+                                    textDelta: delta,
                                 } as any);
                             }
                         }
@@ -737,7 +740,7 @@ export class A2AStreamMapper {
                             // 適切な v2 ライフサイクルイベントに変換される。
                             parts.push({
                                 type: 'reasoning-delta',
-                                delta: textDelta,
+                                reasoningDelta: textDelta,
                             } as any);
                         }
                         continue;
@@ -989,7 +992,7 @@ export class A2AStreamMapper {
                     ...(needsInput ? { 
                         inputRequired: true, 
                         rawState: result.status.state,
-                        ...(coderAgentKindValue !== undefined ? { coderAgentKind: coderAgentKindValue } : {})
+                        ...(coderAgentKindValue !== undefined ? { coderAgent: coderAgentKindValue } : {})
                     } : {})
                 };
                 parts.push(part as ExtendedStreamPart);
