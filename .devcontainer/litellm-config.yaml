@@ -1,3 +1,5 @@
+# Note for Linux users: You may need to add 'extra_hosts: ["host.docker.internal:host-gateway"]' 
+# to docker-compose.yml if host.docker.internal doesn't resolve.
 model_list:
   - model_name: gemini-2.5-pro
     litellm_params:

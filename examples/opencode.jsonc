@@ -23,7 +23,7 @@
                 // A2A サーバーのアクセス先を指定 (デフォルトは 127.0.0.1:41242)
                 "host": "127.0.0.1",
                 "port": 41242,
-                "protocol": "http",
+                "protocol": "http", // litellmProxy を有効化する場合は末尾のカンマが必要です
                 // LiteLLM などのプロキシを経由する場合の設定
                 // "litellmProxy": {
                 //     "url": "http://127.0.0.1:4000"

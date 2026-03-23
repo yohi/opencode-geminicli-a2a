@@ -1,5 +1,7 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { LiteLLMProxyConfigSchema } from '../src/schemas';
+import { resolveConfig, ConfigManager } from '../src/config';
+import { A2AClient } from '../src/a2a-client';
 
 describe('LiteLLMProxyConfigSchema', () => {
     it('validates correct config', () => {
@@ -13,10 +15,13 @@ describe('LiteLLMProxyConfigSchema', () => {
     });
 });
 
-import { resolveConfig } from '../src/config';
-
 describe('resolveConfig with LiteLLM', () => {
+    beforeEach(() => {
+        ConfigManager._reset();
+    });
+
     afterEach(() => {
+        ConfigManager._reset();
         delete process.env.LITELLM_PROXY_URL;
         delete process.env.LITELLM_PROXY_API_KEY;
     });
@@ -33,8 +38,6 @@ describe('resolveConfig with LiteLLM', () => {
         expect((config as any).litellmProxy?.url).toBe('http://opt-litellm:4000');
     });
 });
-
-import { A2AClient } from '../src/a2a-client';
 
 describe('A2AClient with litellmProxy', () => {
     it('uses proxy url when configured', () => {

@@ -46,7 +46,11 @@ export class A2AClient {
             headers['Idempotency-Key'] = idempotencyKey;
         }
 
-        if (this.config.token) {
+        if (this.config.litellmProxy?.apiKey) {
+            headers['Authorization'] = `Bearer ${this.config.litellmProxy.apiKey}`;
+        }
+
+        if (this.config.token && !this.config.litellmProxy) {
             const url = new URL(this.endpoint);
             const isSecure = url.protocol === 'https:';
             const hostname = url.hostname.replace(/^\[|\]$/g, '');
