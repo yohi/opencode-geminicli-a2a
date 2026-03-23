@@ -47,9 +47,10 @@ export class A2AClient {
         }
 
         if (this.config.token) {
-            const isSecure = this.endpoint.startsWith('https://');
-            const normalizedHost = this.config.host.replace(/^\[|\]$/g, '');
-            const isLocalhost = normalizedHost === '127.0.0.1' || normalizedHost === 'localhost' || normalizedHost === '::1';
+            const url = new URL(this.endpoint);
+            const isSecure = url.protocol === 'https:';
+            const hostname = url.hostname.replace(/^\[|\]$/g, '');
+            const isLocalhost = hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1';
             if (isSecure || isLocalhost) {
                 headers['Authorization'] = `Bearer ${this.config.token}`;
             } else {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { LiteLLMProxyConfigSchema } from '../src/schemas';
 
 describe('LiteLLMProxyConfigSchema', () => {
@@ -16,18 +16,21 @@ describe('LiteLLMProxyConfigSchema', () => {
 import { resolveConfig } from '../src/config';
 
 describe('resolveConfig with LiteLLM', () => {
+    afterEach(() => {
+        delete process.env.LITELLM_PROXY_URL;
+        delete process.env.LITELLM_PROXY_API_KEY;
+    });
+
     it('resolves LITELLM_PROXY_URL env variable', () => {
         process.env.LITELLM_PROXY_URL = 'http://env-litellm:4000';
         const config = resolveConfig();
         expect((config as any).litellmProxy?.url).toBe('http://env-litellm:4000');
-        delete process.env.LITELLM_PROXY_URL;
     });
 
     it('prioritizes options over env', () => {
         process.env.LITELLM_PROXY_URL = 'http://env-litellm:4000';
         const config = resolveConfig({ litellmProxy: { url: 'http://opt-litellm:4000' } } as any);
         expect((config as any).litellmProxy?.url).toBe('http://opt-litellm:4000');
-        delete process.env.LITELLM_PROXY_URL;
     });
 });
 

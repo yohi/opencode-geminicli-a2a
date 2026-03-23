@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ConfigSchema, type A2AConfig, type AgentEndpoint, AgentEndpointSchema } from './schemas';
+import { ConfigSchema, type A2AConfig, type AgentEndpoint, AgentEndpointSchema, LiteLLMProxyConfigSchema } from './schemas';
 import type { SessionStore } from './session';
 import type { ModelRegistry } from './model-registry';
 import type { FallbackConfig } from './fallback';
@@ -64,7 +64,7 @@ const ExternalConfigSchema = z.object({
     agents: z.array(AgentEndpointSchema).optional(),
     toolMapping: z.record(z.string()).optional(),
     internalTools: z.array(z.string()).optional(),
-    litellmProxy: z.object({ url: z.string().url(), apiKey: z.string().optional() }).optional(),
+    litellmProxy: LiteLLMProxyConfigSchema.optional(),
 }).passthrough();
 
 export class ConfigManager {
@@ -200,7 +200,7 @@ const parseSchema = z.object({
         seed: z.coerce.number().int().optional(),
         responseFormat: z.any().optional(),
     }).optional(),
-    litellmProxy: z.object({ url: z.string().url(), apiKey: z.string().optional() }).optional(),
+    litellmProxy: LiteLLMProxyConfigSchema.optional(),
 });
 
 const DEFAULT_TOOL_MAPPING = {
