@@ -1,0 +1,80 @@
+// ~/.config/opencode/opencode.jsonc の設定例
+{
+    // ---------------------------------------------------------
+    // モデル設定
+    // ---------------------------------------------------------
+    // エージェントに設定するデフォルトのモデルを指定します。
+    // フォーマット: プロバイダーID/モデルID
+    // 対応モデル: gemini-3.1-pro-preview, gemini-3-pro-preview, gemini-3-flash-preview, gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite
+    "model": "opencode-geminicli-a2a/gemini-2.5-pro",
+    "small_model": "opencode-geminicli-a2a/gemini-2.5-flash",
+    // ---------------------------------------------------------
+    // Gemini CLI (A2A) 固有の設定
+    // ---------------------------------------------------------
+    // ※ A2A サーバーとの接続設定（デフォルトで問題ない場合は options は省略可能）
+    // ※ OpenCodeのUIでモデルを選択可能にするためには models への列挙が必要です
+    "provider": {
+        "opencode-geminicli-a2a": {
+            // npm: プロバイダーSDKのロード先を指定します。
+            // ※ローカルビルドを使用する場合は file:// プレフィックス付きの絶対パスで指定してください。
+            // ※npm/GitHub Packages に公開済みの場合はパッケージ名を直接指定できます。
+            "npm": "file:///path/to/opencode-geminicli-a2a/dist/index.js",
+            "options": {
+                // A2A サーバーのアクセス先を指定 (デフォルトは 127.0.0.1:41242)
+                "host": "127.0.0.1",
+                "port": 41242,
+                "protocol": "http"
+            },
+            "models": {
+                // ---------------------------------------------------------
+                // ※ モデルごとの個別設定 (OpenCode スキーマ準拠)
+                // ---------------------------------------------------------
+                // 各モデルの options.generationConfig で、個別に温度感などを指定可能です。
+                "gemini-3.1-pro-preview": {
+                    "options": {
+                        "generationConfig": {
+                            "temperature": 0.2,
+                            "maxOutputTokens": 8192
+                        }
+                    }
+                },
+                "gemini-2.5-pro": {
+                    "options": {
+                        "generationConfig": {
+                            "temperature": 0.7
+                        }
+                    }
+                },
+                "gemini-2.5-flash": true, // boolean での有効化も引き続きサポート
+                "gemini-2.5-flash-lite": true
+            }
+            // ---------------------------------------------------------
+            // ※ 動的モデル変更 (Dynamic Model Switching)
+            // ---------------------------------------------------------
+            // 現在のバージョンでは、A2A サーバー側で動的モデル変更がサポートされているため、
+            // 単一の A2A サーバー (例: 41242 ポート) ですべてのモデルを処理可能です。
+            // サーバーを複数起動して使い分ける必要がある場合のみ、以下の "agents" を設定してください。
+            //
+            // "agents": [
+            //     {
+            //         "key": "pro-server",
+            //         "port": 41242,
+            //         "models": ["gemini-3.1-pro-preview", "gemini-2.5-pro"]
+            //     },
+            //     {
+            //         "key": "flash-server",
+            //         "port": 41243,
+            //         "models": ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+            //     }
+            // ]
+        }
+    },
+    // ---------------------------------------------------------
+    // その他の OpenCode 設定
+    // ---------------------------------------------------------
+    // OpenCode の動作に関するグローバルなオプション（例）
+    // UI の言語設定
+    "language": "ja",
+    // デバッグや詳細な出力を有効化する場合
+    "verbose": true
+}

@@ -1,0 +1,186 @@
+import type { ProviderV2 } from '@ai-sdk/provider';
+import { OpenCodeGeminiA2AProvider } from './provider';
+import { InMemorySessionStore } from './session';
+import { type OpenCodeProviderOptions } from './config';
+import { StaticModelRegistry, type ModelRegistry, type ModelInfo } from './model-registry';
+import { ServerManager } from './server-manager';
+import { Logger } from './utils/logger';
+
+/**
+ * @note これはプロセス内シングルトンであり、サーバレスやマルチプロセス環境では
+...
+ */
+export const sharedSessionStore = new InMemorySessionStore();
+
+if (process.env['NODE_ENV'] !== 'production') {
+    Logger.debug('PLUGIN SCRIPT LOADED');
+}
+
+export { createGeminiA2AProvider, OpenCodeGeminiA2AProvider };
+export { StaticModelRegistry, type ModelRegistry, type ModelInfo } from './model-registry';
+export { ServerManager, type AutoStartConfig } from './server-manager';
+
+/**
+ * OpenCode Gemini CLI A2A Provider のインターフェース
+ */
+export interface GeminiA2AProvider extends Omit<ProviderV2, 'languageModel' | 'specificationVersion'> {
+    providerId: string;
+    providerID: string;
+    id: string;
+    specificationVersion: 'v2';
+    languageModel: (modelId: string, settings?: any) => OpenCodeGeminiA2AProvider;
+    /**
+     * 指定されたセッションのコンテキスト（contextId / taskId）をリセットします。
+     * 新規チャットスレッド開始時等に使用してください。
+     */
+    resetSession: (sessionId: string) => Promise<void>;
+    (modelId: string, settings?: any): OpenCodeGeminiA2AProvider;
+}
+
+function isGeminiA2AProvider(obj: any): obj is GeminiA2AProvider {
+    return obj !== null && typeof obj === 'function' && typeof obj.languageModel === 'function' && typeof obj.providerId === 'string';
+}
+
+function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2AProvider {
+    try {
+        const logPayload: Record<string, any> = {};
+        if (options) {
+            for (const [key, value] of Object.entries(options)) {
+                if (key === 'token') {
+                    logPayload[key] = '***REDACTED***';
+                } else if (key === 'sessionStore' || key === 'modelRegistry') {
+                    logPayload[key] = `<${key}>`;
+                } else if (typeof value !== 'object' && typeof value !== 'function') {
+                    logPayload[key] = value;
+                }
+            }
+        }
+        Logger.info(`Provider factory called with options: ${JSON.stringify(logPayload)}`);
+        
+        const sessionStore = options?.sessionStore ?? sharedSessionStore;
+        const modelRegistry = options?.modelRegistry ?? new StaticModelRegistry();
+
+        const createModel = (modelId: string, settings?: any) => {
+            const { sessionStore: modelSessionStore, ...restSettings } = settings ?? {};
+            if (modelSessionStore && modelSessionStore !== sessionStore) {
+                throw new Error('Conflicting session stores detected: Per-model sessionStore overrides are not permitted. Please configure the sessionStore at the provider level.');
+            }
+            const sanitizedSettings = Object.fromEntries(
+                Object.entries(restSettings).filter(([_, v]) => v !== undefined)
+            );
+            const providerInstance = new OpenCodeGeminiA2AProvider(modelId, { ...options, sessionStore, ...sanitizedSettings });
+
+            if (options?.autoStart) {
+                const manager = ServerManager.getInstance();
+                const debug = !!process.env['DEBUG_OPENCODE'];
+                
+                // プロバイダー内で解決された最終的な接続先を取得
+                const providerOpts = providerInstance as unknown as { options?: { host?: string; port?: number } };
+                const resolvedHost = providerOpts.options?.host ?? options.host ?? 'localhost';
+                const resolvedPort = providerOpts.options?.port ?? options.port ?? 41242;
+
+                // サーバー起動は非同期なので Promise としてプロバイダーに持たせる
+                Logger.debug(`AutoStart configured for model '${modelId}' on ${resolvedHost}:${resolvedPort}`);
+                (providerInstance as any)._serverReady = manager.ensureRunning(
+                    resolvedPort,
+                    resolvedHost,
+                    modelId,
+                    options.autoStart,
+                    debug
+                ).catch((err: unknown) => {
+                    Logger.error(`Failed to auto-start server for model '${modelId}' on ${resolvedHost}:${resolvedPort}`, err);
+                    throw err;
+                });
+            }
+
+            return providerInstance;
+        };
+
+        const models = modelRegistry.toRecord();
+
+        // createModel を直接呼び出し可能なプロバイダー関数として使用し、
+        // プロパティを付与して ProviderV1 互換にする。
+        // これにより ESM/CJS 両方で provider('model-id') の直接呼び出し構文が動作する。
+        const providerProperties: Record<string, unknown> = {
+            providerId: 'opencode-geminicli-a2a',
+            providerID: 'opencode-geminicli-a2a',
+            id: 'opencode-geminicli-a2a',
+            specificationVersion: 'v2',
+            models,
+            languageModel: createModel,
+            textEmbeddingModel: (modelId: string) => {
+                throw new Error(`Embedding model '${modelId}' is not supported by Gemini CLI (A2A).`);
+            },
+            resetSession: async (sessionId: string) => {
+                await sessionStore.resetSession(sessionId);
+            },
+        };
+
+        // Object.defineProperty を使って関数の readonly プロパティとの衝突を回避
+        for (const [key, value] of Object.entries(providerProperties)) {
+            Object.defineProperty(createModel, key, {
+                value,
+                writable: true,
+                configurable: true,
+                enumerable: true,
+            });
+        }
+
+        // name プロパティは関数固有の readonly なので defineProperty で上書き
+        Object.defineProperty(createModel, 'name', {
+            value: 'Gemini CLI (A2A)',
+            writable: false,
+            configurable: true,
+            enumerable: true,
+        });
+
+        Logger.info('Provider instance created successfully');
+        
+        if (!isGeminiA2AProvider(createModel)) {
+            throw new Error('Runtime type check failed: createModel does not satisfy GeminiA2AProvider');
+        }
+        return createModel;
+    } catch (err) {
+        Logger.error('CRITICAL ERROR IN FACTORY:', err);
+        throw err;
+    }
+}
+
+/**
+ * OpenCode 向けの互換エクスポート
+ */
+export const createProvider = createGeminiA2AProvider;
+
+let _providerInstance: GeminiA2AProvider | undefined;
+
+/**
+ * OpenCode 向けのプロバイダーを初期化・取得します。
+ * 初回呼び出し時の `config` を用いてインスタンス化し、以降の呼び出しでは
+ * 同じインスタンスを返します。(後続の異なる config は無視されます)
+ */
+export function initProvider(config?: OpenCodeProviderOptions): GeminiA2AProvider {
+    if (!_providerInstance) {
+        _providerInstance = createGeminiA2AProvider(config);
+    } else if (config !== undefined) {
+        Logger.warn('initProvider called with new config while _providerInstance already exists. The new config will be ignored.');
+    }
+    return _providerInstance;
+}
+
+export const provider = new Proxy(Function.prototype as unknown as GeminiA2AProvider, {
+    get(_, prop) {
+        if (!_providerInstance) {
+            throw new Error('Provider not initialized. Call initProvider(config) first.');
+        }
+        return (_providerInstance as any)[prop];
+    },
+    apply(_, __, args) {
+        if (!_providerInstance) {
+            throw new Error('Provider not initialized. Call initProvider(config) first.');
+        }
+        return (_providerInstance as any)(...args);
+    }
+});
+
+export const opencodeGeminicliA2a = provider;
+export default createGeminiA2AProvider;
