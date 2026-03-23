@@ -1,0 +1,13 @@
+# Note for Linux users: You may need to add 'extra_hosts: ["host.docker.internal:host-gateway"]' 
+# to docker-compose.yml if host.docker.internal doesn't resolve.
+model_list:
+  - model_name: gemini-2.5-pro
+    litellm_params:
+      model: openai/gemini-2.5-pro
+      api_base: http://host.docker.internal:41242
+      api_key: "not-needed"
+  - model_name: gemini-2.5-flash
+    litellm_params:
+      model: openai/gemini-2.5-flash
+      api_base: http://host.docker.internal:41242
+      api_key: "not-needed"
