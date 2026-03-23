@@ -30,3 +30,19 @@ describe('resolveConfig with LiteLLM', () => {
         delete process.env.LITELLM_PROXY_URL;
     });
 });
+
+import { A2AClient } from '../src/a2a-client';
+
+describe('A2AClient with litellmProxy', () => {
+    it('uses proxy url when configured', () => {
+        const client = new A2AClient({
+            host: '127.0.0.1',
+            port: 41242,
+            protocol: 'http',
+            litellmProxy: { url: 'http://litellm-proxy:8000', apiKey: 'secret' }
+        } as any);
+
+        const internalEndpoint = (client as any).endpoint;
+        expect(internalEndpoint).toBe('http://litellm-proxy:8000/'); 
+    });
+});

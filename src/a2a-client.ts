@@ -1,6 +1,6 @@
 import { ofetch, FetchError } from 'ofetch';
 import { APICallError } from '@ai-sdk/provider';
-import type { A2AConfig, A2AJsonRpcRequest } from './schemas';
+import type { A2AConfig, A2AJsonRpcRequest, LiteLLMProxyConfig } from './schemas';
 import { Logger } from './utils/logger';
 import crypto from 'node:crypto';
 
@@ -20,14 +20,16 @@ export interface ChatStreamResponse {
 }
 
 export class A2AClient {
-    private config: A2AConfig;
+    private config: A2AConfig & { litellmProxy?: LiteLLMProxyConfig };
     private endpoint: string;
 
-    constructor(config: A2AConfig) {
+    constructor(config: A2AConfig & { litellmProxy?: LiteLLMProxyConfig }) {
         this.config = config;
         // A2A SDK 通常、ルートまたは特定のベースパスで待機する。
         // 実情に合わせてルート (/) を指定。
-        this.endpoint = `${config.protocol ?? 'http'}://${config.host}:${config.port}/`;
+        this.endpoint = config.litellmProxy?.url 
+            ? (config.litellmProxy.url.endsWith('/') ? config.litellmProxy.url : `${config.litellmProxy.url}/`)
+            : `${config.protocol ?? 'http'}://${config.host}:${config.port}/`;
     }
 
     /**
