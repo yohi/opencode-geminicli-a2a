@@ -343,26 +343,11 @@ export class ServerManager {
         };
     }
 
-    private cleanupHandlers: Array<{ event: string; handler: (...args: any[]) => void }> = [];
+    private cleanupHandlers: Array<{ event: string; handler: (...args: any[]) => void | Promise<void> }> = [];
 
     private registerCleanup(debug: boolean) {
         if (this.cleanupRegistered) return;
         this.cleanupRegistered = true;
-
-        const cleanupAndExit = (signal?: NodeJS.Signals) => {
-            Logger.info(`[ServerManager] Received ${signal || 'exit'}, cleaning up...`);
-            try {
-                this.dispose();
-            } catch (err) {
-                Logger.error('[ServerManager] Error during dispose in signal handler:', err);
-            }
-            if (signal) {
-                // Remove this handler to avoid infinite recursion then kill itself
-                const h = this.cleanupHandlers.find(ch => ch.event === signal);
-                if (h) process.off(signal as any, h.handler);
-                process.kill(process.pid, signal);
-            }
-        };
 
         const exitHandler = () => {
             try {
@@ -371,16 +356,18 @@ export class ServerManager {
                 Logger.error('[ServerManager] Error during dispose in exit handler:', err);
             }
         };
-        const termHandler = () => cleanupAndExit('SIGTERM');
-        const intHandler = () => cleanupAndExit('SIGINT');
-        const uncaughtHandler = (err: Error) => {
+        const termHandler = () => this.cleanupAndExit('SIGTERM');
+        const intHandler = () => this.cleanupAndExit('SIGINT');
+        const uncaughtHandler = async (err: Error) => {
             Logger.error('[ServerManager] Uncaught exception:', err);
-            cleanupAndExit();
+            this.cleanupAndExit('SIGERROR' as any);
+            await this.disposeAndWait();
             process.exit(1);
         };
-        const unhandledHandler = (reason: any) => {
+        const unhandledHandler = async (reason: any) => {
             Logger.error('[ServerManager] Unhandled rejection:', reason);
-            cleanupAndExit();
+            this.cleanupAndExit('SIGERROR' as any);
+            await this.disposeAndWait();
             process.exit(1);
         };
 
@@ -394,9 +381,51 @@ export class ServerManager {
             { event: 'exit', handler: exitHandler },
             { event: 'SIGTERM', handler: termHandler },
             { event: 'SIGINT', handler: intHandler },
-            { event: 'uncaughtException', handler: uncaughtHandler },
-            { event: 'unhandledRejection', handler: unhandledHandler }
+            { event: 'uncaughtException', handler: uncaughtHandler as any },
+            { event: 'unhandledRejection', handler: unhandledHandler as any }
         );
+    }
+
+    /**
+     * すべてのサーバーを停止し、プロセスが終了するのを待機する。
+     */
+    async disposeAndWait(timeoutMs: number = 5000): Promise<void> {
+        const servers = Array.from(this.servers.values());
+        this.dispose();
+
+        const waitPromises = servers.map(server => {
+            if (!server.proc || server.proc.killed) return Promise.resolve();
+            return new Promise<void>((resolve) => {
+                server.proc.once('exit', () => resolve());
+                server.proc.once('error', () => resolve());
+            });
+        });
+
+        const timeoutPromise = new Promise<void>((resolve) => {
+            setTimeout(() => {
+                Logger.warn(`[ServerManager] disposeAndWait timed out after ${timeoutMs}ms`);
+                resolve();
+            }, timeoutMs);
+        });
+
+        await Promise.race([Promise.all(waitPromises), timeoutPromise]);
+    }
+
+    private cleanupAndExit(signal?: NodeJS.Signals) {
+        Logger.info(`[ServerManager] Received ${signal || 'exit'}, cleaning up...`);
+        if (signal !== ('SIGERROR' as any)) {
+            try {
+                this.dispose();
+            } catch (err) {
+                Logger.error('[ServerManager] Error during dispose in signal handler:', err);
+            }
+        }
+        if (signal && signal !== ('SIGERROR' as any)) {
+            // Remove this handler to avoid infinite recursion then kill itself
+            const h = this.cleanupHandlers.find(ch => ch.event === signal);
+            if (h) process.off(signal as any, h.handler);
+            process.kill(process.pid, signal);
+        }
     }
 
     public dispose() {

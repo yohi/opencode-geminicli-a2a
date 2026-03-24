@@ -141,4 +141,44 @@ describe('ServerManager', () => {
         await smNew.ensureRunning(port + 2, host, modelId, config, false);
         expect(exec).toHaveBeenCalledTimes(2);
     });
+
+    it('should wait for all servers to exit in disposeAndWait', async () => {
+        const port = 12345;
+        const host = '127.0.0.1';
+        const sm = ServerManager.getInstance();
+
+        const mockProcess = new EventEmitter() as any;
+        mockProcess.stdout = new EventEmitter();
+        mockProcess.stderr = new EventEmitter();
+        mockProcess.kill = vi.fn(() => {
+            // シミュレーション: 50ms 後に終了
+            setTimeout(() => mockProcess.emit('exit', 0), 50);
+        });
+        vi.mocked(spawn).mockReturnValue(mockProcess);
+
+        let probeCount = 0;
+        vi.mocked(createConnection).mockImplementation(() => {
+            probeCount++;
+            const socket = new EventEmitter() as any;
+            socket.destroy = vi.fn();
+            socket.setTimeout = vi.fn();
+            // 最初はエラー、2回目（poll）で成功
+            if (probeCount === 1) {
+                setTimeout(() => socket.emit('error', new Error('refused')), 1);
+            } else {
+                setTimeout(() => socket.emit('connect'), 1);
+            }
+            return socket as any;
+        });
+
+        // サーバーを起動
+        await sm.ensureRunning(port, host, 'model', { pollIntervalMs: 10 }, false);
+
+        const start = Date.now();
+        await sm.disposeAndWait();
+        const end = Date.now();
+
+        expect(mockProcess.kill).toHaveBeenCalled();
+        expect(end - start).toBeGreaterThanOrEqual(40); // 50ms 程度待っているはず
+    });
 });
