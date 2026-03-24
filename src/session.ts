@@ -147,18 +147,22 @@ export interface SessionState {
 /**
  * Type guard to validate SessionState shape
  */
-export function isSessionState(obj: any): obj is SessionState {
-  return (
-    obj !== null &&
-    typeof obj === 'object' &&
-    Array.isArray(obj.history) &&
-    obj.history.every(
-      (entry: any) =>
-        entry !== null &&
-        typeof entry === 'object' &&
-        typeof entry.role === 'string' &&
-        typeof entry.content === 'string'
-    )
+export function isSessionState(obj: unknown): obj is SessionState {
+  if (obj === null || typeof obj !== 'object') {
+    return false;
+  }
+
+  const candidate = obj as Record<string, unknown>;
+  if (!Array.isArray(candidate.history)) {
+    return false;
+  }
+
+  return candidate.history.every(
+    (entry: unknown) =>
+      entry !== null &&
+      typeof entry === 'object' &&
+      typeof (entry as Record<string, unknown>).role === 'string' &&
+      typeof (entry as Record<string, unknown>).content === 'string'
   );
 }
 
@@ -175,7 +179,8 @@ export class ContextManager {
       }
       return parsed;
     } catch (e) {
-      throw new Error(`Failed to import context: ${(e as Error).message}`);
+      const message = e instanceof Error ? e.message : String(e);
+      throw new Error(`Failed to import context: ${message}`);
     }
   }
 }

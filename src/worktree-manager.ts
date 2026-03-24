@@ -7,7 +7,7 @@ export class WorktreeManager {
    * Validate and sanitize identifier to prevent path traversal
    */
   private sanitizeIdentifier(id: string): string {
-    if (!id || typeof id !== 'string') {
+    if (!id || typeof id !== 'string' || id.trim().length === 0) {
         throw new Error('Identifier must be a non-empty string');
     }
     // Only allow alphanumeric, dashes, and underscores
