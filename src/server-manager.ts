@@ -54,6 +54,8 @@ interface ManagedServer {
     port: number;
     host: string;
     refCount: number;
+    /** 終了処理中の場合に、終了を待機するための Promise */
+    shutdownPromise?: Promise<void>;
 }
 
 interface InflightStartup {
@@ -100,6 +102,12 @@ export class ServerManager {
         // 1. 既に本マネージャーが管理しているプロセスが存在するか確認
         const existing = this.servers.get(key);
         if (existing) {
+            // 終了処理中の場合は終了を待ってから再試行
+            if (existing.shutdownPromise) {
+                Logger.debug(`[ServerManager] Waiting for existing server on ${key} to finish shutdown...`);
+                await existing.shutdownPromise;
+                return this.ensureRunning(port, host, modelId, config, debug);
+            }
             existing.refCount++;
             Logger.info(`[ServerManager] Reusing managed server on ${key} (refCount=${existing.refCount})`);
             return this.makeReleaseFn(key, debug, existing);
@@ -155,8 +163,9 @@ export class ServerManager {
             // 3. 既に外部プロセスがリッスンしているか確認
             const isListening = await probePort(port, host);
             if (this.startingUp.get(key) !== slot) {
-                slot.reject(new Error('Startup aborted: slot replaced during probePort'));
-                return async () => {};
+                const err = new Error('Startup aborted: slot replaced during probePort');
+                slot.reject(err);
+                throw err;
             }
 
             if (isListening) {
@@ -328,6 +337,7 @@ export class ServerManager {
                     captured.proc.once('exit', () => resolve());
                     captured.proc.once('error', () => resolve());
                 });
+                captured.shutdownPromise = exitPromise;
                 captured.proc.kill();
                 
                 // 実際にプロセスが終了するのを待つことで、後続の probePort とのレースを防ぐ

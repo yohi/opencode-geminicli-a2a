@@ -254,7 +254,9 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
         const serializedRequestForTest = JSON.stringify(initialRequestData);
         
         const toolsArr = (options as any).mode?.type === 'regular' ? (options as any).mode.tools : ((options as any).tools || []);
-        const clientTools = toolsArr ? toolsArr.map((t: any) => t.function?.name || t.name || t.type) : [];
+        const clientTools = toolsArr 
+            ? toolsArr.map((t: any) => t.function?.name || t.name || t.type).filter((n: any): n is string => !!n) 
+            : [];
         
         // session.processedMessagesCount 以降に 'user' ロールのメッセージがあるかを確認して新規ユーザーターンと判定する
         const isNewUserTurn = options.prompt.slice(session.processedMessagesCount || 0).some(m => m.role === 'user');
@@ -501,8 +503,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     } as any);
                                     
                                     // A2Aサーバーがinput-requiredのままでハングしないよう、Cancelを送信する
-                                    if ((lastFinishPart as any).taskId) {
-                                        const cancelParam = buildConfirmationRequest((lastFinishPart as any).taskId, this.modelId, false);
+                                    if (lastFinishPart.taskId) {
+                                        const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, this.modelId, false);
                                         this.client!.chatStream({ request: cancelParam, abortSignal: timeoutAbortController.signal }).catch((err: any) => {
                                             Logger.error(`[Provider] Failed to send loop-interrupt Cancel to A2A server:`, err);
                                         });
@@ -512,11 +514,11 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 }
 
                                 const canAutoConfirm = isAutoConfirmTarget(lastFinishPart!, textPartCounter);
-                                if (canAutoConfirm && (lastFinishPart as any).taskId) {
+                                if (canAutoConfirm && lastFinishPart.taskId) {
                                     if (autoConfirmCount < MAX_AUTO_CONFIRM) {
                                         autoConfirmCount++;
                                         currentRequest = buildConfirmationRequest(
-                                            (lastFinishPart as any).taskId!,
+                                            lastFinishPart.taskId!,
                                             this.modelId,
                                             true
                                         );
@@ -538,12 +540,12 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     }
                                 }
 
-                                const isToolCallConfirm = (lastFinishPart as any).coderAgentKind === 'tool-call-confirmation' && (lastFinishPart as any).hasExposedTools === true;
-                                if (isToolCallConfirm && (lastFinishPart as any).taskId) {
+                                const isToolCallConfirm = lastFinishPart.coderAgentKind === 'tool-call-confirmation' && lastFinishPart.hasExposedTools === true;
+                                if (isToolCallConfirm && lastFinishPart.taskId) {
                                     if (toolCallConfirmCount < MAX_TOOL_CONFIRM) {
                                         toolCallConfirmCount++;
                                         currentRequest = buildConfirmationRequest(
-                                            (lastFinishPart as any).taskId!,
+                                            lastFinishPart.taskId!,
                                             this.modelId,
                                             true
                                         );
@@ -602,8 +604,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 taskId: mapper.taskId || session.taskId,
                                 processedMessagesCount: options.prompt.length,
                                 toolCallFrequency: updatedFreq,
-                                inputRequired: (lastFinishPart as any)?.inputRequired,
-                                rawState: (lastFinishPart as any)?.inputRequired ? 'input-required' : undefined,
+                                inputRequired: lastFinishPart?.inputRequired,
+                                rawState: lastFinishPart?.inputRequired ? 'input-required' : undefined,
                             });
                         }
                         safeClose();
