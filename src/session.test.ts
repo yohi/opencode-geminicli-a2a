@@ -149,4 +149,14 @@ describe('ContextManager', () => {
     const imported = manager.importContext(exported);
     expect(imported.history[0].content).toBe('hello');
   });
+
+  it('should throw error for invalid JSON format', () => {
+    const manager = new ContextManager();
+    expect(() => manager.importContext('invalid-json')).toThrow('Failed to import context');
+  });
+
+  it('should throw error for invalid session state shape', () => {
+    const manager = new ContextManager();
+    expect(() => manager.importContext('{"foo": "bar"}')).toThrow('Invalid session state format');
+  });
 });

@@ -70,6 +70,9 @@ export class DefaultMultiAgentRouter implements MultiAgentRouter {
     }
 }
 
+export const MODEL_PRO = 'gemini-1.5-pro';
+export const MODEL_FLASH = 'gemini-1.5-flash';
+
 export interface TaskRequirements {
   complexity: 'low' | 'medium' | 'high';
 }
@@ -77,8 +80,11 @@ export interface TaskRequirements {
 export class DynamicModelRouter {
   selectModel(req: TaskRequirements): string {
     if (req.complexity === 'high') {
-      return 'gemini-1.5-pro';
+      return MODEL_PRO;
     }
-    return 'gemini-1.5-flash';
+    if (req.complexity === 'medium') {
+      return MODEL_FLASH; // Explicitly map 'medium' to Flash for clarity
+    }
+    return MODEL_FLASH;
   }
 }

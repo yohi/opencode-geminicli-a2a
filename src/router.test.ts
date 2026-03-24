@@ -125,4 +125,10 @@ describe('DynamicModelRouter', () => {
     const model = router.selectModel({ complexity: 'high' });
     expect(model).toContain('pro');
   });
+
+  it('should select a flash model for medium complexity tasks', () => {
+    const router = new DynamicModelRouter();
+    const model = router.selectModel({ complexity: 'medium' });
+    expect(model).toContain('flash');
+  });
 });
