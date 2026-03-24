@@ -53,6 +53,26 @@ export interface OpenCodeProviderOptions {
         url: string;
         apiKey?: string;
     };
+    /**
+     * A2A ストリームのチャンク間タイムアウト (ms)。
+     * この時間内に次のチャンクが届かなければエラーとしてストリームを終了する。
+     * codebase_investigator など長時間タスクを使う場合は大きめの値を設定してください。
+     * デフォルト: 600000 (10分)
+     */
+    chunkTimeoutMs?: number;
+    /**
+     * 同一引数での同一ツール呼び出しの許容回数。
+     * この回数を超えると、内部ツールの場合はループ強制中断、
+     * 外部ツールの場合は bash フォールバックに変換される。
+     * デフォルト: 3
+     */
+    maxToolCallFrequency?: number;
+    /**
+     * 内部ツールの auto-confirm ループの最大回数。
+     * この回数を超えるとループを停止し、テキスト未出力であればフォールバックメッセージを返す。
+     * デフォルト: 50
+     */
+    maxAutoConfirm?: number;
 }
 
 /** 外部設定ファイルのスキーマ */

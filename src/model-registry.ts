@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { Logger } from './utils/logger';
 
 /**
  * モデル情報を表すインターフェース。
@@ -107,9 +108,7 @@ function loadModelsFromConfig(): ModelInfo[] | undefined {
 
         return parseModelsConfig(modelsConfig);
     } catch (err) {
-        if (process.env['DEBUG_OPENCODE']) {
-            console.error('[opencode-geminicli-a2a] Failed to load custom models configuration; using default models.', err);
-        }
+        Logger.error('Failed to load custom models configuration; using default models.', err);
         return undefined;
     }
 }

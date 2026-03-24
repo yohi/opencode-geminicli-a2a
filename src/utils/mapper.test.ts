@@ -75,10 +75,9 @@ describe('mapper', () => {
             expect(parts.length).toBe(1);
             expect(parts[0].type).toBe('text-delta');
             if (parts[0].type === 'text-delta') {
-                expect(parts[0].textDelta).toBe('hello');
-            }
-        });
-
+                expect(parts[0].delta).toBe('hello');
+                }
+                });
         it('should ignore task kind', () => {
             const result: A2AResponseResult = {
                 kind: 'task',
@@ -155,8 +154,8 @@ describe('mapper', () => {
             const parts = mapA2AResponseToStreamParts(result);
             const finishPart = parts.find(p => p.type === 'finish');
             if (finishPart && finishPart.type === 'finish') {
-                expect(finishPart.usage?.inputTokens.total).toBe(10);
-                expect(finishPart.usage?.outputTokens.total).toBe(20);
+                expect(finishPart.usage?.promptTokens).toBe(10);
+                expect(finishPart.usage?.completionTokens).toBe(20);
             }
         });
 
@@ -170,8 +169,8 @@ describe('mapper', () => {
             const parts = mapA2AResponseToStreamParts(result);
             const finishPart = parts.find(p => p.type === 'finish');
             if (finishPart && finishPart.type === 'finish') {
-                expect(finishPart.usage?.inputTokens.total).toBe(0);
-                expect(finishPart.usage?.outputTokens.total).toBe(0);
+                expect(finishPart.usage?.promptTokens).toBe(0);
+                expect(finishPart.usage?.completionTokens).toBe(0);
             }
         });
 
@@ -186,7 +185,7 @@ describe('mapper', () => {
                         parts: [{
                             kind: 'data',
                             data: {
-                                request: { callId: 'call-123', name: 'getWeather', args: { location: 'Tokyo' } }
+                                request: { callId: 'call-123', name: 'getWeather', args: JSON.stringify({ location: 'Tokyo' }) }
                             }
                         }]
                     }
@@ -219,7 +218,7 @@ describe('mapper', () => {
                         parts: [{
                             kind: 'data',
                             data: {
-                                request: { callId: 'call-456', name: 'getWeather', args: { location: 'Osaka' } }
+                                request: { callId: 'call-456', name: 'getWeather', args: JSON.stringify({ location: 'Osaka' }) }
                             }
                         }]
                     }
@@ -246,7 +245,7 @@ describe('mapper', () => {
                     message: {
                         parts: [{
                             kind: 'data',
-                            data: { request: { name: 'getWeather', args: {} } }
+                            data: { request: { name: 'getWeather', args: JSON.stringify({}) } }
                         }]
                     }
                 }
@@ -270,7 +269,7 @@ describe('mapper', () => {
                     message: {
                         parts: [{
                             kind: 'data',
-                            data: { request: { callId: 'call-789', args: {} } }
+                            data: { request: { callId: 'call-789', args: JSON.stringify({}) } }
                         }]
                     }
                 }
@@ -298,15 +297,15 @@ describe('mapper', () => {
                 const parts1 = mapper.mapResult(makeUpdate('A'));
                 expect(parts1.length).toBe(1);
                 expect(parts1[0].type).toBe('text-delta');
-                if (parts1[0].type === 'text-delta') expect(parts1[0].textDelta).toBe('A');
+                if (parts1[0].type === 'text-delta') expect(parts1[0].delta).toBe('A');
 
                 const parts2 = mapper.mapResult(makeUpdate('AB'));
                 expect(parts2.length).toBe(1);
-                if (parts2[0].type === 'text-delta') expect(parts2[0].textDelta).toBe('B');
+                if (parts2[0].type === 'text-delta') expect(parts2[0].delta).toBe('B');
 
                 const parts3 = mapper.mapResult(makeUpdate('ABC'));
                 expect(parts3.length).toBe(1);
-                if (parts3[0].type === 'text-delta') expect(parts3[0].textDelta).toBe('C');
+                if (parts3[0].type === 'text-delta') expect(parts3[0].delta).toBe('C');
             });
 
             it('should emit full text when new text does not start with previous', () => {
@@ -324,7 +323,7 @@ describe('mapper', () => {
                 mapper.mapResult(makeUpdate('Hello'));
                 const parts = mapper.mapResult(makeUpdate('World'));
                 expect(parts.length).toBe(1);
-                if (parts[0].type === 'text-delta') expect(parts[0].textDelta).toBe('World');
+                if (parts[0].type === 'text-delta') expect(parts[0].delta).toBe('World');
             });
 
             it('should not emit empty delta when snapshot is identical', () => {
@@ -358,11 +357,11 @@ describe('mapper', () => {
 
                 const parts1 = mapper.mapResult(makeUpdate('chunk1'));
                 expect(parts1.length).toBe(1);
-                if (parts1[0].type === 'text-delta') expect(parts1[0].textDelta).toBe('chunk1');
+                if (parts1[0].type === 'text-delta') expect(parts1[0].delta).toBe('chunk1');
 
                 const parts2 = mapper.mapResult(makeUpdate('chunk2'));
                 expect(parts2.length).toBe(1);
-                if (parts2[0].type === 'text-delta') expect(parts2[0].textDelta).toBe('chunk2');
+                if (parts2[0].type === 'text-delta') expect(parts2[0].delta).toBe('chunk2');
             });
 
             it('should handle snapshot deduplication for multiple text parts independently', () => {
@@ -380,13 +379,13 @@ describe('mapper', () => {
                 const parts1 = mapper.mapResult(makeUpdate('A', 'X'));
                 expect(parts1.length).toBe(2);
                 expect(parts1[0].type).toBe('text-delta');
-                if (parts1[0].type === 'text-delta') expect(parts1[0].textDelta).toBe('A');
-                if (parts1[1].type === 'text-delta') expect(parts1[1].textDelta).toBe('X');
+                if (parts1[0].type === 'text-delta') expect(parts1[0].delta).toBe('A');
+                if (parts1[1].type === 'text-delta') expect(parts1[1].delta).toBe('X');
 
                 const parts2 = mapper.mapResult(makeUpdate('AB', 'XY'));
                 expect(parts2.length).toBe(2);
-                if (parts2[0].type === 'text-delta') expect(parts2[0].textDelta).toBe('B');
-                if (parts2[1].type === 'text-delta') expect(parts2[1].textDelta).toBe('Y');
+                if (parts2[0].type === 'text-delta') expect(parts2[0].delta).toBe('B');
+                if (parts2[1].type === 'text-delta') expect(parts2[1].delta).toBe('Y');
             });
         });
 
@@ -404,7 +403,7 @@ describe('mapper', () => {
                             parts: [{
                                 kind: 'data',
                                 data: {
-                                    request: { callId: 'call-dup', name: 'getTime', args: {} }
+                                    request: { callId: 'call-dup', name: 'getTime', args: JSON.stringify({}) }
                                 }
                             }]
                         }
@@ -438,21 +437,21 @@ describe('mapper', () => {
 
                 // First snapshot has one tool call
                 const parts1 = mapper.mapResult(makeUpdate([
-                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                    { name: 'getWeather', args: JSON.stringify({ location: 'Tokyo' }) }
                 ]));
                 expect(parts1.filter(p => p.type === 'tool-call').length).toBe(1);
 
                 // Second snapshot has TWO identical tool calls (the first is identical and should be deduplicated, the second is NEW)
                 const parts2 = mapper.mapResult(makeUpdate([
-                    { name: 'getWeather', args: { location: 'Tokyo' } },
-                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                    { name: 'getWeather', args: JSON.stringify({ location: 'Tokyo' }) },
+                    { name: 'getWeather', args: JSON.stringify({ location: 'Tokyo' }) }
                 ]));
                 expect(parts2.filter(p => p.type === 'tool-call').length).toBe(1);
 
                 // Third snapshot is identical to the second snapshot (so 0 new emitted parts)
                 const parts3 = mapper.mapResult(makeUpdate([
-                    { name: 'getWeather', args: { location: 'Tokyo' } },
-                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                    { name: 'getWeather', args: JSON.stringify({ location: 'Tokyo' }) },
+                    { name: 'getWeather', args: JSON.stringify({ location: 'Tokyo' }) }
                 ]));
                 expect(parts3.filter(p => p.type === 'tool-call').length).toBe(0);
             });
@@ -477,20 +476,21 @@ describe('mapper', () => {
 
                 // First snapshot for task 't1' with one tool call
                 const parts1 = mapper.mapResult(makeUpdate('t1', [
-                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                    { name: 'getWeather', args: JSON.stringify({ location: 'Tokyo' }) }
                 ]));
+                console.log('[DEBUG-TEST-482] parts1 type filter:', parts1.map(p => p.type));
                 expect(parts1.filter(p => p.type === 'tool-call').length).toBe(1);
 
                 // Now transition to new taskId 't2' testing the same tool call again
                 // it should NOT be deduplicated
                 const parts2 = mapper.mapResult(makeUpdate('t2', [
-                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                    { name: 'getWeather', args: JSON.stringify({ location: 'Tokyo' }) }
                 ]));
                 expect(parts2.filter(p => p.type === 'tool-call').length).toBe(1);
 
                 // Subsequent identical requests within 't2' should be deduplicated
                 const parts3 = mapper.mapResult(makeUpdate('t2', [
-                    { name: 'getWeather', args: { location: 'Tokyo' } }
+                    { name: 'getWeather', args: JSON.stringify({ location: 'Tokyo' }) }
                 ]));
                 expect(parts3.filter(p => p.type === 'tool-call').length).toBe(0);
             });
@@ -520,9 +520,9 @@ describe('mapper', () => {
 
                 const parts = mapper.mapResult(result);
                 expect(parts.length).toBe(1);
-                expect(parts[0].type).toBe('reasoning');
-                if (parts[0].type === 'reasoning') {
-                    expect(parts[0].textDelta).toBe('[Analyzing the code] I\'m reviewing the function implementation.\n');
+                expect(parts[0].type).toBe('reasoning-delta');
+                if (parts[0].type === 'reasoning-delta') {
+                    expect(parts[0].delta).toBe('[Analyzing the code] I\'m reviewing the function implementation.\n');
                 }
             });
 
@@ -546,9 +546,9 @@ describe('mapper', () => {
 
                 const parts = mapper.mapResult(result);
                 expect(parts.length).toBe(1);
-                expect(parts[0].type).toBe('reasoning');
-                if (parts[0].type === 'reasoning') {
-                    expect(parts[0].textDelta).toBe('[Processing]\n');
+                expect(parts[0].type).toBe('reasoning-delta');
+                if (parts[0].type === 'reasoning-delta') {
+                    expect(parts[0].delta).toBe('[Processing]\n');
                 }
             });
 
@@ -569,7 +569,7 @@ describe('mapper', () => {
                                 {
                                     kind: 'data',
                                     data: {
-                                        request: { callId: 'call-mixed', name: 'runCommand', args: { cmd: 'ls' } }
+                                        request: { callId: 'call-mixed', name: 'runCommand', args: JSON.stringify({ cmd: 'ls' }) }
                                     }
                                 }
                             ]
@@ -580,12 +580,12 @@ describe('mapper', () => {
                 };
 
                 const parts = mapper.mapResult(result);
-                const reasoningParts = parts.filter(p => p.type === 'reasoning');
+                const reasoningParts = parts.filter(p => p.type === 'reasoning-delta');
                 const toolCallParts = parts.filter(p => p.type === 'tool-call');
                 expect(reasoningParts.length).toBe(1);
                 expect(toolCallParts.length).toBe(1);
-                if (reasoningParts[0].type === 'reasoning') {
-                    expect(reasoningParts[0].textDelta).toContain('Thinking');
+                if (reasoningParts[0].type === 'reasoning-delta') {
+                    expect(reasoningParts[0].delta).toContain('Thinking');
                 }
                 if (toolCallParts[0].type === 'tool-call') {
                     expect(toolCallParts[0].toolName).toBe('runCommand');
@@ -614,9 +614,9 @@ describe('mapper', () => {
 
                 const parts = mapper.mapResult(result);
                 expect(parts.length).toBe(1);
-                expect(parts[0].type).toBe('reasoning');
-                if (parts[0].type === 'reasoning') {
-                    expect(parts[0].textDelta).toBe('No subject, just description via metadata\n');
+                expect(parts[0].type).toBe('reasoning-delta');
+                if (parts[0].type === 'reasoning-delta') {
+                    expect(parts[0].delta).toBe('No subject, just description via metadata\n');
                 }
             });
         });
@@ -642,16 +642,15 @@ describe('mapper', () => {
 
                 const textParts = mapper.mapResult(textUpdate);
                 expect(textParts.length).toBe(1);
-                if (textParts[0].type === 'text-delta') expect(textParts[0].textDelta).toBe('Hello World');
+                if (textParts[0].type === 'text-delta') expect(textParts[0].delta).toBe('Hello World');
 
                 const finishParts = mapper.mapResult(finishUpdate);
                 expect(finishParts.length).toBe(1);
                 expect(finishParts[0].type).toBe('finish');
                 if (finishParts[0].type === 'finish') {
                     expect(finishParts[0].finishReason).toBe('stop');
-                    // In the current implementation, inputRequired is only set if hasExposedTools or hasInternalTools is true.
-                    // This test case has neither, so inputRequired should be undefined.
-                    expect((finishParts[0] as any).inputRequired).toBeUndefined();
+                    // Because state is 'input-required', inputRequired should be passed through as true
+                    expect((finishParts[0] as any).inputRequired).toBe(true);
                 }
             });
         });
@@ -828,7 +827,7 @@ describe('mapper', () => {
 
                 const parts = mapper.mapResult(result);
                 expect(parts.length).toBe(0);
-                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Received image part without bytes or uri. Skipping.'));
+                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Received image part without bytes or uri. Skipping.'));
                 consoleSpy.mockRestore();
             });
 
@@ -852,7 +851,7 @@ describe('mapper', () => {
 
                 const parts = mapper.mapResult(result);
                 expect(parts.length).toBe(0);
-                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('WARN: Received file part without fileWithBytes or uri. Skipping.'));
+                expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Received file part without fileWithBytes or uri. Skipping.'));
                 consoleSpy.mockRestore();
             });
 
@@ -896,13 +895,14 @@ describe('mapper', () => {
                         message: {
                             parts: [{
                                 kind: 'data',
-                                data: { request: { callId: 'c1', name: 'search', args: { q: 'A' } } }
+                                data: { request: { callId: 'c1', name: 'search', args: JSON.stringify({ q: 'A' }) } }
                             }]
                         }
                     }
                 };
 
                 const parts1 = mapper.mapResult(update1);
+                console.log('[DEBUG-TEST-905] update1:', JSON.stringify(update1), 'parts1 type filter:', parts1.map(p => p.type));
                 expect(parts1.filter(p => p.type === 'tool-call').length).toBe(0);
 
                 const update2: A2AResponseResult = {
@@ -914,7 +914,7 @@ describe('mapper', () => {
                         message: {
                             parts: [{
                                 kind: 'data',
-                                data: { request: { callId: 'c1', name: 'search', args: { q: 'AB' } } }
+                                data: { request: { callId: 'c1', name: 'search', args: JSON.stringify({ q: 'AB' }) } }
                             }]
                         }
                     }
@@ -940,7 +940,7 @@ describe('mapper', () => {
                         message: {
                             parts: [{
                                 kind: 'data',
-                                data: { request: { callId: 'c1', name: 'tool1', args: { x: 1 } } }
+                                data: { request: { callId: 'c1', name: 'tool1', args: JSON.stringify({ x: 1 }) } }
                             }]
                         }
                     }
@@ -953,6 +953,35 @@ describe('mapper', () => {
                 if (finish && finish.type === 'finish') {
                     expect(finish.finishReason).toBe('tool-calls');
                 }
+            });
+            
+            it('should emit a bash tool string when an internal tool loops', () => {
+                const mapper = new A2AStreamMapper({ maxToolCallFrequency: 2 });
+                
+                const createToolCallResult = (callId: string): A2AResponseResult => ({
+                    kind: 'status-update',
+                    taskId: 't1',
+                    status: {
+                        state: 'input-required',
+                        message: {
+                            parts: [{
+                                kind: 'data',
+                                data: { request: { callId, name: 'activate_skill', args: JSON.stringify({ skill: 'test' }) } }
+                            }]
+                        }
+                    }
+                });
+
+                // Call 1
+                mapper.mapResult(createToolCallResult('c1'));
+                // Call 2
+                mapper.mapResult(createToolCallResult('c2'));
+                // Call 3 (Exceeds maxToolCallFrequency of 2)
+                const parts = mapper.mapResult(createToolCallResult('c3'));
+                
+                const finishPart = parts.find(p => p.type === 'finish') as any;
+                expect(finishPart).toBeDefined();
+                expect(finishPart.shouldInterruptLoop).toBe(true);
             });
         });
     });

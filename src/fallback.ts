@@ -1,5 +1,6 @@
 import { APICallError } from '@ai-sdk/provider';
 import type { ModelRegistry } from './model-registry';
+import { Logger } from './utils/logger';
 
 /**
  * フォールバック設定。
@@ -151,9 +152,7 @@ export function getNextFallbackModel(
         if (registry) {
             const model = registry.getModel(nextModelId);
             if (!model) {
-                if (process.env['DEBUG_OPENCODE']) {
-                    console.warn(`[opencode-geminicli-a2a] Fallback model '${nextModelId}' not found in registry. Trying next.`);
-                }
+                Logger.info(`Fallback model '${nextModelId}' not found in registry. Trying next.`);
                 searchIndex++;
                 continue;
             }

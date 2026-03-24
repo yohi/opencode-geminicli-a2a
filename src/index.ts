@@ -1,4 +1,4 @@
-import type { ProviderV1, EmbeddingModelV1 } from '@ai-sdk/provider';
+import type { ProviderV2 } from '@ai-sdk/provider';
 import { OpenCodeGeminiA2AProvider } from './provider';
 import { InMemorySessionStore } from './session';
 import { type OpenCodeProviderOptions } from './config';
@@ -23,7 +23,7 @@ export { ServerManager, type AutoStartConfig } from './server-manager';
 /**
  * OpenCode Gemini CLI A2A Provider のインターフェース
  */
-export interface GeminiA2AProvider extends Omit<ProviderV1, 'languageModel' | 'specificationVersion'> {
+export interface GeminiA2AProvider extends Omit<ProviderV2, 'languageModel' | 'specificationVersion'> {
     providerId: string;
     providerID: string;
     id: string;

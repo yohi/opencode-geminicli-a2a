@@ -154,12 +154,13 @@ export const A2AResponseResultSchema = z.union([
             timestamp: z.string().optional()
         }),
         final: z.boolean().optional(),
+        inputRequired: z.boolean().optional(),
         metadata: metadataSchema,
         usage: z.object({
             promptTokens: z.number().optional(),
             completionTokens: z.number().optional()
         }).optional(),
-    }),
+    }).passthrough(),
     z.object({
         kind: z.literal('artifact-update'),
         taskId: z.string(),
@@ -195,3 +196,19 @@ export const RpcResponseSchema = z.union([ResultResponseSchema, ErrorResponseSch
 export const A2AJsonRpcResponseSchema = RpcResponseSchema;
 
 export type A2AJsonRpcResponse = z.infer<typeof A2AJsonRpcResponseSchema>;
+export const ToolMappingSchema = z.record(z.string());
+export type ToolMapping = z.infer<typeof ToolMappingSchema>;
+
+export const A2AStatusUpdateSchema = z.object({
+    kind: z.literal('status-update'),
+    taskId: z.string().optional(),
+    contextId: z.string().optional(),
+    status: z.object({
+        state: z.string(),
+        message: z.any().optional(),
+    }).passthrough(),
+    final: z.boolean().optional(),
+    inputRequired: z.boolean().optional(),
+    metadata: z.any().optional()
+}).passthrough();
+export type A2AStatusUpdate = z.infer<typeof A2AStatusUpdateSchema>;

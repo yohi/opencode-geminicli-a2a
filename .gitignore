@@ -6,3 +6,4 @@ docs/plans/
 
 *.log
 coderabbit_*.log
+.worktrees/
