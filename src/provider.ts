@@ -524,7 +524,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     
                                     // A2Aサーバーがinput-requiredのままでハングしないよう、Cancelを送信する
                                     if (lastFinishPart.taskId) {
-                                        const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, this.modelId, false);
+                                        const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, actualModelId, false);
                                         this.client!.chatStream({ request: cancelParam, abortSignal: timeoutAbortController.signal }).catch((err: any) => {
                                             Logger.error(`[Provider] Failed to send loop-interrupt Cancel to A2A server:`, err);
                                         });
@@ -540,7 +540,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         autoConfirmCount++;
                                         currentRequest = buildConfirmationRequest(
                                             lastFinishPart.taskId!,
-                                            this.modelId,
+                                            actualModelId,
                                             true
                                         );
                                         mapper.startNewTurn();
@@ -567,7 +567,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         toolCallConfirmCount++;
                                         currentRequest = buildConfirmationRequest(
                                             lastFinishPart.taskId!,
-                                            this.modelId,
+                                            actualModelId,
                                             true
                                         );
                                         mapper.startNewTurn();

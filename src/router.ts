@@ -17,17 +17,14 @@ export class DefaultMultiAgentRouter implements MultiAgentRouter {
     private endpoints: AgentEndpoint[];
 
     constructor(endpoints: AgentEndpoint[]) {
-        const modelToEndpoint = new Map<string, string>();
+        const keys = new Set<string>();
         for (let i = 0; i < endpoints.length; i++) {
             const endpoint = endpoints[i];
-            const identity = endpoint.key || `index ${i}`;
-            const modelIds = this.getModelIds(endpoint);
-            for (const modelId of modelIds) {
-                if (modelToEndpoint.has(modelId)) {
-                    const conflictingIdentity = modelToEndpoint.get(modelId);
-                    throw new Error(`Duplicate model ID '${modelId}' found in endpoints '${conflictingIdentity}' and '${identity}'`);
+            if (endpoint.key) {
+                if (keys.has(endpoint.key)) {
+                    throw new Error(`Duplicate agent key '${endpoint.key}' found`);
                 }
-                modelToEndpoint.set(modelId, identity);
+                keys.add(endpoint.key);
             }
         }
         this.endpoints = [...endpoints];
@@ -44,8 +41,10 @@ export class DefaultMultiAgentRouter implements MultiAgentRouter {
 
     resolve(modelId: string): { endpoint: AgentEndpoint; config?: ModelConfig; actualModelId: string } | undefined {
         // 1. Try explicit targeting: "agentKey:modelId"
-        if (modelId.includes(':')) {
-            const [agentKey, realModelId] = modelId.split(':');
+        const colonIndex = modelId.indexOf(':');
+        if (colonIndex !== -1) {
+            const agentKey = modelId.substring(0, colonIndex);
+            const realModelId = modelId.substring(colonIndex + 1);
             const endpoint = this.endpoints.find(e => e.key === agentKey);
             if (endpoint) {
                 const modelIds = this.getModelIds(endpoint);
@@ -63,26 +62,37 @@ export class DefaultMultiAgentRouter implements MultiAgentRouter {
             }
         }
 
-        // 2. Fallback to standard resolution (unique modelId across all agents)
+        // 2. Fallback to standard resolution (find all matching agents)
+        const matches: Array<{ endpoint: AgentEndpoint; config?: ModelConfig }> = [];
         for (const endpoint of this.endpoints) {
             if (Array.isArray(endpoint.models)) {
                 if (endpoint.models.includes(modelId)) {
-                    return { endpoint, actualModelId: modelId };
+                    matches.push({ endpoint });
                 }
             } else {
                 const modelEntry = endpoint.models[modelId];
                 if (modelEntry !== undefined) {
                     if (typeof modelEntry === 'boolean') {
                         if (modelEntry === true) {
-                            return { endpoint, actualModelId: modelId };
+                            matches.push({ endpoint });
                         }
-                        // If modelEntry is false, continue to next endpoint
-                        continue;
+                        // If modelEntry is false, continue
+                    } else {
+                        matches.push({ endpoint, config: modelEntry });
                     }
-                    return { endpoint, config: modelEntry, actualModelId: modelId };
                 }
             }
         }
+
+        if (matches.length > 1) {
+            const identities = matches.map(m => m.endpoint.key || 'anonymous').join(', ');
+            throw new Error(`Ambiguous model ID '${modelId}' found in multiple endpoints: ${identities}. Please use 'agentKey:modelId' syntax.`);
+        }
+
+        if (matches.length === 1) {
+            return { ...matches[0], actualModelId: modelId };
+        }
+
         return undefined;
     }
 
