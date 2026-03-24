@@ -69,3 +69,16 @@ export class DefaultMultiAgentRouter implements MultiAgentRouter {
         return [...this.endpoints];
     }
 }
+
+export interface TaskRequirements {
+  complexity: 'low' | 'medium' | 'high';
+}
+
+export class DynamicModelRouter {
+  selectModel(req: TaskRequirements): string {
+    if (req.complexity === 'high') {
+      return 'gemini-1.5-pro';
+    }
+    return 'gemini-1.5-flash';
+  }
+}
