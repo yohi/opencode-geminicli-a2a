@@ -17,6 +17,10 @@
     "description": "Gemini CLI A2A プロトコル経由のプロバイダー",
     "models": [
       {
+        "id": "auto",
+        "name": "Auto (Dynamic Model Selection)"
+      },
+      {
         "id": "gemini-3-pro-preview",
         "name": "Gemini 3 Pro Preview (A2A)"
       },

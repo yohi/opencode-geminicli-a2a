@@ -72,9 +72,10 @@ export class DefaultMultiAgentRouter implements MultiAgentRouter {
 
 export const MODEL_PRO = 'gemini-1.5-pro';
 export const MODEL_FLASH = 'gemini-1.5-flash';
+export const MODEL_AUTO = 'auto';
 
 export interface TaskRequirements {
-  complexity: 'low' | 'medium' | 'high';
+  complexity: 'low' | 'medium' | 'high' | 'auto';
 }
 
 export class DynamicModelRouter {
@@ -84,6 +85,9 @@ export class DynamicModelRouter {
     }
     if (req.complexity === 'medium') {
       return MODEL_FLASH; // Explicitly map 'medium' to Flash for clarity
+    }
+    if (req.complexity === 'auto') {
+      return MODEL_AUTO; // Let the backend A2A server decide dynamically
     }
     return MODEL_FLASH;
   }
