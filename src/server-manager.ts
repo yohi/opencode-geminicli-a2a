@@ -122,15 +122,6 @@ export class ServerManager {
                 await inflight.promise;
                 const existingInflight = this.servers.get(key);
                 if (existingInflight) {
-                    // refCount increment is now handled by the starter assigning the sum
-                    // but since this is an 'inflight' waiter, we already incremented waiterCount.
-                    // The starter will set refCount = 1 + waiterCount.
-                    // However, there's a race: if the starter finishes before we incremented waiterCount,
-                    // we'll find existingInflight here. We should check if we actually need to increment.
-                    // Actually, simpler: starter finishes, sets refCount, then resolves promise.
-                    // If we get here, the starter has already published the entry.
-                    // But wait, if multiple waiters were here, who increments refCount?
-                    // Better approach: the starter knows how many were waiting at the moment of publishing.
                     Logger.info(`[ServerManager] Reusing managed server on ${key} after inflight (refCount=${existingInflight.refCount})`);
                     return this.makeReleaseFn(key, debug, existingInflight);
                 }
@@ -284,13 +275,12 @@ export class ServerManager {
         // 1. グローバルインストールのパスを npm root -g で取得
         try {
             if (!this.cachedNpmRoot) {
-                const result = await execAsync('npm root -g', { timeout: 5000 });
-                if (result && typeof result.stdout === 'string') {
-                    this.cachedNpmRoot = result.stdout.trim();
-                }
+                const { stdout } = await execAsync('npm root -g', { timeout: 5000 });
+                this.cachedNpmRoot = stdout.trim() || null;
             }
             if (this.cachedNpmRoot) {
                 const globalPath = path.join(this.cachedNpmRoot, '@google', 'gemini-cli-a2a-server', 'dist', 'a2a-server.mjs');
+
                 if (existsSync(globalPath)) {
                     return globalPath;
                 }
@@ -300,7 +290,7 @@ export class ServerManager {
             Logger.debug(`npm root -g failed: ${err instanceof Error ? err.message : String(err)}`);
         }
 
-        // 2. Homebrew (linuxbrew/macOS) など代替パスを確認
+        // 2. Homebrew (linuxbrew) など代替パスを確認
         const altPaths = [
             '/home/linuxbrew/.linuxbrew/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
             '/opt/homebrew/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
@@ -353,26 +343,11 @@ export class ServerManager {
         };
     }
 
-    private cleanupHandlers: Array<{ event: string; handler: (...args: any[]) => void }> = [];
+    private cleanupHandlers: Array<{ event: string; handler: (...args: any[]) => void | Promise<void> }> = [];
 
     private registerCleanup(debug: boolean) {
         if (this.cleanupRegistered) return;
         this.cleanupRegistered = true;
-
-        const cleanupAndExit = (signal?: NodeJS.Signals) => {
-            Logger.info(`[ServerManager] Received ${signal || 'exit'}, cleaning up...`);
-            try {
-                this.dispose();
-            } catch (err) {
-                Logger.error('[ServerManager] Error during dispose in signal handler:', err);
-            }
-            if (signal) {
-                // Remove this handler to avoid infinite recursion then kill itself
-                const h = this.cleanupHandlers.find(ch => ch.event === signal);
-                if (h) process.off(signal as any, h.handler);
-                process.kill(process.pid, signal);
-            }
-        };
 
         const exitHandler = () => {
             try {
@@ -381,40 +356,76 @@ export class ServerManager {
                 Logger.error('[ServerManager] Error during dispose in exit handler:', err);
             }
         };
-        const termHandler = () => cleanupAndExit('SIGTERM');
-        const intHandler = () => cleanupAndExit('SIGINT');
-        const exceptionHandler = (err: Error) => {
-            Logger.error('[ServerManager] Uncaught Exception:', err);
-            try {
-                this.dispose();
-            } catch (disposeErr) {
-                Logger.error('[ServerManager] Error during dispose in exception handler:', disposeErr);
-            }
+        const termHandler = () => this.cleanupAndExit('SIGTERM');
+        const intHandler = () => this.cleanupAndExit('SIGINT');
+        const uncaughtHandler = async (err: Error) => {
+            Logger.error('[ServerManager] Uncaught exception:', err);
+            this.cleanupAndExit('SIGERROR' as any);
+            await this.disposeAndWait();
             process.exit(1);
         };
-        const rejectionHandler = (reason: any) => {
-            Logger.error('[ServerManager] Unhandled Rejection:', reason);
-            try {
-                this.dispose();
-            } catch (disposeErr) {
-                Logger.error('[ServerManager] Error during dispose in rejection handler:', disposeErr);
-            }
+        const unhandledHandler = async (reason: any) => {
+            Logger.error('[ServerManager] Unhandled rejection:', reason);
+            this.cleanupAndExit('SIGERROR' as any);
+            await this.disposeAndWait();
             process.exit(1);
         };
 
         process.once('exit', exitHandler);
         process.once('SIGTERM', termHandler);
         process.once('SIGINT', intHandler);
-        process.once('uncaughtException', exceptionHandler);
-        process.once('unhandledRejection', rejectionHandler);
+        process.on('uncaughtException', uncaughtHandler);
+        process.on('unhandledRejection', unhandledHandler);
 
         this.cleanupHandlers.push(
             { event: 'exit', handler: exitHandler },
             { event: 'SIGTERM', handler: termHandler },
             { event: 'SIGINT', handler: intHandler },
-            { event: 'uncaughtException', handler: exceptionHandler },
-            { event: 'unhandledRejection', handler: rejectionHandler }
+            { event: 'uncaughtException', handler: uncaughtHandler as any },
+            { event: 'unhandledRejection', handler: unhandledHandler as any }
         );
+    }
+
+    /**
+     * すべてのサーバーを停止し、プロセスが終了するのを待機する。
+     */
+    async disposeAndWait(timeoutMs: number = 5000): Promise<void> {
+        const servers = Array.from(this.servers.values());
+        this.dispose();
+
+        const waitPromises = servers.map(server => {
+            if (!server.proc || server.proc.killed) return Promise.resolve();
+            return new Promise<void>((resolve) => {
+                server.proc.once('exit', () => resolve());
+                server.proc.once('error', () => resolve());
+            });
+        });
+
+        const timeoutPromise = new Promise<void>((resolve) => {
+            setTimeout(() => {
+                Logger.warn(`[ServerManager] disposeAndWait timed out after ${timeoutMs}ms`);
+                resolve();
+            }, timeoutMs);
+        });
+
+        await Promise.race([Promise.all(waitPromises), timeoutPromise]);
+    }
+
+    private cleanupAndExit(signal?: NodeJS.Signals) {
+        Logger.info(`[ServerManager] Received ${signal || 'exit'}, cleaning up...`);
+        if (signal !== ('SIGERROR' as any)) {
+            try {
+                this.dispose();
+            } catch (err) {
+                Logger.error('[ServerManager] Error during dispose in signal handler:', err);
+            }
+        }
+        if (signal && signal !== ('SIGERROR' as any)) {
+            // Remove this handler to avoid infinite recursion then kill itself
+            const h = this.cleanupHandlers.find(ch => ch.event === signal);
+            if (h) process.off(signal as any, h.handler);
+            process.kill(process.pid, signal);
+        }
     }
 
     public dispose() {

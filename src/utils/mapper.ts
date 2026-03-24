@@ -2,6 +2,7 @@ import type {
     LanguageModelV2Prompt,
     LanguageModelV2StreamPart,
     LanguageModelV2FinishReason,
+    LanguageModelV2CallOptions,
 } from '@ai-sdk/provider';
 import type { A2AJsonRpcRequest, A2AResponseResult, Tool } from '../schemas';
 import crypto from 'node:crypto';
@@ -28,7 +29,8 @@ export interface ExtendedFinishPart {
     type: 'finish';
     finishReason: LanguageModelV2FinishReason;
     usage: {
-        promptTokens: number; completionTokens: number;
+        promptTokens: number; 
+        completionTokens: number;
     };
     providerMetadata?: Record<string, any>;
     inputRequired?: boolean;
@@ -127,6 +129,8 @@ export interface MapPromptOptions {
         seed?: number;
         responseFormat?: any;
     };
+    /** ツール選択の制約 */
+    toolChoice?: LanguageModelV2CallOptions['toolChoice'];
 }
 
 /**
@@ -312,7 +316,7 @@ function extractUserParts(message: LanguageModelV2Prompt[number]): A2AJsonRpcReq
         ? [{ type: 'text' as const, text: message.content }]
         : message.content) as UserContentPart[];
 
-    return content.map((part) => {
+    return content.map((part: UserContentPart) => {
         if (part.type === 'text') {
             return { kind: 'text' as const, text: part.text };
         } else if (part.type === 'image') {
@@ -355,7 +359,7 @@ function extractUserParts(message: LanguageModelV2Prompt[number]): A2AJsonRpcReq
         }
 
         return null;
-    }).filter((p): p is NonNullable<typeof p> => p !== null);
+    }).filter((p: any): p is NonNullable<typeof p> => p !== null);
 }
 
 /**
@@ -371,11 +375,10 @@ interface ToolResultPart {
 }
 
 function formatToolResults(
-    content: unknown[],
+    content: ToolResultPart[],
     toolMapping?: Record<string, string>
 ): string {
-    const parts = content as ToolResultPart[];
-    return parts.map((part) => {
+    return content.map((part: ToolResultPart) => {
         const resultVal = part.result !== undefined ? part.result : part.content;
         const resultStr = typeof resultVal === 'string'
             ? resultVal
@@ -393,7 +396,7 @@ function buildRequest(
     content: string | A2AJsonRpcRequest['params']['message']['parts'],
     options: MapPromptOptions
 ): A2AJsonRpcRequest {
-    const { tools, contextId, taskId, modelId, generationConfig, toolMapping } = options;
+    const { tools, contextId, taskId, modelId, generationConfig, toolMapping, toolChoice } = options;
 
     // ツール名のマッピング適用し、OpenAIスキーマのラッパーを解除する
     const mappedTools = tools?.map(tool => {
@@ -427,7 +430,12 @@ function buildRequest(
             },
             configuration: {
                 blocking: false,
-                ...(mappedTools && mappedTools.length > 0 ? { tools: mappedTools } : {})
+                ...(mappedTools && mappedTools.length > 0 ? { tools: mappedTools } : {}),
+                ...(toolChoice ? { 
+                    toolChoice: (typeof toolChoice === 'string' && toolMapping?.[toolChoice]) 
+                        ? toolMapping[toolChoice] 
+                        : toolChoice 
+                } : {}),
             },
             ...(generationConfig ? { generationConfig } : {}),
             ...(modelId ? { model: modelId } : {}),
@@ -606,12 +614,12 @@ export class A2AStreamMapper {
                             if (isReasoning) {
                                 parts.push({
                                     type: 'reasoning-delta',
-                                    delta: delta,
+                                    reasoningDelta: delta,
                                 } as any);
                             } else {
                                 parts.push({
                                     type: 'text-delta',
-                                    delta: delta,
+                                    textDelta: delta,
                                 } as any);
                             }
                         }
@@ -737,7 +745,7 @@ export class A2AStreamMapper {
                             // 適切な v2 ライフサイクルイベントに変換される。
                             parts.push({
                                 type: 'reasoning-delta',
-                                delta: textDelta,
+                                reasoningDelta: textDelta,
                             } as any);
                         }
                         continue;
@@ -813,17 +821,19 @@ export class A2AStreamMapper {
                         delete argsForKey.description;
                     }
 
+                    // DEFAULT_INTERNAL_TOOLS に含まれるツール（activate_skill 等）は
+                    // clientTools に存在しなくても「未知ツール」扱いにしない。
+                    
+                    const argsKey = `${toolInfo.toolName}::${JSON.stringify(argsForKey)}`;
+                    const freq = (this.toolCallFrequency.get(argsKey) ?? 0);
+
                     const isInvalidToolName = toolInfo.toolName === 'invalid';
-                    let isInternalTool = this.internalTools.has(toolInfo.toolName) || this.internalTools.has(originalToolName);
+                    const isInternalToolBase = this.internalTools.has(toolInfo.toolName) || this.internalTools.has(originalToolName);
+                    let isInternalTool = isInternalToolBase;
                     
                     const isUnknownToClient = this.clientTools
-                        ? (!this.clientTools.has(originalToolName) && !isInternalTool)
+                        ? (!this.clientTools.has(originalToolName) && !isInternalToolBase)
                         : false;
-
-                    const argsKey = isInternalTool 
-                        ? `${toolInfo.toolName}::name-only`
-                        : `${toolInfo.toolName}::${JSON.stringify(argsForKey)}`;
-                    const freq = (this.toolCallFrequency.get(argsKey) ?? 0);
 
                     // 重複実行ループカウントをすべてのツール（未知・既知問わず）に対して記録
                     const currentFreq = freq + 1;
@@ -834,7 +844,7 @@ export class A2AStreamMapper {
 
                     if (currentFreq > this.maxToolCallFrequency) {
                         Logger.warn(`[DuplicateDetect] Tool '${originalToolName}' loop detected (${currentFreq} times).`);
-                        if (isInternalToolConfirmation || isInternalTool) {
+                        if (isInternalToolConfirmation || isInternalToolBase) {
                             this._shouldInterruptLoop = true;
                         } else {
                             const originalToolNameForMessage = toolInfo.toolName;

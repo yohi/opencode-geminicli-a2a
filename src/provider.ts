@@ -4,8 +4,6 @@ import {
     type LanguageModelV2CallOptions,
     type LanguageModelV2StreamPart,
     type LanguageModelV2FinishReason,
-    type LanguageModelV2TextPart,
-    type LanguageModelV2ToolCallPart,
 } from '@ai-sdk/provider';
 import { resolveConfig, type OpenCodeProviderOptions, ConfigManager } from './config';
 import { A2AClient } from './a2a-client';
@@ -14,20 +12,22 @@ import {
     A2AStreamMapper, 
     buildConfirmationRequest,
     type MapPromptOptions, 
-    type ExtendedFinishPart
+    type ExtendedFinishPart,
 } from './utils/mapper';
 import { parseA2AStream } from './utils/stream';
-import type { A2AJsonRpcRequest, A2AConfig, Tool } from './schemas';
-import { type SessionStore, InMemorySessionStore, type A2ASession } from './session';
-import { isQuotaError, getNextFallbackModel, resolveFallbackConfig, type FallbackConfig } from './fallback';
+import { type SessionStore, InMemorySessionStore } from './session';
+import { isQuotaError, getNextFallbackModel, resolveFallbackConfig } from './fallback';
 import { DefaultMultiAgentRouter } from './router';
 import { Logger } from './utils/logger';
+import { META_TOOLS } from './utils/constants';
 
 
 /** チャンクが届かない場合のウォッチドッグタイムアウト (ms)のデフォルト値、10分 */
 const DEFAULT_CHUNK_TIMEOUT_MS = 10 * 60 * 1000;
 /** contextToolFrequency の最大キャッシュ件数 */
 const MAX_CONTEXT_CACHE = 100;
+
+const BACKGROUND_TOOLS = ['codebase_investigator', 'generalist'];
 
 function anySignal(signals: (AbortSignal | undefined)[]): AbortSignal {
     const controller = new AbortController();
@@ -61,20 +61,35 @@ function anySignal(signals: (AbortSignal | undefined)[]): AbortSignal {
     return controller.signal;
 }
 
-function isAutoConfirmTarget(part: ExtendedFinishPart | undefined, textPartCounter: number = 0): boolean {
+function isAutoConfirmTarget(
+    part: ExtendedFinishPart | undefined, 
+    textPartCounter: number = 0, 
+    autoConfirmCount: number = 0,
+    maxAutoConfirm: number = 5
+): boolean {
     if (!part) return false;
+    if (autoConfirmCount >= maxAutoConfirm) return false;
+
+    const internalToolNames = part.internalToolNames || [];
+    const hasMetaTool = internalToolNames.some(name => META_TOOLS.includes(name));
+    if (hasMetaTool) return false;
+
+    const isBackgroundTool = internalToolNames.some(name => BACKGROUND_TOOLS.includes(name));
     const hasSpoken = textPartCounter > 0;
+
     if (part.coderAgentKind === 'tool-call-confirmation') {
         return part.inputRequired === true && part.hasExposedTools !== true;
     }
-    const isInternalRecall = part.coderAgentKind === 'internal-tool-call';
-    const isBackgroundAgent = part.coderAgentKind === 'codebase_investigator' || part.coderAgentKind === 'generalist';
-    if (isBackgroundAgent) {
+
+    if (isBackgroundTool) {
         return part.inputRequired === true && part.hasExposedTools !== true;
     }
+
+    const isInternalRecall = part.coderAgentKind === 'internal-tool-call';
     if (isInternalRecall) {
         return !hasSpoken && part.inputRequired === true && part.hasExposedTools !== true;
     }
+
     return false;
 }
 
@@ -248,6 +263,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
             processedMessagesCount: session.processedMessagesCount,
             modelId: this.modelId,
             generationConfig: Object.keys(generationConfig).length > 0 ? generationConfig : undefined,
+            toolChoice: options.toolChoice,
         };
 
         const initialRequestData = mapPromptToA2AJsonRpcRequest(options.prompt, mapOptions);
@@ -392,7 +408,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         activeTextId = `text-${textPartCounter++}`;
                         safeEnqueue({ type: 'text-start', id: activeTextId } as any);
                     }
-                    safeEnqueue({ type: 'text-delta', id: activeTextId, delta } as any);
+                    safeEnqueue({ type: 'text-delta', id: activeTextId, textDelta: delta } as any);
                 };
 
                 (async () => {
@@ -400,7 +416,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         let currentRequest = initialRequestData;
                         let autoConfirmCount = 0;
                         let toolCallConfirmCount = 0;
-                        const MAX_AUTO_CONFIRM = resolvedBaseConfig.maxAutoConfirm ?? this.options?.maxAutoConfirm ?? 50;
+                        const MAX_AUTO_CONFIRM = this.options.maxAutoConfirm || 5;
                         const MAX_TOOL_CONFIRM = 1;
 
                         let firstResponse: any = { stream: responseStream, headers: headers || {} };
@@ -433,7 +449,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         for (const part of parts) {
                                             switch (part.type) {
                                                 case 'text-delta': {
-                                                    enqueueText((part as any).textDelta || (part as any).delta);
+                                                    enqueueText((part as any).textDelta);
                                                     break;
                                                 }
                                                 case 'reasoning-delta': {
@@ -459,7 +475,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                                 case 'finish': {
                                                     hasFinishedInThisTurn = true;
                                                     lastFinishPart = part as ExtendedFinishPart;
-                                                    if (!isAutoConfirmTarget(lastFinishPart, textPartCounter)) {
+                                                    if (!isAutoConfirmTarget(lastFinishPart, textPartCounter, autoConfirmCount, MAX_AUTO_CONFIRM)) {
                                                         closeText();
                                                         closeReasoning();
                                                         const unifiedFinishReason = (lastFinishPart.finishReason === 'unknown' ? 'stop' : lastFinishPart.finishReason);
@@ -467,8 +483,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                                             type: 'finish',
                                                             finishReason: unifiedFinishReason as LanguageModelV2FinishReason,
                                                             usage: {
-                                                                inputTokens: { total: lastFinishPart.usage.promptTokens },
-                                                                outputTokens: { total: lastFinishPart.usage.completionTokens },
+                                                                promptTokens: lastFinishPart.usage.promptTokens,
+                                                                completionTokens: lastFinishPart.usage.completionTokens,
                                                             },
                                                         } as any);
                                                     }
@@ -484,11 +500,11 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     }
                                 }
 
-                                if (!hasFinishedInThisTurn) {
+                                if (!hasFinishedInThisTurn || !lastFinishPart) {
                                     throw new Error('A2A stream disconnected before sending final status-update.');
                                 }
 
-                                if (lastFinishPart?.shouldInterruptLoop) {
+                                if (lastFinishPart.shouldInterruptLoop) {
                                     Logger.warn(`[auto-confirm] Loop detected. Force terminating.`);
                                     closeReasoning();
                                     enqueueText(`\n\n[opencode-geminicli-a2a] ⚠️ エージェントが同一の内部ツールを何度も呼び出したため、ループを強制中断しました。\n`);
@@ -497,8 +513,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         type: 'finish',
                                         finishReason: 'stop',
                                         usage: {
-                                            inputTokens: { total: lastFinishPart.usage.promptTokens || 0 },
-                                            outputTokens: { total: lastFinishPart.usage.completionTokens || 0 },
+                                            promptTokens: lastFinishPart.usage.promptTokens || 0,
+                                            completionTokens: lastFinishPart.usage.completionTokens || 0,
                                         },
                                     } as any);
                                     
@@ -513,9 +529,10 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     break;
                                 }
 
-                                const canAutoConfirm = isAutoConfirmTarget(lastFinishPart!, textPartCounter);
-                                if (canAutoConfirm && lastFinishPart.taskId) {
-                                    if (autoConfirmCount < MAX_AUTO_CONFIRM) {
+                                const canAutoConfirm = isAutoConfirmTarget(lastFinishPart!, textPartCounter, autoConfirmCount, MAX_AUTO_CONFIRM);
+                                Logger.warn(`[Debug-Loop] canAutoConfirm: ${canAutoConfirm}, autoConfirmCount: ${autoConfirmCount}, lastFinishPart.coderAgentKind: ${lastFinishPart?.coderAgentKind}`);
+                                if (lastFinishPart.taskId) {
+                                    if (canAutoConfirm) {
                                         autoConfirmCount++;
                                         currentRequest = buildConfirmationRequest(
                                             lastFinishPart.taskId!,
@@ -524,7 +541,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         );
                                         mapper.startNewTurn();
                                         continue;
-                                    } else {
+                                    } else if (autoConfirmCount >= MAX_AUTO_CONFIRM && isAutoConfirmTarget(lastFinishPart!, textPartCounter, 0, Infinity)) {
                                         Logger.warn(`[auto-confirm] MAX_AUTO_CONFIRM reached. Forcing stop.`);
                                         closeReasoning();
                                         if (textPartCounter === 0) {
@@ -534,7 +551,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         safeEnqueue({
                                             type: 'finish',
                                             finishReason: 'stop',
-                                            usage: { inputTokens: { total: 0 }, outputTokens: { total: 0 } },
+                                            usage: { promptTokens: 0, completionTokens: 0 },
                                         } as any);
                                         break;
                                     }
@@ -558,7 +575,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         safeEnqueue({
                                             type: 'finish',
                                             finishReason: 'stop',
-                                            usage: { inputTokens: { total: 0 }, outputTokens: { total: 0 } },
+                                            usage: { promptTokens: 0, completionTokens: 0 },
                                         } as any);
                                         break;
                                     }
@@ -580,8 +597,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 type: 'finish',
                                 finishReason: 'stop',
                                 usage: {
-                                    inputTokens: { total: 0 },
-                                    outputTokens: { total: 0 },
+                                    promptTokens: 0,
+                                    completionTokens: 0,
                                 },
                             } as any);
                         } else {
@@ -648,7 +665,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         break;
                     }
                     case 'reasoning-delta': {
-                        const delta = (value as any).delta || (value as any).reasoningDelta;
+                        const delta = (value as any).reasoningDelta || (value as any).delta;
                         if (delta) {
                             reasoning += delta;
                         }
@@ -670,8 +687,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                     case 'finish':
                         finishReason = value.finishReason;
                         if (value.usage) {
-                            usage.promptTokens = (value.usage as any).inputTokens?.total ?? (value.usage as any).promptTokens ?? 0;
-                            usage.completionTokens = (value.usage as any).outputTokens?.total ?? (value.usage as any).completionTokens ?? 0;
+                            usage.promptTokens = (value.usage as any).promptTokens ?? 0;
+                            usage.completionTokens = (value.usage as any).completionTokens ?? 0;
                         }
                         break;
                 }
