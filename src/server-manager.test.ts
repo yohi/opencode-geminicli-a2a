@@ -25,7 +25,7 @@ vi.mock('node:fs', async (importOriginal) => {
 describe('ServerManager', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        (ServerManager as any).instance = undefined;
+        ServerManager._reset();
         // デフォルトでは existsSync は全て true を返す
         vi.mocked(existsSync).mockReturnValue(true);
 

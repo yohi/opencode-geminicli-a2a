@@ -300,14 +300,19 @@ function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extr
 /**
  * ユーザーメッセージから全パーツを抽出する。
  */
+type UserContentPart = 
+    | { type: 'text'; text: string }
+    | { type: 'image'; image: unknown; mimeType?: string }
+    | { type: 'file'; data: unknown; mimeType?: string; filename?: string };
+
 function extractUserParts(message: LanguageModelV2Prompt[number]): A2AJsonRpcRequest['params']['message']['parts'] {
     if (message.role !== 'user') return [];
 
-    const content = typeof message.content === 'string'
+    const content = (typeof message.content === 'string'
         ? [{ type: 'text' as const, text: message.content }]
-        : message.content;
+        : message.content) as UserContentPart[];
 
-    return content.map((part: any) => {
+    return content.map((part) => {
         if (part.type === 'text') {
             return { kind: 'text' as const, text: part.text };
         } else if (part.type === 'image') {
@@ -350,18 +355,27 @@ function extractUserParts(message: LanguageModelV2Prompt[number]): A2AJsonRpcReq
         }
 
         return null;
-    }).filter((p: any): p is NonNullable<typeof p> => p !== null);
+    }).filter((p): p is NonNullable<typeof p> => p !== null);
 }
 
 /**
  * AI SDK の tool-result パーツをテキスト形式に変換する。
  * A2A サーバーが理解できるよう、構造化されたテキストとして送信する。
  */
+interface ToolResultPart {
+    toolName: string;
+    toolCallId: string;
+    result?: unknown;
+    content?: unknown;
+    isError?: boolean;
+}
+
 function formatToolResults(
-    content: any[],
+    content: unknown[],
     toolMapping?: Record<string, string>
 ): string {
-    return content.map((part: any) => {
+    const parts = content as ToolResultPart[];
+    return parts.map((part) => {
         const resultVal = part.result !== undefined ? part.result : part.content;
         const resultStr = typeof resultVal === 'string'
             ? resultVal
@@ -790,7 +804,7 @@ export class A2AStreamMapper {
                     this.toolCallFrequency.set(argsKey, currentFreq);
 
                     if (currentFreq > this.maxToolCallFrequency) {
-                        Logger.warn(`[DuplicateDetect] Tool '${toolInfo.toolName}' loop detected (${currentFreq} times).`);
+                        Logger.warn(`[DuplicateDetect] Tool '${originalToolName}' loop detected (${currentFreq} times).`);
                         if (isInternalToolConfirmation || isInternalTool) {
                             this._shouldInterruptLoop = true;
                         } else {

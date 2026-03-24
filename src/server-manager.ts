@@ -56,14 +56,19 @@ interface ManagedServer {
     refCount: number;
 }
 
+interface InflightStartup {
+    promise: Promise<(() => Promise<void>) | null>;
+    proc?: ChildProcess;
+}
+
 /**
  * A2A サーバープロセスを起動・管理するシングルトンマネージャー。
  * 同一ポートへの多重起動を防ぎ、参照カウントでプロセスのライフサイクルを管理する。
  */
 export class ServerManager {
     private static instance: ServerManager | undefined;
-    private servers = new Map<number, ManagedServer>(); // keyed by port
-    private startingUp = new Map<number, Promise<(() => Promise<void>) | null>>(); // keyed by port
+    private servers = new Map<string, ManagedServer>(); // keyed by host:port
+    private startingUp = new Map<string, InflightStartup>(); // keyed by host:port
     private cleanupRegistered = false;
     private cachedNpmRoot: string | null = null;
 
@@ -88,39 +93,40 @@ export class ServerManager {
         config: AutoStartConfig,
         debug: boolean
     ): Promise<() => Promise<void>> {
+        const key = `${host}:${port}`;
         // 1. 既に本マネージャーが管理しているプロセスが存在するか確認
-        const existing = this.servers.get(port);
+        const existing = this.servers.get(key);
         if (existing) {
             existing.refCount++;
-            Logger.info(`[ServerManager] Reusing managed server on ${host}:${port} (refCount=${existing.refCount})`);
-            return this.makeReleaseFn(port, debug);
+            Logger.info(`[ServerManager] Reusing managed server on ${key} (refCount=${existing.refCount})`);
+            return this.makeReleaseFn(key, debug, existing);
         }
 
         // 2. すでに起動処理が走っている場合はそれを待つ
-        const inflight = this.startingUp.get(port);
+        const inflight = this.startingUp.get(key);
         if (inflight) {
-            Logger.debug(`[ServerManager] Waiting for inflight startup on port ${port}...`);
-            await inflight;
-            const existingInflight = this.servers.get(port);
+            Logger.debug(`[ServerManager] Waiting for inflight startup on ${key}...`);
+            await inflight.promise;
+            const existingInflight = this.servers.get(key);
             if (existingInflight) {
                 existingInflight.refCount++;
-                Logger.info(`[ServerManager] Reusing managed server on ${host}:${port} after inflight (new refCount=${existingInflight.refCount})`);
-                return this.makeReleaseFn(port, debug);
+                Logger.info(`[ServerManager] Reusing managed server on ${key} after inflight (new refCount=${existingInflight.refCount})`);
+                return this.makeReleaseFn(key, debug, existingInflight);
             }
-            Logger.warn(`[ServerManager] Inflight startup on port ${port} finished but server not found in map. Retrying ensureRunning.`);
+            Logger.warn(`[ServerManager] Inflight startup on ${key} finished but server not found in map. Retrying ensureRunning.`);
             return this.ensureRunning(port, host, modelId, config, debug);
         }
 
         // 並行呼び出しでのレースコンディションを防ぐため、外部チェックの前に一旦予約する
         let resolveInflight: (val: (() => Promise<void>) | null) => void;
         const inflightPromise = new Promise<(() => Promise<void>) | null>(r => { resolveInflight = r; });
-        this.startingUp.set(port, inflightPromise);
+        this.startingUp.set(key, { promise: inflightPromise });
 
         try {
             // 3. 既に外部プロセスがリッスンしているか確認
             if (await probePort(port, host)) {
-                Logger.info(`Port ${host}:${port} already listening. Skipping auto-start.`);
-                this.startingUp.delete(port);
+                Logger.info(`Port ${key} already listening. Skipping auto-start.`);
+                this.startingUp.delete(key);
                 resolveInflight!(null);
                 // 外部プロセスなので管理しない（リリース時にも何もしない）
                 return async () => {};
@@ -148,6 +154,12 @@ export class ServerManager {
                         stdio: debug ? ['ignore', 'pipe', 'pipe'] : 'ignore',
                         detached: false,
                     });
+                    
+                    // 起動中のプロセスを保持（dispose用）
+                    const currentInflight = this.startingUp.get(key);
+                    if (currentInflight) {
+                        currentInflight.proc = proc;
+                    }
 
                     if (debug && proc.stdout) {
                         proc.stdout.on('data', (d: Buffer) => process.stdout.write(`[A2A-${port}] ${d}`));
@@ -165,33 +177,31 @@ export class ServerManager {
                             if (!proc) return;
                             proc.once('error', (err: Error) => reject(new Error(`A2A server spawn error: ${err.message}`)));
                             proc.once('exit', (code: number | null) => {
-                                if (code !== 0 && code !== null) {
-                                    reject(new Error(`A2A server exited early with code ${code}`));
-                                }
+                                reject(new Error(`A2A server exited early with code ${code ?? 'unknown'}`));
                             });
                         })
                     ]);
 
                     const entry: ManagedServer = { proc, port, host, refCount: 1 };
-                    this.servers.set(port, entry);
+                    this.servers.set(key, entry);
                     this.registerCleanup(debug);
 
                     proc.once('exit', (code: number | null) => {
-                        Logger.info(`A2A server on port ${port} exited (code=${code})`);
-                        if (this.servers.get(port)?.proc === proc) {
-                            this.servers.delete(port);
+                        Logger.info(`A2A server on ${key} exited (code=${code})`);
+                        if (this.servers.get(key)?.proc === proc) {
+                            this.servers.delete(key);
                         }
                     });
 
-                    Logger.info(`A2A server on ${host}:${port} is ready.`);
-                    return this.makeReleaseFn(port, debug);
+                    Logger.info(`A2A server on ${key} is ready.`);
+                    return this.makeReleaseFn(key, debug, entry);
                 } catch (err) {
                     if (proc) {
                         proc.kill();
                     }
                     throw err;
                 } finally {
-                    this.startingUp.delete(port);
+                    this.startingUp.delete(key);
                 }
             })();
 
@@ -199,7 +209,7 @@ export class ServerManager {
             startupPromise.then(res => resolveInflight!(res)).catch(err => resolveInflight!(null));
             return startupPromise;
         } catch (err) {
-            this.startingUp.delete(port);
+            this.startingUp.delete(key);
             resolveInflight!(null);
             throw err;
         }
@@ -218,8 +228,12 @@ export class ServerManager {
         try {
             if (!this.cachedNpmRoot) {
                 const result = await execAsync('npm root -g', { timeout: 5000 });
-                if (result && typeof result.stdout === 'string') {
-                    this.cachedNpmRoot = result.stdout.trim();
+                const stdout = (result && typeof result === 'object' && 'stdout' in result)
+                    ? (result as { stdout: string }).stdout
+                    : (typeof result === 'string' ? result : undefined);
+
+                if (typeof stdout === 'string') {
+                    this.cachedNpmRoot = stdout.trim();
                 }
             }
             if (this.cachedNpmRoot) {
@@ -249,18 +263,26 @@ export class ServerManager {
         );
     }
 
-    private makeReleaseFn(port: number, debug: boolean): () => Promise<void> {
+    private makeReleaseFn(key: string, debug: boolean, captured: ManagedServer): () => Promise<void> {
         let released = false;
         return async () => {
             if (released) return;
             released = true;
-            const entry = this.servers.get(port);
-            if (!entry) return;
-            entry.refCount--;
-            Logger.debug(`Released server on port ${port} (refCount=${entry.refCount})`);
-            if (entry.refCount <= 0) {
-                entry.proc.kill();
-                this.servers.delete(port);
+
+            // サーバーエントリが依然として同一のものであることを確認
+            const current = this.servers.get(key);
+            if (current !== captured) {
+                Logger.debug(`[ServerManager] Release ignored for ${key}: instance mismatch (possibly restarted)`);
+                return;
+            }
+
+            captured.refCount--;
+            Logger.debug(`Released server on ${key} (refCount=${captured.refCount})`);
+            if (captured.refCount <= 0) {
+                captured.proc.kill();
+                if (this.servers.get(key) === captured) {
+                    this.servers.delete(key);
+                }
             }
         };
     }
@@ -330,16 +352,28 @@ export class ServerManager {
     }
 
     public dispose() {
-        for (const [port, entry] of this.servers) {
+        // 1. 稼働中のサーバーを停止
+        for (const [key, entry] of this.servers) {
             try { entry.proc.kill(); } catch { /* ignore */ }
         }
         this.servers.clear();
+
+        // 2. 起動処理中のプロセスを停止
+        for (const [key, inflight] of this.startingUp) {
+            try {
+                if (inflight.proc) {
+                    inflight.proc.kill();
+                }
+            } catch { /* ignore */ }
+        }
+        this.startingUp.clear();
+
         this.cleanupRegistered = false;
         for (const { event, handler } of this.cleanupHandlers) {
             process.removeListener(event, handler);
         }
         this.cleanupHandlers = [];
-        
+
         // Use a safe way to dispose ConfigManager if it was loaded.
         try {
             ConfigManager.getInstance().dispose();

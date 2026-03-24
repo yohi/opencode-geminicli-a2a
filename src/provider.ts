@@ -551,6 +551,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                     } catch (err: any) {
                         const isTimeout = err.message === 'EXECUTION_TIMEOUT' || err.name === 'AbortError' || (err as any).name === 'AbortError';
                         if (isTimeout) {
+                            closeReasoning();
                             Logger.warn(`[Provider] doStream reached timeout or abort.`);
                             enqueueText(`\n\n[opencode-geminicli-a2a] ⚠️ 処理がタイムアウトしたか、中断されました。\n`);
                             closeText();
