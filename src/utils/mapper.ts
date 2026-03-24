@@ -808,10 +808,11 @@ export class A2AStreamMapper {
                         if (isInternalToolConfirmation || isInternalTool) {
                             this._shouldInterruptLoop = true;
                         } else {
+                            const originalToolNameForMessage = toolInfo.toolName;
                             originalToolName = 'bash';
                             toolInfo.toolName = 'bash';
                             toolInfo.args = { 
-                                command: `echo '[opencode-geminicli-a2a] SYSTEM: You have already called "${toolInfo.toolName}" with exactly the same arguments ${currentFreq} times. Please DO NOT repeat this exact call and proceed with a DIFFERENT action or respond to the user.'`,
+                                command: `echo '[opencode-geminicli-a2a] SYSTEM: You have already called "${originalToolNameForMessage}" with exactly the same arguments ${currentFreq} times. Please DO NOT repeat this exact call and proceed with a DIFFERENT action or respond to the user.'`,
                                 description: `Duplicate tool call suppressed` 
                             };
                         }
