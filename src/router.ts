@@ -46,19 +46,21 @@ export class DefaultMultiAgentRouter implements MultiAgentRouter {
             const agentKey = modelId.substring(0, colonIndex);
             const realModelId = modelId.substring(colonIndex + 1);
             const endpoint = this.endpoints.find(e => e.key === agentKey);
-            if (endpoint) {
-                const modelIds = this.getModelIds(endpoint);
-                if (modelIds.includes(realModelId)) {
-                    if (Array.isArray(endpoint.models)) {
-                        return { endpoint, actualModelId: realModelId };
-                    } else {
-                        const modelEntry = endpoint.models[realModelId];
-                        if (typeof modelEntry === 'object') {
-                            return { endpoint, config: modelEntry, actualModelId: realModelId };
-                        }
-                        return { endpoint, actualModelId: realModelId };
-                    }
+            if (!endpoint) {
+                throw new Error(`Agent key '${agentKey}' not found`);
+            }
+            const modelIds = this.getModelIds(endpoint);
+            if (!modelIds.includes(realModelId)) {
+                throw new Error(`Model '${realModelId}' not found on agent '${agentKey}'`);
+            }
+            if (Array.isArray(endpoint.models)) {
+                return { endpoint, actualModelId: realModelId };
+            } else {
+                const modelEntry = endpoint.models[realModelId];
+                if (typeof modelEntry === 'object') {
+                    return { endpoint, config: modelEntry, actualModelId: realModelId };
                 }
+                return { endpoint, actualModelId: realModelId };
             }
         }
 

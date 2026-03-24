@@ -99,6 +99,18 @@ describe('DefaultMultiAgentRouter', () => {
             expect(result?.actualModelId).toBe('gemini-3.1-pro-preview');
         });
 
+        it('should throw error if targeted agent key is unknown', () => {
+            const router = new DefaultMultiAgentRouter(mockEndpoints);
+            expect(() => router.resolve('unknown:gemini-2.5-pro'))
+                .toThrow("Agent key 'unknown' not found");
+        });
+
+        it('should throw error if targeted model is not supported by the agent', () => {
+            const router = new DefaultMultiAgentRouter(mockEndpoints);
+            expect(() => router.resolve('server-1:gemini-3.1-pro-preview'))
+                .toThrow("Model 'gemini-3.1-pro-preview' not found on agent 'server-1'");
+        });
+
         it('複数のエンドポイントでモデルIDが重複していても初期化を許可する', () => {
             const endpoints: AgentEndpoint[] = [
                 { key: 'a1', host: 'h1', port: 1, models: ['m1'] },
