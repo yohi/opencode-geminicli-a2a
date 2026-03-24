@@ -152,7 +152,7 @@ export function getNextFallbackModel(
         if (registry) {
             const model = registry.getModel(nextModelId);
             if (!model) {
-                Logger.info(`[opencode-geminicli-a2a] Fallback model '${nextModelId}' not found in registry. Trying next.`);
+                Logger.info(`Fallback model '${nextModelId}' not found in registry. Trying next.`);
                 searchIndex++;
                 continue;
             }

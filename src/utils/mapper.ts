@@ -27,17 +27,17 @@ export const DEFAULT_INTERNAL_TOOLS = [
 export interface ExtendedFinishPart {
     type: 'finish';
     finishReason: LanguageModelV2FinishReason;
-    usage: { 
-        promptTokens: number; 
-        completionTokens: number;
+    usage: {
+        promptTokens: number; completionTokens: number;
     };
     providerMetadata?: Record<string, any>;
     inputRequired?: boolean;
     rawState?: string;
     coderAgentKind?: string;
     hasExposedTools?: boolean;
-    internalToolNames?: string[];
+    hasInternalTools?: boolean;
     shouldInterruptLoop?: boolean;
+    taskId?: string;
 }
 
 export type ExtendedStreamPart = LanguageModelV2StreamPart | ExtendedFinishPart | FileStreamPart;
@@ -750,17 +750,26 @@ export class A2AStreamMapper {
 
                     // DEFAULT_INTERNAL_TOOLS に含まれるツール（activate_skill 等）は
                     // clientTools に存在しなくても「未知ツール」扱いにしない。
-                    const argsForKey = { ...(typeof toolInfo.args === 'object' && toolInfo.args ? toolInfo.args as any : {}) };
+                    let argsForKey = { ...(typeof toolInfo.args === 'object' && toolInfo.args ? toolInfo.args as any : {}) };
+                    if (typeof toolInfo.args === 'string') {
+                        try {
+                            argsForKey = JSON.parse(toolInfo.args);
+                        } catch {
+                            // ignore
+                        }
+                    }
                     delete argsForKey.description;
-                    const argsKey = `${toolInfo.toolName}::${JSON.stringify(argsForKey)}`;
-                    const freq = (this.toolCallFrequency.get(argsKey) ?? 0);
-
                     const isInvalidToolName = toolInfo.toolName === 'invalid';
                     let isInternalTool = this.internalTools.has(toolInfo.toolName) || this.internalTools.has(originalToolName);
                     
                     const isUnknownToClient = this.clientTools
                         ? (!this.clientTools.has(originalToolName) && !isInternalTool)
                         : false;
+
+                    const argsKey = isInternalTool 
+                        ? `${toolInfo.toolName}::name-only`
+                        : `${toolInfo.toolName}::${JSON.stringify(argsForKey)}`;
+                    const freq = (this.toolCallFrequency.get(argsKey) ?? 0);
 
                     // 重複実行ループカウントをすべてのツール（未知・既知問わず）に対して記録
                     const currentFreq = freq + 1;
@@ -909,6 +918,7 @@ export class A2AStreamMapper {
                     hasExposedTools,
                     shouldInterruptLoop: this._shouldInterruptLoop,
                     internalToolNames: this._lastInternalToolNames,
+                    taskId: result.taskId,
                     ...(shouldPromptInput ? { 
                         inputRequired: true, 
                         rawState: result.status.state,

@@ -121,8 +121,9 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
         const config = resolveConfig(this.options);
         
         // マルチエージェント対応: modelId に対応するエンドポイントがあればそれを使う
-        if (this.options.agents && this.options.agents.length > 0) {
-            const router = new DefaultMultiAgentRouter(this.options.agents);
+        const agents = config.agents;
+        if (agents && agents.length > 0) {
+            const router = new DefaultMultiAgentRouter(agents);
             const resolved = router.resolve(this.modelId);
             if (resolved) {
                 const agentConfig = {
@@ -184,8 +185,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
         const baseConfig = this.resolvedOptions;
 
         let agentOptions: any = undefined;
-        if (this.options.agents) {
-            const router = new DefaultMultiAgentRouter(this.options.agents);
+        if (baseConfig.agents) {
+            const router = new DefaultMultiAgentRouter(baseConfig.agents);
             const resolved = router.resolve(this.modelId);
             if (resolved && resolved.config && resolved.config.options) {
                 agentOptions = resolved.config.options;
@@ -206,7 +207,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
         if ((options as any).temperature !== undefined) generationConfig.temperature = (options as any).temperature;
         if ((options as any).topP !== undefined) generationConfig.topP = (options as any).topP;
         if ((options as any).topK !== undefined) generationConfig.topK = (options as any).topK;
-        if ((options as any).maxTokens !== undefined) generationConfig.maxTokens = (options as any).maxTokens;
+        if ((options as any).maxTokens !== undefined) generationConfig.maxOutputTokens = (options as any).maxTokens;
         if ((options as any).stopSequences !== undefined) generationConfig.stopSequences = (options as any).stopSequences;
 
         const mapOptions: MapPromptOptions = {
@@ -250,7 +251,10 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                     (session as any).fallbackCounters = counters;
                     if (sessionId && sessionId !== 'undefined') await this.sessionStore.update(sessionId, { fallbackCounters: counters });
                     
-                    const provider = new OpenCodeGeminiA2AProvider(nextModel, this.options);
+                    const provider = new OpenCodeGeminiA2AProvider(nextModel, {
+                        ...this.options,
+                        sessionStore: this.sessionStore
+                    });
                     return provider.doStream({
                         ...options,
                         headers: {

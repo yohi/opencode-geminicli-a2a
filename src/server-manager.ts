@@ -107,12 +107,19 @@ export class ServerManager {
         if (inflight) {
             Logger.debug(`Waiting for inflight startup on port ${port}...`);
             await inflight;
-            // 完了後に再帰呼び出しして参照カウントを増やすか、既存エントリを返す
+            const existingInflight = this.servers.get(port);
+            if (existingInflight) {
+                existingInflight.refCount++;
+                Logger.info(`Reusing managed server on ${host}:${port} after inflight (refCount=${existingInflight.refCount})`);
+                return this.makeReleaseFn(port, debug);
+            }
+            // 失敗していた場合は再度起動を試みる
             return this.ensureRunning(port, host, modelId, config, debug);
         }
 
         // 起動処理を登録
         const startupPromise = (async () => {
+            let proc: any = undefined;
             try {
                 // 新規起動
                 const serverPath = await this.resolveServerPath(config.serverPath);
@@ -127,7 +134,7 @@ export class ServerManager {
 
                 Logger.info(`Starting A2A server: node ${serverPath} (port=${port}, host=${host})`);
 
-                const proc = spawn('node', [serverPath], {
+                proc = spawn('node', [serverPath], {
                     env,
                     stdio: debug ? ['ignore', 'pipe', 'pipe'] : 'ignore',
                     detached: false,
@@ -140,18 +147,14 @@ export class ServerManager {
                     proc.stderr.on('data', (d: Buffer) => process.stderr.write(`[A2A-${port}] ${d}`));
                 }
 
-                const entry: ManagedServer = { proc, port, host, refCount: 1 };
-                this.servers.set(port, entry);
-                this.registerCleanup(debug);
-
                 // 起動待機
                 const pollMs = config.pollIntervalMs ?? 200;
                 const timeoutMs = config.startupTimeoutMs ?? 15000;
                 await Promise.race([
                     waitForPort(port, host, timeoutMs, pollMs),
                     new Promise<void>((_, reject) => {
-                        proc.on('error', (err) => reject(new Error(`A2A server spawn error: ${err.message}`)));
-                        proc.once('exit', (code) => {
+                        proc.on('error', (err: any) => reject(new Error(`A2A server spawn error: ${err.message}`)));
+                        proc.once('exit', (code: any) => {
                             if (code !== 0 && code !== null) {
                                 reject(new Error(`A2A server exited early with code ${code}`));
                             }
@@ -159,14 +162,24 @@ export class ServerManager {
                     })
                 ]);
 
-                proc.once('exit', (code) => {
+                const entry: ManagedServer = { proc, port, host, refCount: 1 };
+                this.servers.set(port, entry);
+                this.registerCleanup(debug);
+
+                proc.once('exit', (code: any) => {
                     Logger.info(`A2A server on port ${port} exited (code=${code})`);
-                    this.servers.get(port)?.proc.kill(); // Ensure it's killed if we still have it
-                    this.servers.delete(port);
+                    if (this.servers.get(port)?.proc === proc) {
+                        this.servers.delete(port);
+                    }
                 });
 
                 Logger.info(`A2A server on ${host}:${port} is ready.`);
                 return this.makeReleaseFn(port, debug);
+            } catch (err) {
+                if (proc) {
+                    proc.kill();
+                }
+                throw err;
             } finally {
                 this.startingUp.delete(port);
             }

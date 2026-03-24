@@ -231,8 +231,8 @@ describe('OpenCodeGeminiA2AProvider', () => {
         expect(parsedBody.params.generationConfig).toEqual({
             temperature: 0.1,
             topP: 0.95,
-            maxTokens: 1024,
-            stopSequences: ['\n']
+            maxOutputTokens: 1024,
+            stopSequences: ['\n'],
         });
     });
 
