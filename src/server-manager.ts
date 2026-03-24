@@ -58,7 +58,10 @@ interface ManagedServer {
 
 interface InflightStartup {
     promise: Promise<(() => Promise<void>) | null>;
+    resolve: (val: (() => Promise<void>) | null) => void;
+    reject: (err: any) => void;
     proc?: ChildProcess;
+    waiterCount: number;
 }
 
 /**
@@ -106,28 +109,54 @@ export class ServerManager {
         const inflight = this.startingUp.get(key);
         if (inflight) {
             Logger.debug(`[ServerManager] Waiting for inflight startup on ${key}...`);
-            await inflight.promise;
-            const existingInflight = this.servers.get(key);
-            if (existingInflight) {
-                existingInflight.refCount++;
-                Logger.info(`[ServerManager] Reusing managed server on ${key} after inflight (new refCount=${existingInflight.refCount})`);
-                return this.makeReleaseFn(key, debug, existingInflight);
+            inflight.waiterCount++;
+            try {
+                await inflight.promise;
+                const existingInflight = this.servers.get(key);
+                if (existingInflight) {
+                    // refCount increment is now handled by the starter assigning the sum
+                    // but since this is an 'inflight' waiter, we already incremented waiterCount.
+                    // The starter will set refCount = 1 + waiterCount.
+                    // However, there's a race: if the starter finishes before we incremented waiterCount,
+                    // we'll find existingInflight here. We should check if we actually need to increment.
+                    // Actually, simpler: starter finishes, sets refCount, then resolves promise.
+                    // If we get here, the starter has already published the entry.
+                    // But wait, if multiple waiters were here, who increments refCount?
+                    // Better approach: the starter knows how many were waiting at the moment of publishing.
+                    Logger.info(`[ServerManager] Reusing managed server on ${key} after inflight (refCount=${existingInflight.refCount})`);
+                    return this.makeReleaseFn(key, debug, existingInflight);
+                }
+                Logger.warn(`[ServerManager] Inflight startup on ${key} finished but server not found in map. Retrying ensureRunning.`);
+                return this.ensureRunning(port, host, modelId, config, debug);
+            } finally {
+                // No-op for waiterCount here as it was already consumed or failed
             }
-            Logger.warn(`[ServerManager] Inflight startup on ${key} finished but server not found in map. Retrying ensureRunning.`);
-            return this.ensureRunning(port, host, modelId, config, debug);
         }
 
         // 並行呼び出しでのレースコンディションを防ぐため、外部チェックの前に一旦予約する
         let resolveInflight: (val: (() => Promise<void>) | null) => void;
-        const inflightPromise = new Promise<(() => Promise<void>) | null>(r => { resolveInflight = r; });
-        this.startingUp.set(key, { promise: inflightPromise });
+        let rejectInflight: (err: any) => void;
+        const inflightPromise = new Promise<(() => Promise<void>) | null>((res, rej) => { 
+            resolveInflight = res; 
+            rejectInflight = rej;
+        });
+        const slot: InflightStartup = { 
+            promise: inflightPromise, 
+            resolve: resolveInflight!, 
+            reject: rejectInflight!,
+            waiterCount: 0 
+        };
+        this.startingUp.set(key, slot);
 
         try {
             // 3. 既に外部プロセスがリッスンしているか確認
-            if (await probePort(port, host)) {
+            const isListening = await probePort(port, host);
+            if (this.startingUp.get(key) !== slot) return async () => {}; // Aborted or replaced
+
+            if (isListening) {
                 Logger.info(`Port ${key} already listening. Skipping auto-start.`);
                 this.startingUp.delete(key);
-                resolveInflight!(null);
+                slot.resolve(null);
                 // 外部プロセスなので管理しない（リリース時にも何もしない）
                 return async () => {};
             }
@@ -138,6 +167,10 @@ export class ServerManager {
                 try {
                     // 新規起動
                     const serverPath = await this.resolveServerPath(config.serverPath);
+                    if (this.startingUp.get(key) !== slot) {
+                        throw new Error('Startup aborted: slot replaced or cleared');
+                    }
+
                     const env: Record<string, string> = {
                         ...process.env as Record<string, string>,
                         CODER_AGENT_PORT: String(port),
@@ -155,11 +188,8 @@ export class ServerManager {
                         detached: false,
                     });
                     
-                    // 起動中のプロセスを保持（dispose用）
-                    const currentInflight = this.startingUp.get(key);
-                    if (currentInflight) {
-                        currentInflight.proc = proc;
-                    }
+                    slot.proc = proc;
+                    this.registerCleanup(debug);
 
                     if (debug && proc.stdout) {
                         proc.stdout.on('data', (d: Buffer) => process.stdout.write(`[A2A-${port}] ${d}`));
@@ -182,9 +212,14 @@ export class ServerManager {
                         })
                     ]);
 
-                    const entry: ManagedServer = { proc, port, host, refCount: 1 };
+                    if (this.startingUp.get(key) !== slot) {
+                        proc.kill();
+                        throw new Error('Startup aborted after successful spawn: slot cleared');
+                    }
+
+                    // 初期リフレカントは 1 (自分) + 待機中の人数
+                    const entry: ManagedServer = { proc, port, host, refCount: 1 + slot.waiterCount };
                     this.servers.set(key, entry);
-                    this.registerCleanup(debug);
 
                     proc.once('exit', (code: number | null) => {
                         Logger.info(`A2A server on ${key} exited (code=${code})`);
@@ -193,24 +228,31 @@ export class ServerManager {
                         }
                     });
 
-                    Logger.info(`A2A server on ${key} is ready.`);
+                    Logger.info(`A2A server on ${key} is ready. refCount=${entry.refCount}`);
                     return this.makeReleaseFn(key, debug, entry);
                 } catch (err) {
                     if (proc) {
-                        proc.kill();
+                        try { proc.kill(); } catch {}
                     }
                     throw err;
                 } finally {
-                    this.startingUp.delete(key);
+                    if (this.startingUp.get(key) === slot) {
+                        this.startingUp.delete(key);
+                    }
                 }
             })();
 
             // 予約していた Promise を本物の起動 Promise で上書き（または連動）
-            startupPromise.then(res => resolveInflight!(res)).catch(err => resolveInflight!(null));
+            startupPromise
+                .then(res => slot.resolve(res))
+                .catch(err => slot.reject(err));
+            
             return startupPromise;
         } catch (err) {
-            this.startingUp.delete(key);
-            resolveInflight!(null);
+            if (this.startingUp.get(key) === slot) {
+                this.startingUp.delete(key);
+            }
+            slot.reject(err);
             throw err;
         }
     }

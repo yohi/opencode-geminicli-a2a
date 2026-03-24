@@ -26,6 +26,8 @@ import { Logger } from './utils/logger';
 
 /** チャンクが届かない場合のウォッチドッグタイムアウト (ms)のデフォルト値、10分 */
 const DEFAULT_CHUNK_TIMEOUT_MS = 10 * 60 * 1000;
+/** contextToolFrequency の最大キャッシュ件数 */
+const MAX_CONTEXT_CACHE = 100;
 
 function anySignal(signals: (AbortSignal | undefined)[]): AbortSignal {
     const controller = new AbortController();
@@ -493,7 +495,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 }
 
                                 const canAutoConfirm = isAutoConfirmTarget(lastFinishPart!, textPartCounter);
-                                if (canAutoConfirm) {
+                                if (canAutoConfirm && (lastFinishPart as any).taskId) {
                                     if (autoConfirmCount < MAX_AUTO_CONFIRM) {
                                         autoConfirmCount++;
                                         currentRequest = buildConfirmationRequest(
@@ -520,7 +522,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 }
 
                                 const isToolCallConfirm = (lastFinishPart as any).coderAgentKind === 'tool-call-confirmation' && (lastFinishPart as any).hasExposedTools === true;
-                                if (isToolCallConfirm) {
+                                if (isToolCallConfirm && (lastFinishPart as any).taskId) {
                                     if (toolCallConfirmCount < MAX_TOOL_CONFIRM) {
                                         toolCallConfirmCount++;
                                         currentRequest = buildConfirmationRequest(
@@ -572,6 +574,10 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                             const updatedFreq = mapper.currentToolCallFrequency;
                             const updatedContextId = mapper.contextId || session.contextId;
                             if (updatedContextId) {
+                                if (!this.contextToolFrequency.has(updatedContextId) && this.contextToolFrequency.size >= MAX_CONTEXT_CACHE) {
+                                    const oldestKey = this.contextToolFrequency.keys().next().value;
+                                    if (oldestKey !== undefined) this.contextToolFrequency.delete(oldestKey);
+                                }
                                 this.contextToolFrequency.set(updatedContextId, updatedFreq);
                             }
                             await this.sessionStore.update(sessionId, {
