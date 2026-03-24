@@ -467,6 +467,8 @@ export class A2AStreamMapper {
     private fallbackToolCallIds = new Map<string, string>();
     /** 出力済みテキストの累計インデックス別マップ。スナップショット重複排除に使用 (taskId ごとにリセット) */
     private emittedTextByIndex = new Map<number, string>();
+    /** 現在のインデックスが思考プロセス中かどうかを保持するマップ */
+    private indexIsReasoning = new Map<number, boolean>();
     /** 現在のチャンクの coderAgentKind */
     private _currentCoderAgentKind?: string;
     /** 最後の finishReason */
@@ -524,6 +526,7 @@ export class A2AStreamMapper {
     startNewTurn() {
         this._turnSequence++;
         this.emittedTextByIndex.clear();
+        this.indexIsReasoning.clear();
         this.emittedToolCallIds.clear();
         this.fallbackToolCallIds.clear();
         this.bufferedTools.clear();
@@ -581,7 +584,26 @@ export class A2AStreamMapper {
                     if (p.kind === 'text' && p.text) {
                         const delta = this.extractTextDelta(index, p.text);
                         if (delta) {
-                            if (delta.startsWith('[Thinking]')) {
+                            // もしこのインデックスの最初のテキスト（または全テキスト）が '[Thinking]' で始まっていたら思考中とする
+                            // ただし、メタデータで明示的に思考プロセスでない（kind が thought 以外）ことが示された場合は通常テキストに戻す
+                            let isReasoning = this.indexIsReasoning.get(index);
+                            if (isReasoning === undefined || isReasoning === true) {
+                                const startsWithThinking = p.text.startsWith('[Thinking]');
+                                const isThoughtKind = this._currentCoderAgentKind === 'thought';
+                                
+                                if (isThoughtKind) {
+                                    isReasoning = true;
+                                } else if (this._currentCoderAgentKind !== undefined) {
+                                    // 明示的に別の kind (または empty) が指定された場合は思考中ではない
+                                    isReasoning = false;
+                                } else {
+                                    // メタデータがない場合は接頭辞に頼る
+                                    isReasoning = startsWithThinking;
+                                }
+                                this.indexIsReasoning.set(index, isReasoning);
+                            }
+
+                            if (isReasoning) {
                                 parts.push({
                                     type: 'reasoning-delta',
                                     delta: delta,
@@ -776,17 +798,21 @@ export class A2AStreamMapper {
                     let argsForKey: any = toolInfo.args;
                     if (typeof argsForKey === 'string') {
                         try {
-                            argsForKey = JSON.parse(argsForKey);
+                            const parsed = JSON.parse(argsForKey);
+                            if (parsed && typeof parsed === 'object') {
+                                argsForKey = { ...parsed };
+                            }
                         } catch {
-                            argsForKey = {};
+                            // parse 失敗時は文字列をそのまま維持する（{} で上書きしない）
                         }
-                    } else if (!argsForKey || typeof argsForKey !== 'object') {
-                        argsForKey = {};
-                    } else {
+                    } else if (argsForKey && typeof argsForKey === 'object') {
                         argsForKey = { ...argsForKey };
                     }
 
-                    delete argsForKey.description;
+                    if (argsForKey && typeof argsForKey === 'object') {
+                        delete argsForKey.description;
+                    }
+
                     const isInvalidToolName = toolInfo.toolName === 'invalid';
                     let isInternalTool = this.internalTools.has(toolInfo.toolName) || this.internalTools.has(originalToolName);
                     
@@ -803,16 +829,20 @@ export class A2AStreamMapper {
                     const currentFreq = freq + 1;
                     this.toolCallFrequency.set(argsKey, currentFreq);
 
+                    // シェルインジェクション対策: シングルクォートをエスケープする
+                    const sanitizeForShell = (s: string) => s.replace(/'/g, "'\\''");
+
                     if (currentFreq > this.maxToolCallFrequency) {
                         Logger.warn(`[DuplicateDetect] Tool '${originalToolName}' loop detected (${currentFreq} times).`);
                         if (isInternalToolConfirmation || isInternalTool) {
                             this._shouldInterruptLoop = true;
                         } else {
                             const originalToolNameForMessage = toolInfo.toolName;
+                            const escapedToolName = sanitizeForShell(originalToolNameForMessage);
                             originalToolName = 'bash';
                             toolInfo.toolName = 'bash';
                             toolInfo.args = { 
-                                command: `echo '[opencode-geminicli-a2a] SYSTEM: You have already called "${originalToolNameForMessage}" with exactly the same arguments ${currentFreq} times. Please DO NOT repeat this exact call and proceed with a DIFFERENT action or respond to the user.'`,
+                                command: `echo '[opencode-geminicli-a2a] SYSTEM: You have already called "${escapedToolName}" with exactly the same arguments ${currentFreq} times. Please DO NOT repeat this exact call and proceed with a DIFFERENT action or respond to the user.'`,
                                 description: `Duplicate tool call suppressed` 
                             };
                         }
@@ -820,11 +850,12 @@ export class A2AStreamMapper {
                         Logger.info(`[Workaround] Intercepted hallucinated/invalid tool call '${toolInfo.toolName}' (mapped to '${originalToolName}'). Rewriting to a safe 'bash' call.`);
                         
                         const badName = originalToolName;
+                        const escapedBadName = sanitizeForShell(badName);
                         originalToolName = 'bash';
                         toolInfo.toolName = 'bash';
                         // OpenCode の bash ツールは { command: string, description: string } を引数として受け取る
                         toolInfo.args = { 
-                            command: `echo '[opencode-geminicli-a2a] Warning: Model called unknown tool: ${badName}'`,
+                            command: `echo '[opencode-geminicli-a2a] Warning: Model called unknown tool: ${escapedBadName}'`,
                             description: `Fallback for hallucinated tool ${badName}` 
                         };
                     }

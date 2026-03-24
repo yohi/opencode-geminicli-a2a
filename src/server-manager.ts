@@ -228,12 +228,8 @@ export class ServerManager {
         try {
             if (!this.cachedNpmRoot) {
                 const result = await execAsync('npm root -g', { timeout: 5000 });
-                const stdout = (result && typeof result === 'object' && 'stdout' in result)
-                    ? (result as { stdout: string }).stdout
-                    : (typeof result === 'string' ? result : undefined);
-
-                if (typeof stdout === 'string') {
-                    this.cachedNpmRoot = stdout.trim();
+                if (result && typeof result.stdout === 'string') {
+                    this.cachedNpmRoot = result.stdout.trim();
                 }
             }
             if (this.cachedNpmRoot) {
@@ -247,9 +243,10 @@ export class ServerManager {
             Logger.debug(`npm root -g failed: ${err instanceof Error ? err.message : String(err)}`);
         }
 
-        // 2. Homebrew (linuxbrew) など代替パスを確認
+        // 2. Homebrew (linuxbrew/macOS) など代替パスを確認
         const altPaths = [
             '/home/linuxbrew/.linuxbrew/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
+            '/opt/homebrew/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
             '/usr/local/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
             '/usr/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
         ];

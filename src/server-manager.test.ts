@@ -33,7 +33,7 @@ describe('ServerManager', () => {
         vi.mocked(exec).mockImplementation(((cmd: string, opts: any, cb: any) => {
             const callback = typeof opts === 'function' ? opts : cb;
             process.nextTick(() => {
-                callback(null, '/fake/npm/root\n', '');
+                callback(null, { stdout: '/fake/npm/root\n', stderr: '' }, '');
             });
         }) as any);
     });
