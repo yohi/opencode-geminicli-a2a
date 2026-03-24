@@ -135,6 +135,15 @@ describe('DefaultMultiAgentRouter', () => {
             const router = new DefaultMultiAgentRouter(endpoints);
             expect(() => router.resolve('m1')).toThrow("Ambiguous model ID 'm1' found in multiple endpoints: a1, a2");
         });
+
+        it('モデルIDが重複しているのにキーがないエンドポイントがある場合は初期化時にエラーを投げる', () => {
+            const endpoints: AgentEndpoint[] = [
+                { key: 'a1', host: 'h1', port: 1, models: ['m1'] },
+                { host: 'h2', port: 2, models: ['m1'] }, // No key
+            ];
+            expect(() => new DefaultMultiAgentRouter(endpoints))
+                .toThrow("Model ID 'm1' is duplicated across multiple endpoints, but at least one endpoint lacks a unique 'key'");
+        });
     });
 
     describe('getEndpoints', () => {

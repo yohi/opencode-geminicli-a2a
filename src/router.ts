@@ -18,15 +18,36 @@ export class DefaultMultiAgentRouter implements MultiAgentRouter {
 
     constructor(endpoints: AgentEndpoint[]) {
         const keys = new Set<string>();
-        for (let i = 0; i < endpoints.length; i++) {
-            const endpoint = endpoints[i];
+        const modelToEndpoints = new Map<string, AgentEndpoint[]>();
+
+        for (const endpoint of endpoints) {
             if (endpoint.key) {
                 if (keys.has(endpoint.key)) {
                     throw new Error(`Duplicate agent key '${endpoint.key}' found`);
                 }
                 keys.add(endpoint.key);
             }
+
+            const modelIds = this.getModelIds(endpoint);
+            for (const modelId of modelIds) {
+                if (!modelToEndpoints.has(modelId)) {
+                    modelToEndpoints.set(modelId, []);
+                }
+                modelToEndpoints.get(modelId)!.push(endpoint);
+            }
         }
+
+        // Validate that duplicated modelIds are only allowed on endpoints with unique keys
+        for (const [modelId, matchingEndpoints] of modelToEndpoints.entries()) {
+            if (matchingEndpoints.length > 1) {
+                for (const endpoint of matchingEndpoints) {
+                    if (!endpoint.key) {
+                        throw new Error(`Model ID '${modelId}' is duplicated across multiple endpoints, but at least one endpoint lacks a unique 'key'. Ambiguous endpoints must have unique keys to be resolvable.`);
+                    }
+                }
+            }
+        }
+
         this.endpoints = [...endpoints];
     }
 
