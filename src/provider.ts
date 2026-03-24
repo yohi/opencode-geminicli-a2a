@@ -27,6 +27,8 @@ const DEFAULT_CHUNK_TIMEOUT_MS = 10 * 60 * 1000;
 /** contextToolFrequency の最大キャッシュ件数 */
 const MAX_CONTEXT_CACHE = 100;
 
+const BACKGROUND_TOOLS = ['codebase_investigator', 'generalist'];
+
 function anySignal(signals: (AbortSignal | undefined)[]): AbortSignal {
     const controller = new AbortController();
     const handlers: Array<{ signal: AbortSignal; handler: () => void }> = [];
@@ -59,29 +61,31 @@ function anySignal(signals: (AbortSignal | undefined)[]): AbortSignal {
     return controller.signal;
 }
 
-function isAutoConfirmTarget(part: ExtendedFinishPart | undefined, textPartCounter: number = 0, autoConfirmCount: number = 0): boolean {
+function isAutoConfirmTarget(
+    part: ExtendedFinishPart | undefined, 
+    textPartCounter: number = 0, 
+    autoConfirmCount: number = 0,
+    maxAutoConfirm: number = 5
+): boolean {
     if (!part) return false;
-    
-    // If AI has already spoken to the user in this turn (textPartCounter > 0),
-    // we should NOT auto-confirm unless it's a known background agent like codebase_investigator.
-    // This prevents "Proceed" loops after greetings or turn-ending tool calls.
+    if (autoConfirmCount >= maxAutoConfirm) return false;
+
+    const internalToolNames = part.internalToolNames || [];
+    const hasMetaTool = internalToolNames.some(name => META_TOOLS.includes(name));
+    if (hasMetaTool) return false;
+
+    const isBackgroundTool = internalToolNames.some(name => BACKGROUND_TOOLS.includes(name));
     const hasSpoken = textPartCounter > 0;
 
     if (part.coderAgentKind === 'tool-call-confirmation') {
         return part.inputRequired === true && part.hasExposedTools !== true;
     }
-    
-    const isInternalRecall = part.coderAgentKind === 'internal-tool-call';
-    const isBackgroundAgent = part.coderAgentKind === 'codebase_investigator' || part.coderAgentKind === 'generalist';
 
-    // Meta tools like activate_skill or search_skills tend to loop if auto-confirmed
-    // multiple times without user context update.
-    const hasMetaTool = part.internalToolNames?.some(name => META_TOOLS.includes(name));
-
-    if (isBackgroundAgent) {
+    if (isBackgroundTool) {
         return part.inputRequired === true && part.hasExposedTools !== true;
     }
 
+    const isInternalRecall = part.coderAgentKind === 'internal-tool-call';
     if (isInternalRecall) {
         return !hasSpoken && part.inputRequired === true && part.hasExposedTools !== true;
     }
@@ -412,7 +416,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         let currentRequest = initialRequestData;
                         let autoConfirmCount = 0;
                         let toolCallConfirmCount = 0;
-                        const MAX_AUTO_CONFIRM = resolvedBaseConfig.maxAutoConfirm ?? this.options?.maxAutoConfirm ?? 50;
+                        const MAX_AUTO_CONFIRM = this.options.maxAutoConfirm || 5;
                         const MAX_TOOL_CONFIRM = 1;
 
                         let firstResponse: any = { stream: responseStream, headers: headers || {} };
@@ -471,7 +475,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                                 case 'finish': {
                                                     hasFinishedInThisTurn = true;
                                                     lastFinishPart = part as ExtendedFinishPart;
-                                                    if (!isAutoConfirmTarget(lastFinishPart, textPartCounter, autoConfirmCount)) {
+                                                    if (!isAutoConfirmTarget(lastFinishPart, textPartCounter, autoConfirmCount, MAX_AUTO_CONFIRM)) {
                                                         closeText();
                                                         closeReasoning();
                                                         const unifiedFinishReason = (lastFinishPart.finishReason === 'unknown' ? 'stop' : lastFinishPart.finishReason);
@@ -525,10 +529,10 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     break;
                                 }
 
-                                const canAutoConfirm = isAutoConfirmTarget(lastFinishPart!, textPartCounter, autoConfirmCount);
+                                const canAutoConfirm = isAutoConfirmTarget(lastFinishPart!, textPartCounter, autoConfirmCount, MAX_AUTO_CONFIRM);
                                 Logger.warn(`[Debug-Loop] canAutoConfirm: ${canAutoConfirm}, autoConfirmCount: ${autoConfirmCount}, lastFinishPart.coderAgentKind: ${lastFinishPart?.coderAgentKind}`);
-                                if (canAutoConfirm && lastFinishPart.taskId) {
-                                    if (autoConfirmCount < MAX_AUTO_CONFIRM) {
+                                if (lastFinishPart.taskId) {
+                                    if (canAutoConfirm) {
                                         autoConfirmCount++;
                                         currentRequest = buildConfirmationRequest(
                                             lastFinishPart.taskId!,
@@ -537,7 +541,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         );
                                         mapper.startNewTurn();
                                         continue;
-                                    } else {
+                                    } else if (autoConfirmCount >= MAX_AUTO_CONFIRM && isAutoConfirmTarget(lastFinishPart!, textPartCounter, 0, Infinity)) {
                                         Logger.warn(`[auto-confirm] MAX_AUTO_CONFIRM reached. Forcing stop.`);
                                         closeReasoning();
                                         if (textPartCounter === 0) {

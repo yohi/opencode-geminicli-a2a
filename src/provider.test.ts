@@ -355,7 +355,7 @@ describe('OpenCodeGeminiA2AProvider', () => {
                             message: {
                                 parts: [{
                                     kind: 'data',
-                                    data: { request: { callId, name: 'activate_skill', args: JSON.stringify({ skill: `skill-${turnIdx}` }) } }
+                                    data: { request: { callId, name: 'sequentialthinking', args: JSON.stringify({ thought: `thought-${turnIdx}` }) } }
                                 }]
                             }
                         }
