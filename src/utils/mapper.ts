@@ -316,7 +316,7 @@ function extractUserParts(message: LanguageModelV2Prompt[number]): A2AJsonRpcReq
         ? [{ type: 'text' as const, text: message.content }]
         : message.content) as UserContentPart[];
 
-    return content.map((part: any) => {
+    return content.map((part: UserContentPart) => {
         if (part.type === 'text') {
             return { kind: 'text' as const, text: part.text };
         } else if (part.type === 'image') {
@@ -375,10 +375,10 @@ interface ToolResultPart {
 }
 
 function formatToolResults(
-    content: any[],
+    content: ToolResultPart[],
     toolMapping?: Record<string, string>
 ): string {
-    return content.map((part: any) => {
+    return content.map((part: ToolResultPart) => {
         const resultVal = part.result !== undefined ? part.result : part.content;
         const resultStr = typeof resultVal === 'string'
             ? resultVal

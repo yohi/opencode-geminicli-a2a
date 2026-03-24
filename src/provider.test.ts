@@ -227,12 +227,11 @@ describe('OpenCodeGeminiA2AProvider', () => {
         expect(vi.mocked(ofetch.raw)).toHaveBeenCalledTimes(1);
         const requestBody = vi.mocked(ofetch.raw).mock.calls[0][1]?.body as any;
         const parsedBody = typeof requestBody === 'string' ? JSON.parse(requestBody) : requestBody;
-        
         expect(parsedBody.params.generationConfig).toEqual({
             temperature: 0.1,
             topP: 0.95,
-            maxTokens: 1024,
-            stopSequences: ['\n']
+            maxOutputTokens: 1024,
+            stopSequences: ['\n'],
         });
     });
 
@@ -393,7 +392,7 @@ describe('OpenCodeGeminiA2AProvider', () => {
                     parts.push(value);
                 }
             } catch (e: any) {
-                // ignore
+                console.error('Error during stream read:', e);
             }
 
             const textDeltas = parts.filter(p => p.type === 'text-delta');

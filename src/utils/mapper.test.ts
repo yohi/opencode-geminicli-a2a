@@ -661,7 +661,7 @@ describe('mapper', () => {
                         message: {
                             parts: [{
                                 kind: 'data',
-                                data: { request: { callId, name: 'activate_skill', args: { skill: 'test' } } }
+                                data: { request: { callId, name: 'activate_skill', args: JSON.stringify({ skill: 'test' }) } }
                             }]
                         }
                     }

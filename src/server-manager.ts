@@ -276,12 +276,14 @@ export class ServerManager {
         try {
             if (!this.cachedNpmRoot) {
                 const { stdout } = await execAsync('npm root -g', { timeout: 5000 });
-                this.cachedNpmRoot = stdout.trim();
+                this.cachedNpmRoot = stdout.trim() || null;
             }
-            const globalPath = path.join(this.cachedNpmRoot, '@google', 'gemini-cli-a2a-server', 'dist', 'a2a-server.mjs');
+            if (this.cachedNpmRoot) {
+                const globalPath = path.join(this.cachedNpmRoot, '@google', 'gemini-cli-a2a-server', 'dist', 'a2a-server.mjs');
 
-            if (existsSync(globalPath)) {
-                return globalPath;
+                if (existsSync(globalPath)) {
+                    return globalPath;
+                }
             }
         } catch (err) {
             // npm が使えない場合はスキップ
@@ -291,6 +293,7 @@ export class ServerManager {
         // 2. Homebrew (linuxbrew) など代替パスを確認
         const altPaths = [
             '/home/linuxbrew/.linuxbrew/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
+            '/opt/homebrew/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
             '/usr/local/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
             '/usr/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
         ];
@@ -370,15 +373,29 @@ export class ServerManager {
         };
         const termHandler = () => cleanupAndExit('SIGTERM');
         const intHandler = () => cleanupAndExit('SIGINT');
+        const uncaughtHandler = (err: Error) => {
+            Logger.error('[ServerManager] Uncaught exception:', err);
+            cleanupAndExit();
+            process.exit(1);
+        };
+        const unhandledHandler = (reason: any) => {
+            Logger.error('[ServerManager] Unhandled rejection:', reason);
+            cleanupAndExit();
+            process.exit(1);
+        };
 
         process.once('exit', exitHandler);
         process.once('SIGTERM', termHandler);
         process.once('SIGINT', intHandler);
+        process.on('uncaughtException', uncaughtHandler);
+        process.on('unhandledRejection', unhandledHandler);
 
         this.cleanupHandlers.push(
             { event: 'exit', handler: exitHandler },
             { event: 'SIGTERM', handler: termHandler },
-            { event: 'SIGINT', handler: intHandler }
+            { event: 'SIGINT', handler: intHandler },
+            { event: 'uncaughtException', handler: uncaughtHandler },
+            { event: 'unhandledRejection', handler: unhandledHandler }
         );
     }
 

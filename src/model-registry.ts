@@ -108,7 +108,7 @@ function loadModelsFromConfig(): ModelInfo[] | undefined {
 
         return parseModelsConfig(modelsConfig);
     } catch (err) {
-        Logger.error('[opencode-geminicli-a2a] Failed to load custom models configuration; using default models.', err);
+        Logger.error('Failed to load custom models configuration; using default models.', err);
         return undefined;
     }
 }

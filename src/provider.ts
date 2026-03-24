@@ -19,6 +19,7 @@ import { type SessionStore, InMemorySessionStore } from './session';
 import { isQuotaError, getNextFallbackModel, resolveFallbackConfig } from './fallback';
 import { DefaultMultiAgentRouter } from './router';
 import { Logger } from './utils/logger';
+import { META_TOOLS } from './utils/constants';
 
 
 /** チャンクが届かない場合のウォッチドッグタイムアウト (ms)のデフォルト値、10分 */
@@ -75,8 +76,7 @@ function isAutoConfirmTarget(part: ExtendedFinishPart | undefined, textPartCount
 
     // Meta tools like activate_skill or search_skills tend to loop if auto-confirmed
     // multiple times without user context update.
-    const metaTools = ['activate_skill', 'load_skill', 'search_skills', 'search_skills_by_id', 'search_skills_by_name'];
-    const hasMetaTool = part.internalToolNames?.some(name => metaTools.includes(name));
+    const hasMetaTool = part.internalToolNames?.some(name => META_TOOLS.includes(name));
 
     if (isBackgroundAgent) {
         return part.inputRequired === true && part.hasExposedTools !== true;
@@ -247,7 +247,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
         if ((options as any).temperature !== undefined) generationConfig.temperature = (options as any).temperature;
         if ((options as any).topP !== undefined) generationConfig.topP = (options as any).topP;
         if ((options as any).topK !== undefined) generationConfig.topK = (options as any).topK;
-        if ((options as any).maxTokens !== undefined) generationConfig.maxTokens = (options as any).maxTokens;
+        if ((options as any).maxTokens !== undefined) generationConfig.maxOutputTokens = (options as any).maxTokens;
         if ((options as any).stopSequences !== undefined) generationConfig.stopSequences = (options as any).stopSequences;
 
         const mapOptions: MapPromptOptions = {
@@ -650,7 +650,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
 
                 switch (value.type) {
                     case 'text-delta': {
-                        const delta = (value as any).textDelta;
+                        const delta = (value as any).textDelta || (value as any).delta;
                         if (delta) {
                             if (content.length > 0 && content[content.length - 1].type === 'text') {
                                 (content[content.length - 1] as any).text += delta;
@@ -661,7 +661,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         break;
                     }
                     case 'reasoning-delta': {
-                        const delta = (value as any).delta || (value as any).reasoningDelta;
+                        const delta = (value as any).reasoningDelta || (value as any).delta;
                         if (delta) {
                             reasoning += delta;
                         }
