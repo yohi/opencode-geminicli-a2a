@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ConfigSchema, type A2AConfig, type AgentEndpoint, AgentEndpointSchema, LiteLLMProxyConfigSchema } from './schemas';
+import { ConfigSchema, type A2AConfig, type AgentEndpoint, AgentEndpointSchema } from './schemas';
 import type { SessionStore } from './session';
 import type { ModelRegistry } from './model-registry';
 import type { FallbackConfig } from './fallback';
@@ -48,11 +48,26 @@ export interface OpenCodeProviderOptions {
     configPath?: string;
     /** ホットリロードを有効にするか */
     hotReload?: boolean;
-    /** LiteLLM プロキシ URL。指定時はリクエストを LiteLLM 経由でルーティング */
-    litellmProxy?: {
-        url: string;
-        apiKey?: string;
-    };
+    /**
+     * A2A ストリームのチャンク間タイムアウト (ms)。
+     * この時間内に次のチャンクが届かなければエラーとしてストリームを終了する。
+     * codebase_investigator など長時間タスクを使う場合は大きめの値を設定してください。
+     * デフォルト: 600000 (10分)
+     */
+    chunkTimeoutMs?: number;
+    /**
+     * 同一引数での同一ツール呼び出しの許容回数。
+     * この回数を超えると、内部ツールの場合はループ強制中断、
+     * 外部ツールの場合は bash フォールバックに変換される。
+     * デフォルト: 3
+     */
+    maxToolCallFrequency?: number;
+    /**
+     * 内部ツールの auto-confirm ループの最大回数。
+     * この回数を超えるとループを停止し、テキスト未出力であればフォールバックメッセージを返す。
+     * デフォルト: 50
+     */
+    maxAutoConfirm?: number;
 }
 
 /** 外部設定ファイルのスキーマ */
@@ -64,7 +79,6 @@ const ExternalConfigSchema = z.object({
     agents: z.array(AgentEndpointSchema).optional(),
     toolMapping: z.record(z.string()).optional(),
     internalTools: z.array(z.string()).optional(),
-    litellmProxy: LiteLLMProxyConfigSchema.optional(),
 }).passthrough();
 
 export class ConfigManager {
@@ -200,7 +214,6 @@ const parseSchema = z.object({
         seed: z.coerce.number().int().optional(),
         responseFormat: z.any().optional(),
     }).optional(),
-    litellmProxy: LiteLLMProxyConfigSchema.optional(),
 });
 
 const DEFAULT_TOOL_MAPPING = {
@@ -222,8 +235,7 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & {
     generationConfig?: OpenCodeProviderOptions['generationConfig'],
     toolMapping?: Record<string, string>,
     internalTools?: string[],
-    agents?: AgentEndpoint[],
-    litellmProxy?: { url: string; apiKey?: string; }
+    agents?: AgentEndpoint[]
 } {
     const manager = ConfigManager.getInstance();
     if (options?.configPath) manager.setConfigPath(options.configPath);
@@ -235,8 +247,6 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & {
     const envPort = getNormalizedValue(process.env['GEMINI_A2A_PORT']);
     const envToken = getNormalizedValue(process.env['GEMINI_A2A_TOKEN']);
     const envProtocol = getNormalizedValue(process.env['GEMINI_A2A_PROTOCOL']);
-    const envLiteLLMUrl = getNormalizedValue(process.env['LITELLM_PROXY_URL']);
-    const envLiteLLMKey = getNormalizedValue(process.env['LITELLM_PROXY_API_KEY']);
 
     const mergedConfig = {
         host: getNormalizedValue(options?.host) ?? external.host ?? envHost,
@@ -244,7 +254,6 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & {
         token: getNormalizedValue(options?.token) ?? external.token ?? envToken,
         protocol: getNormalizedValue(options?.protocol) ?? external.protocol ?? (envProtocol as 'http' | 'https' | undefined),
         generationConfig: options?.generationConfig,
-        litellmProxy: options?.litellmProxy ?? external.litellmProxy ?? (envLiteLLMUrl ? { url: envLiteLLMUrl, apiKey: envLiteLLMKey } : undefined),
     };
 
     const parsedData = parseSchema.parse(mergedConfig);
@@ -260,6 +269,5 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & {
         },
         internalTools: options?.internalTools ?? external.internalTools,
         agents: options?.agents ?? external.agents,
-        litellmProxy: parsedData.litellmProxy,
     };
 }

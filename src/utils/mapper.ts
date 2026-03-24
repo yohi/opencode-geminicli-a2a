@@ -1,7 +1,7 @@
-import {
-    type LanguageModelV1Prompt,
-    type LanguageModelV1StreamPart,
-    type LanguageModelV1FinishReason,
+import type {
+    LanguageModelV2Prompt,
+    LanguageModelV2StreamPart,
+    LanguageModelV2FinishReason,
 } from '@ai-sdk/provider';
 import type { A2AJsonRpcRequest, A2AResponseResult, Tool } from '../schemas';
 import crypto from 'node:crypto';
@@ -26,19 +26,21 @@ export const DEFAULT_INTERNAL_TOOLS = [
 
 export interface ExtendedFinishPart {
     type: 'finish';
-    finishReason: LanguageModelV1FinishReason;
+    finishReason: LanguageModelV2FinishReason;
     usage: { 
-        inputTokens: { total: number }; 
-        outputTokens: { total: number };
+        promptTokens: number; 
+        completionTokens: number;
     };
     providerMetadata?: Record<string, any>;
     inputRequired?: boolean;
     rawState?: string;
     coderAgentKind?: string;
     hasExposedTools?: boolean;
+    internalToolNames?: string[];
+    shouldInterruptLoop?: boolean;
 }
 
-export type ExtendedStreamPart = LanguageModelV1StreamPart | ExtendedFinishPart | FileStreamPart;
+export type ExtendedStreamPart = LanguageModelV2StreamPart | ExtendedFinishPart | FileStreamPart;
 
 // AI SDK v3 の LanguageModelV3StreamPart に含まれる file 型
 export interface FileStreamPart {
@@ -135,7 +137,7 @@ export interface MapPromptOptions {
  *   - prompt 末尾が tool ロールの場合、ツール結果をテキスト化して user メッセージに含める
  */
 export function mapPromptToA2AJsonRpcRequest(
-    prompt: LanguageModelV1Prompt,
+    prompt: LanguageModelV2Prompt,
     optionsOrTools?: MapPromptOptions | Tool[]
 ): A2AJsonRpcRequest {
     // 後方互換: 第2引数が配列の場合は tools として扱う
@@ -179,7 +181,7 @@ export function mapPromptToA2AJsonRpcRequest(
             let text = '';
             if (typeof msg.content === 'string') text = msg.content;
             else if (Array.isArray(msg.content)) {
-                text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
+                text = msg.content.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('\n');
             }
             parts.push({ kind: 'text', text: `[ASSISTANT]\n${text}\n` });
         } else if (msg.role === 'tool') {
@@ -297,14 +299,14 @@ function extractBinaryOrUri(data: unknown): { bytes?: string; uri?: string; extr
 /**
  * ユーザーメッセージから全パーツを抽出する。
  */
-function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcRequest['params']['message']['parts'] {
+function extractUserParts(message: LanguageModelV2Prompt[number]): A2AJsonRpcRequest['params']['message']['parts'] {
     if (message.role !== 'user') return [];
 
     const content = typeof message.content === 'string'
         ? [{ type: 'text' as const, text: message.content }]
         : message.content;
 
-    return content.map(part => {
+    return content.map((part: any) => {
         if (part.type === 'text') {
             return { kind: 'text' as const, text: part.text };
         } else if (part.type === 'image') {
@@ -347,7 +349,7 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
         }
 
         return null;
-    }).filter((p): p is NonNullable<typeof p> => p !== null);
+    }).filter((p: any): p is NonNullable<typeof p> => p !== null);
 }
 
 /**
@@ -355,13 +357,14 @@ function extractUserParts(message: LanguageModelV1Prompt[number]): A2AJsonRpcReq
  * A2A サーバーが理解できるよう、構造化されたテキストとして送信する。
  */
 function formatToolResults(
-    content: Array<{ type: 'tool-result'; toolCallId: string; toolName: string; result: unknown; isError?: boolean }>,
+    content: any[],
     toolMapping?: Record<string, string>
 ): string {
-    return content.map(part => {
-        const resultStr = typeof part.result === 'string'
-            ? part.result
-            : JSON.stringify(part.result);
+    return content.map((part: any) => {
+        const resultVal = part.result !== undefined ? part.result : part.content;
+        const resultStr = typeof resultVal === 'string'
+            ? resultVal
+            : JSON.stringify(resultVal);
         const prefix = part.isError ? '[Tool Error' : '[Tool Result';
         const mappedToolName = toolMapping?.[part.toolName] || part.toolName;
         return `${prefix}: ${mappedToolName} (${part.toolCallId})]\n${resultStr}`;
@@ -436,7 +439,7 @@ export class A2AStreamMapper {
     private internalTools: Set<string>;
 
     /** 出力済みテキストの累計インデックス別マップ。スナップショット重複排除に使用 */
-    private bufferedTools = new Map<string, { toolName: string; args: any }>();
+    private bufferedTools = new Map<string, { originalToolName: string; toolInfo: { toolName: string; args: any } }>();
     /** レスポンスから抽出した contextId */
     private _contextId?: string;
     /** レスポンスから抽出した taskId */
@@ -453,15 +456,29 @@ export class A2AStreamMapper {
     private _currentCoderAgentKind?: string;
     /** 最後の finishReason */
     private _lastFinishReason?: string;
+    private _shouldInterruptLoop: boolean = false;
+    private _lastInternalToolNames: string[] = [];
+
+    /** ツール呼び出しの引数文字列ごとのカウント */
+    private toolCallFrequency = new Map<string, number>();
+    /** 同一引数での呼び出し許容上限（これを超えると抑制する） */
+    public maxToolCallFrequency: number;
 
     /** OpenCode によって要求されたツールの Set (指定がある場合、これに含まれないツールはすべて internal 扱いになる) */
     private clientTools?: Set<string>;
 
-    constructor(options?: { toolMapping?: Record<string, string>, internalTools?: string[], clientTools?: string[] }) {
+    constructor(options?: { toolMapping?: Record<string, string>, internalTools?: string[], clientTools?: string[], initialToolCallFrequency?: Record<string, number>, maxToolCallFrequency?: number }) {
         this.toolMapping = options?.toolMapping ?? {};
+        this.maxToolCallFrequency = options?.maxToolCallFrequency ?? 3;
         this.internalTools = new Set(options?.internalTools ?? DEFAULT_INTERNAL_TOOLS);
         if (options?.clientTools) {
             this.clientTools = new Set(options.clientTools);
+        }
+
+        if (options?.initialToolCallFrequency) {
+            for (const [k, v] of Object.entries(options.initialToolCallFrequency)) {
+                this.toolCallFrequency.set(k, v);
+            }
         }
 
         // reverseToolMapping の構築 (Server -> OpenCode)
@@ -475,6 +492,10 @@ export class A2AStreamMapper {
                 this.reverseToolMapping[serverName] = openCodeName;
             }
         }
+    }
+
+    get currentToolCallFrequency(): Record<string, number> {
+        return Object.fromEntries(this.toolCallFrequency.entries());
     }
 
     /** レスポンスから抽出した contextId を取得 */
@@ -491,6 +512,8 @@ export class A2AStreamMapper {
         this.emittedToolCallIds.clear();
         this.fallbackToolCallIds.clear();
         this.bufferedTools.clear();
+        this._shouldInterruptLoop = false;
+        this._lastInternalToolNames = [];
     }
 
     /**
@@ -508,6 +531,8 @@ export class A2AStreamMapper {
                 this.emittedToolCallIds.clear();
                 this.fallbackToolCallIds.clear();
                 this.bufferedTools.clear();
+                this._shouldInterruptLoop = false;
+                this._lastInternalToolNames = [];
                 this._lastFinishReason = undefined;
             }
             return parts;
@@ -521,6 +546,8 @@ export class A2AStreamMapper {
                 this.emittedToolCallIds.clear();
                 this.fallbackToolCallIds.clear();
                 this.bufferedTools.clear();
+                this._shouldInterruptLoop = false;
+                this._lastInternalToolNames = [];
                 this._lastFinishReason = undefined;
             }
 
@@ -539,14 +566,22 @@ export class A2AStreamMapper {
                     if (p.kind === 'text' && p.text) {
                         const delta = this.extractTextDelta(index, p.text);
                         if (delta) {
-                            parts.push({
-                                type: 'text-delta',
-                                textDelta: delta,
-                            });
+                            if (delta.startsWith('[Thinking]')) {
+                                parts.push({
+                                    type: 'reasoning-delta',
+                                    delta: delta,
+                                } as any);
+                            } else {
+                                parts.push({
+                                    type: 'text-delta',
+                                    delta: delta,
+                                } as any);
+                            }
                         }
                     } else if (p.kind === 'data' && isToolRequest(p.data)) {
                         const req = p.data.request;
                         let toolName = req.name;
+                        const originalToolName = toolName;
 
                         // A2A側から callId が無い場合は toolName と index で一意に決定 (引数が変化してもIDが変わらないようにする)
                         // ツール呼び出しの引数はストリーム中に徐々に構築されるため、
@@ -573,8 +608,11 @@ export class A2AStreamMapper {
                         if (toolName === 'invalid') {
                             Logger.info(`[Sandbox] Intercepted A2A native 'invalid' tool call. Converting to bash echo to prevent doom_loop.`);
                             this.bufferedTools.set(toolCallId, {
-                                toolName: 'bash',
-                                args: { command: 'echo "SYSTEM WARNING: I attempted to use an invalid tool. I must check my available tools and use the EXACT names as they appear there (including prefixes if they exist)."' }
+                                originalToolName: 'bash',
+                                toolInfo: {
+                                    toolName: 'bash',
+                                    args: { command: 'echo "SYSTEM WARNING: I attempted to use an invalid tool. I must check my available tools and use the EXACT names as they appear there (including prefixes if they exist)."' }
+                                }
                             });
                             continue;
                         }
@@ -637,7 +675,7 @@ export class A2AStreamMapper {
                             }
                         }
 
-                        this.bufferedTools.set(toolCallId, { toolName, args: req.args });
+                        this.bufferedTools.set(toolCallId, { originalToolName, toolInfo: { toolName, args: req.args } });
                     } else if (coderAgentKind === 'thought' && p.kind === 'data' && isThoughtData(p.data)) {
                         let textDelta = '';
                         if (p.data.subject && p.data.description) {
@@ -653,9 +691,9 @@ export class A2AStreamMapper {
                             // がサポートされている。provider.ts の v1→v2 変換レイヤーで
                             // 適切な v2 ライフサイクルイベントに変換される。
                             parts.push({
-                                type: 'reasoning',
-                                textDelta,
-                            });
+                                type: 'reasoning-delta',
+                                delta: textDelta,
+                            } as any);
                         }
                         continue;
                     } else if (p.kind === 'image') {
@@ -707,13 +745,40 @@ export class A2AStreamMapper {
                 let hasExposedTools = false;
                 let hasInternalTools = false;
 
-                for (const [toolCallId, toolInfo] of this.bufferedTools.entries()) {
-                    let originalToolName = this.reverseToolMapping[toolInfo.toolName] || toolInfo.toolName;
-                    
-                    const isInvalidToolName = toolInfo.toolName === 'invalid';
-                    const isUnknownToClient = this.clientTools ? !this.clientTools.has(originalToolName) : false;
+                for (const [toolCallId, { originalToolName: bufferedOriginalToolName, toolInfo }] of this.bufferedTools.entries()) {
+                    let originalToolName = this.reverseToolMapping[toolInfo.toolName] || bufferedOriginalToolName || toolInfo.toolName;
 
-                    if (isInvalidToolName || isUnknownToClient) {
+                    // DEFAULT_INTERNAL_TOOLS に含まれるツール（activate_skill 等）は
+                    // clientTools に存在しなくても「未知ツール」扱いにしない。
+                    const argsForKey = { ...(typeof toolInfo.args === 'object' && toolInfo.args ? toolInfo.args as any : {}) };
+                    delete argsForKey.description;
+                    const argsKey = `${toolInfo.toolName}::${JSON.stringify(argsForKey)}`;
+                    const freq = (this.toolCallFrequency.get(argsKey) ?? 0);
+
+                    const isInvalidToolName = toolInfo.toolName === 'invalid';
+                    let isInternalTool = this.internalTools.has(toolInfo.toolName) || this.internalTools.has(originalToolName);
+                    
+                    const isUnknownToClient = this.clientTools
+                        ? (!this.clientTools.has(originalToolName) && !isInternalTool)
+                        : false;
+
+                    // 重複実行ループカウントをすべてのツール（未知・既知問わず）に対して記録
+                    const currentFreq = freq + 1;
+                    this.toolCallFrequency.set(argsKey, currentFreq);
+
+                    if (currentFreq > this.maxToolCallFrequency) {
+                        Logger.warn(`[DuplicateDetect] Tool '${toolInfo.toolName}' loop detected (${currentFreq} times).`);
+                        if (isInternalToolConfirmation || isInternalTool) {
+                            this._shouldInterruptLoop = true;
+                        } else {
+                            originalToolName = 'bash';
+                            toolInfo.toolName = 'bash';
+                            toolInfo.args = { 
+                                command: `echo '[opencode-geminicli-a2a] SYSTEM: You have already called "${toolInfo.toolName}" with exactly the same arguments ${currentFreq} times. Please DO NOT repeat this exact call and proceed with a DIFFERENT action or respond to the user.'`,
+                                description: `Duplicate tool call suppressed` 
+                            };
+                        }
+                    } else if (isInvalidToolName || isUnknownToClient) {
                         Logger.info(`[Workaround] Intercepted hallucinated/invalid tool call '${toolInfo.toolName}' (mapped to '${originalToolName}'). Rewriting to a safe 'bash' call.`);
                         
                         const badName = originalToolName;
@@ -727,12 +792,25 @@ export class A2AStreamMapper {
                     }
                     
                     // Add description to satisfy OpenCode strict schemas
-                    if (toolInfo.args && typeof toolInfo.args === 'object' && !('description' in (toolInfo.args as any))) {
+                    if (typeof toolInfo.args === 'string') {
+                        try {
+                            const parsed = JSON.parse(toolInfo.args);
+                            if (parsed && typeof parsed === 'object' && !('description' in parsed)) {
+                                parsed.description = `Execute ${originalToolName} via A2A (${toolCallId})`;
+                                toolInfo.args = parsed; // Convert back to object so it gets stringified later
+                            }
+                        } catch (e) {
+                            // Ignored: not valid JSON
+                        }
+                    } else if (toolInfo.args && typeof toolInfo.args === 'object' && !('description' in (toolInfo.args as any))) {
                         (toolInfo.args as any).description = `Execute ${originalToolName} via A2A (${toolCallId})`;
                     }
 
-                    if (isInternalToolConfirmation) {
+                    const treatAsInternal = isInternalTool || (isInternalToolConfirmation && (!this.clientTools || !this.clientTools.has(originalToolName)));
+
+                    if (treatAsInternal) {
                         hasInternalTools = true;
+                        this._lastInternalToolNames.push(toolInfo.toolName);
                     } else {
                         hasExposedTools = true;
                         if (!this.emittedToolCallIds.has(toolCallId)) {
@@ -745,17 +823,16 @@ export class A2AStreamMapper {
 
                             parts.push({
                                 type: 'tool-call',
-                                toolCallType: 'function',
                                 toolCallId,
                                 toolName: originalToolName,
                                 args: argsStr,
-                            });
+                            } as any);
                             this.emittedToolCallIds.add(toolCallId);
                         }
                     }
                 }
 
-                let finishReason: LanguageModelV1FinishReason = 'stop';
+                let finishReason: LanguageModelV2FinishReason = 'stop';
                 const hasTools = this.bufferedTools.size > 0;
 
                 switch (result.status.state) {
@@ -807,8 +884,8 @@ export class A2AStreamMapper {
                 this._lastFinishReason = finishReason;
 
                 const usage = {
-                    inputTokens: { total: result.usage?.promptTokens ?? 0 },
-                    outputTokens: { total: result.usage?.completionTokens ?? 0 },
+                    promptTokens: result.usage?.promptTokens ?? 0,
+                    completionTokens: result.usage?.completionTokens ?? 0,
                 };
 
                 let coderAgentKindValue: string | undefined = undefined;
@@ -823,19 +900,22 @@ export class A2AStreamMapper {
                 // If input is required but no internal tools are being processed (because they were dropped, e.g., 'invalid')
                 // and no exposed tools are present, we must NOT set inputRequired to true, 
                 // otherwise provider.ts will auto-confirm an empty array into an infinite loop.
-                const shouldPromptInput = result.status.state === 'input-required' && (hasExposedTools || hasInternalTools);
+                const shouldPromptInput = result.status.state === 'input-required';
 
-                parts.push({
+                const part: ExtendedFinishPart = {
                     type: 'finish',
                     finishReason,
                     usage,
                     hasExposedTools,
-                    ...(shouldPromptInput || hasInternalTools ? { 
+                    shouldInterruptLoop: this._shouldInterruptLoop,
+                    internalToolNames: this._lastInternalToolNames,
+                    ...(shouldPromptInput ? { 
                         inputRequired: true, 
                         rawState: result.status.state,
                         ...(coderAgentKindValue !== undefined ? { coderAgentKind: coderAgentKindValue } : {})
                     } : {})
-                } as ExtendedFinishPart);
+                };
+                parts.push(part as ExtendedStreamPart);
 
                 // 発行が完了したらバッファをクリアして重複を防ぐ
                 this.bufferedTools.clear();

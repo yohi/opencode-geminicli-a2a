@@ -21,7 +21,7 @@ describe('mapper tool name mapping', () => {
                         parts: [{
                             kind: 'data',
                             data: {
-                                request: { callId: 'c1', name: 'read', args: { path: 'test.txt' } }
+                                request: { callId: 'c1', name: 'read', args: JSON.stringify({ path: 'test.txt' }) }
                             }
                         }]
                     }
@@ -52,7 +52,7 @@ describe('mapper tool name mapping', () => {
                         parts: [{
                             kind: 'data',
                             data: {
-                                request: { callId: 'c1', name: 'bash', args: { command: 'ls' } }
+                                request: { callId: 'c1', name: 'bash', args: JSON.stringify({ command: 'ls' }) }
                             }
                         }]
                     }
@@ -83,7 +83,7 @@ describe('mapper tool name mapping', () => {
                         parts: [{
                             kind: 'data',
                             data: {
-                                request: { callId: 'c1', name: 'docker-mcp-gateway_search_files', args: { pattern: 'test' } }
+                                request: { callId: 'c1', name: 'docker-mcp-gateway_search_files', args: JSON.stringify({ pattern: 'test' }) }
                             }
                         }]
                     }
@@ -112,7 +112,7 @@ describe('mapper tool name mapping', () => {
                         parts: [{
                             kind: 'data',
                             data: {
-                                request: { callId: 'c1', name: 'my_custom_tool', args: { foo: 'bar' } }
+                                request: { callId: 'c1', name: 'my_custom_tool', args: JSON.stringify({ foo: 'bar' }) }
                             }
                         }]
                     }

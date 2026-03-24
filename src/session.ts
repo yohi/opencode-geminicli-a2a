@@ -4,10 +4,14 @@ export interface A2ASession {
     contextId?: string;
     taskId?: string;
     lastFinishReason?: string;
-    lastModelId?: string;
+    failedModelIds?: string[];
     processedMessagesCount?: number;
     inputRequired?: boolean;
     rawState?: string;
+    fallbackCounters?: Record<string, number>;
+    dynamicToolMapping?: Record<string, string>;
+    /** 重複ツール呼び出し検出用カウンター。doStream() をまたいで永続化される */
+    toolCallFrequency?: Record<string, number>;
 }
 
 export interface SessionStore {
