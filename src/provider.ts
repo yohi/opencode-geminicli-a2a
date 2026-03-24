@@ -229,11 +229,15 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
         const baseConfig = this.resolvedOptions;
 
         let agentOptions: any = undefined;
+        let actualModelId = this.modelId;
         if (baseConfig.agents) {
             const router = new DefaultMultiAgentRouter(baseConfig.agents);
             const resolved = router.resolve(this.modelId);
-            if (resolved && resolved.config && resolved.config.options) {
-                agentOptions = resolved.config.options;
+            if (resolved) {
+                actualModelId = resolved.actualModelId;
+                if (resolved.config && resolved.config.options) {
+                    agentOptions = resolved.config.options;
+                }
             }
         }
 
@@ -261,7 +265,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
             contextId: session.contextId,
             taskId: session.taskId,
             processedMessagesCount: session.processedMessagesCount,
-            modelId: this.modelId,
+            modelId: actualModelId,
             generationConfig: Object.keys(generationConfig).length > 0 ? generationConfig : undefined,
             toolChoice: options.toolChoice,
         };

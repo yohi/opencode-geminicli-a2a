@@ -99,6 +99,13 @@ describe('DefaultMultiAgentRouter', () => {
             const endpoint = router.resolve('unknown-model');
             expect(endpoint).toBeUndefined();
         });
+
+        it('should resolve explicitly targeted model ID (agentKey:modelId)', () => {
+            const router = new DefaultMultiAgentRouter(mockEndpoints);
+            const result = router.resolve('server-2:gemini-3.1-pro-preview');
+            expect(result).toBeDefined();
+            expect(result?.endpoint.key).toBe('server-2');
+        });
     });
 
     describe('getEndpoints', () => {
@@ -130,5 +137,11 @@ describe('DynamicModelRouter', () => {
     const router = new DynamicModelRouter();
     const model = router.selectModel({ complexity: 'medium' });
     expect(model).toContain('flash');
+  });
+
+  it('should select auto for auto complexity tasks', () => {
+    const router = new DynamicModelRouter();
+    const model = router.selectModel({ complexity: 'auto' });
+    expect(model).toBe('auto');
   });
 });
