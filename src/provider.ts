@@ -31,16 +31,33 @@ const MAX_CONTEXT_CACHE = 100;
 
 function anySignal(signals: (AbortSignal | undefined)[]): AbortSignal {
     const controller = new AbortController();
+    const handlers: Array<{ signal: AbortSignal; handler: () => void }> = [];
+
+    const cleanup = () => {
+        for (const { signal, handler } of handlers) {
+            signal.removeEventListener('abort', handler);
+        }
+        handlers.length = 0;
+    };
+
     for (const signal of signals) {
         if (!signal) continue;
         if (signal.aborted) {
+            cleanup();
             controller.abort(signal.reason);
             return signal;
         }
-        signal.addEventListener('abort', () => {
+        const handler = () => {
+            cleanup();
             controller.abort(signal.reason);
-        }, { once: true });
+        };
+        signal.addEventListener('abort', handler, { once: true });
+        handlers.push({ signal, handler });
     }
+
+    // controller 自体が外部からアボートされた場合もクリーンアップする
+    controller.signal.addEventListener('abort', cleanup, { once: true });
+
     return controller.signal;
 }
 

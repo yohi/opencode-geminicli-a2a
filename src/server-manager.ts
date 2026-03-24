@@ -140,6 +140,9 @@ export class ServerManager {
             resolveInflight = res; 
             rejectInflight = rej;
         });
+        // 早期リジェクトによる unhandledRejection を防ぐため、ダミーの catch を追加
+        inflightPromise.catch(() => {});
+
         const slot: InflightStartup = { 
             promise: inflightPromise, 
             resolve: resolveInflight!, 
@@ -151,7 +154,10 @@ export class ServerManager {
         try {
             // 3. 既に外部プロセスがリッスンしているか確認
             const isListening = await probePort(port, host);
-            if (this.startingUp.get(key) !== slot) return async () => {}; // Aborted or replaced
+            if (this.startingUp.get(key) !== slot) {
+                slot.reject(new Error('Startup aborted: slot replaced during probePort'));
+                return async () => {};
+            }
 
             if (isListening) {
                 Logger.info(`Port ${key} already listening. Skipping auto-start.`);
@@ -318,7 +324,18 @@ export class ServerManager {
             captured.refCount--;
             Logger.debug(`Released server on ${key} (refCount=${captured.refCount})`);
             if (captured.refCount <= 0) {
+                const exitPromise = new Promise<void>((resolve) => {
+                    captured.proc.once('exit', () => resolve());
+                    captured.proc.once('error', () => resolve());
+                });
                 captured.proc.kill();
+                
+                // 実際にプロセスが終了するのを待つことで、後続の probePort とのレースを防ぐ
+                await Promise.race([
+                    exitPromise,
+                    new Promise<void>(resolve => setTimeout(resolve, 2000)) // 最大2秒待機
+                ]);
+
                 if (this.servers.get(key) === captured) {
                     this.servers.delete(key);
                 }
