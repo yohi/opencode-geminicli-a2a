@@ -28,22 +28,8 @@ describe('DefaultMultiAgentRouter', () => {
     describe('constructor', () => {
         it('初期化時にエンドポイントを保持する', () => {
             const router = new DefaultMultiAgentRouter(mockEndpoints);
-            expect(router.getEndpoints()).toHaveLength(2);
-        });
-
-        it('複数のエンドポイントでモデルIDが重複している場合はエラーを投げる', () => {
-            const duplicateEndpoints: AgentEndpoint[] = [
-                ...mockEndpoints,
-                {
-                    key: 'server-3',
-                    host: '10.0.0.1',
-                    port: 8080,
-                    protocol: 'http',
-                    models: ['gemini-2.5-pro'],
-                }
-            ];
-            expect(() => new DefaultMultiAgentRouter(duplicateEndpoints))
-                .toThrowError("Duplicate model ID 'gemini-2.5-pro' found in endpoints 'server-1' and 'server-3'");
+            const endpoints = router.getEndpoints();
+            expect(endpoints).toEqual(mockEndpoints);
         });
     });
 
@@ -53,9 +39,11 @@ describe('DefaultMultiAgentRouter', () => {
             
             const res1 = router.resolve('gemini-2.5-pro');
             expect(res1?.endpoint.key).toBe('server-1');
+            expect(res1?.actualModelId).toBe('gemini-2.5-pro');
 
             const res2 = router.resolve('gemini-3.1-pro-preview');
             expect(res2?.endpoint.key).toBe('server-2');
+            expect(res2?.actualModelId).toBe('gemini-3.1-pro-preview');
         });
 
         it('モデル固有の設定（options）を正しく解決する', () => {
@@ -79,10 +67,12 @@ describe('DefaultMultiAgentRouter', () => {
             const res1 = router.resolve('model-with-opt');
             expect(res1?.endpoint.key).toBe('config-server');
             expect(res1?.config?.options?.generationConfig?.temperature).toBe(0.1);
+            expect(res1?.actualModelId).toBe('model-with-opt');
 
             const res2 = router.resolve('model-boolean');
             expect(res2?.endpoint.key).toBe('config-server');
             expect(res2?.config).toBeUndefined();
+            expect(res2?.actualModelId).toBe('model-boolean');
         });
 
         it('複数のモデルを持つエンドポイントでも正しくマッチする', () => {
@@ -91,6 +81,7 @@ describe('DefaultMultiAgentRouter', () => {
             const res = router.resolve('gemini-2.5-flash');
             expect(res).toBeDefined();
             expect(res?.endpoint.key).toBe('server-1');
+            expect(res?.actualModelId).toBe('gemini-2.5-flash');
         });
 
         it('マッチするモデルがない場合は undefined を返す', () => {
@@ -98,6 +89,60 @@ describe('DefaultMultiAgentRouter', () => {
             
             const endpoint = router.resolve('unknown-model');
             expect(endpoint).toBeUndefined();
+        });
+
+        it('should resolve explicitly targeted model ID (agentKey:modelId)', () => {
+            const router = new DefaultMultiAgentRouter(mockEndpoints);
+            const result = router.resolve('server-2:gemini-3.1-pro-preview');
+            expect(result).toBeDefined();
+            expect(result?.endpoint.key).toBe('server-2');
+            expect(result?.actualModelId).toBe('gemini-3.1-pro-preview');
+        });
+
+        it('should throw error if targeted agent key is unknown', () => {
+            const router = new DefaultMultiAgentRouter(mockEndpoints);
+            expect(() => router.resolve('unknown:gemini-2.5-pro'))
+                .toThrow("Agent key 'unknown' not found");
+        });
+
+        it('should throw error if targeted model is not supported by the agent', () => {
+            const router = new DefaultMultiAgentRouter(mockEndpoints);
+            expect(() => router.resolve('server-1:gemini-3.1-pro-preview'))
+                .toThrow("Model 'gemini-3.1-pro-preview' not found on agent 'server-1'");
+        });
+
+        it('複数のエンドポイントでモデルIDが重複していても初期化を許可する', () => {
+            const endpoints: AgentEndpoint[] = [
+                { key: 'a1', host: 'h1', port: 1, models: ['m1'] },
+                { key: 'a2', host: 'h2', port: 2, models: ['m1'] },
+            ];
+            expect(() => new DefaultMultiAgentRouter(endpoints)).not.toThrow();
+        });
+
+        it('重複するエージェントキーがある場合は初期化時にエラーを投げる', () => {
+            const endpoints: AgentEndpoint[] = [
+                { key: 'dup', host: 'h1', port: 1, models: ['m1'] },
+                { key: 'dup', host: 'h2', port: 2, models: ['m2'] },
+            ];
+            expect(() => new DefaultMultiAgentRouter(endpoints)).toThrow("Duplicate agent key 'dup' found");
+        });
+
+        it('プレフィックスなしで重複モデルを指定した場合は曖昧さエラーを投げる', () => {
+            const endpoints: AgentEndpoint[] = [
+                { key: 'a1', host: 'h1', port: 1, models: ['m1'] },
+                { key: 'a2', host: 'h2', port: 2, models: ['m1'] },
+            ];
+            const router = new DefaultMultiAgentRouter(endpoints);
+            expect(() => router.resolve('m1')).toThrow("Ambiguous model ID 'm1' found in multiple endpoints: a1, a2");
+        });
+
+        it('モデルIDが重複しているのにキーがないエンドポイントがある場合は初期化時にエラーを投げる', () => {
+            const endpoints: AgentEndpoint[] = [
+                { key: 'a1', host: 'h1', port: 1, models: ['m1'] },
+                { host: 'h2', port: 2, models: ['m1'] }, // No key
+            ];
+            expect(() => new DefaultMultiAgentRouter(endpoints))
+                .toThrow("Model ID 'm1' is duplicated across multiple endpoints, but at least one endpoint lacks a unique 'key'");
         });
     });
 
@@ -130,5 +175,11 @@ describe('DynamicModelRouter', () => {
     const router = new DynamicModelRouter();
     const model = router.selectModel({ complexity: 'medium' });
     expect(model).toContain('flash');
+  });
+
+  it('should select auto for auto complexity tasks', () => {
+    const router = new DynamicModelRouter();
+    const model = router.selectModel({ complexity: 'auto' });
+    expect(model).toBe('auto');
   });
 });

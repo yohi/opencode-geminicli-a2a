@@ -36,6 +36,7 @@ export interface ModelRegistry {
  * package.json の opencode.models と同期すること。
  */
 const DEFAULT_MODELS: ModelInfo[] = [
+    Object.freeze({ id: 'auto', name: 'Auto (Dynamic Model Selection)' }),
     Object.freeze({ id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview (A2A)' }),
     Object.freeze({ id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview (A2A)' }),
     Object.freeze({ id: 'gemini-3.1-pro-preview-customtools', name: 'Gemini 3.1 Pro Preview Custom Tools (A2A)' }),
