@@ -289,8 +289,9 @@ describe('OpenCodeGeminiA2AProvider', () => {
             const reader = stream.getReader();
             const parts: any[] = [];
             
+            let timeoutHandle: any;
             const timeout = new Promise<never>((_, reject) => 
-                setTimeout(() => reject(new Error('HANG DETECTED')), 5000)
+                timeoutHandle = setTimeout(() => reject(new Error('HANG DETECTED')), 5000)
             );
             
             try {
@@ -305,7 +306,9 @@ describe('OpenCodeGeminiA2AProvider', () => {
                     timeout,
                 ]);
             } catch (e: any) {
-                expect(e.message).not.toContain('HANG DETECTED');
+                throw e;
+            } finally {
+                clearTimeout(timeoutHandle);
             }
             
             const finishParts = parts.filter(p => p.type === 'finish');
@@ -393,6 +396,7 @@ describe('OpenCodeGeminiA2AProvider', () => {
                 }
             } catch (e: any) {
                 console.error('Error during stream read:', e);
+                throw e;
             }
 
             const textDeltas = parts.filter(p => p.type === 'text-delta');
