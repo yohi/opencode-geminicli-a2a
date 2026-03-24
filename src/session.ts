@@ -139,3 +139,48 @@ export class InMemorySessionStore implements SessionStore {
         }
     }
 }
+
+export interface SessionState {
+  history: Array<{ role: string; content: string }>;
+}
+
+/**
+ * Type guard to validate SessionState shape
+ */
+export function isSessionState(obj: unknown): obj is SessionState {
+  if (obj === null || typeof obj !== 'object') {
+    return false;
+  }
+
+  const candidate = obj as Record<string, unknown>;
+  if (!Array.isArray(candidate.history)) {
+    return false;
+  }
+
+  return candidate.history.every(
+    (entry: unknown) =>
+      entry !== null &&
+      typeof entry === 'object' &&
+      typeof (entry as Record<string, unknown>).role === 'string' &&
+      typeof (entry as Record<string, unknown>).content === 'string'
+  );
+}
+
+export class ContextManager {
+  exportContext(state: SessionState): string {
+    return JSON.stringify(state);
+  }
+
+  importContext(serialized: string): SessionState {
+    try {
+      const parsed = JSON.parse(serialized);
+      if (!isSessionState(parsed)) {
+        throw new Error('Invalid session state format');
+      }
+      return parsed;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      throw new Error(`Failed to import context: ${message}`);
+    }
+  }
+}

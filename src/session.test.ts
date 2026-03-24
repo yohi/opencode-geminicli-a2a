@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { InMemorySessionStore } from './session';
+import { InMemorySessionStore, ContextManager } from './session';
 
 describe('InMemorySessionStore', () => {
     let store: InMemorySessionStore;
@@ -138,4 +138,25 @@ describe('InMemorySessionStore limits and expiration', () => {
         const retrieved = await store.get('s1');
         expect(retrieved?.contextId).toBe('1');
     });
+});
+
+describe('ContextManager', () => {
+  it('should export and import session context state', () => {
+    const manager = new ContextManager();
+    const state = { history: [{ role: 'user', content: 'hello' }] };
+    const exported = manager.exportContext(state);
+    
+    const imported = manager.importContext(exported);
+    expect(imported.history[0].content).toBe('hello');
+  });
+
+  it('should throw error for invalid JSON format', () => {
+    const manager = new ContextManager();
+    expect(() => manager.importContext('invalid-json')).toThrow('Failed to import context');
+  });
+
+  it('should throw error for invalid session state shape', () => {
+    const manager = new ContextManager();
+    expect(() => manager.importContext('{"foo": "bar"}')).toThrow('Invalid session state format');
+  });
 });

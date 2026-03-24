@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { DefaultMultiAgentRouter } from './router';
+import { DefaultMultiAgentRouter, DynamicModelRouter } from './router';
 import type { AgentEndpoint } from './schemas';
 
 describe('DefaultMultiAgentRouter', () => {
@@ -111,4 +111,24 @@ describe('DefaultMultiAgentRouter', () => {
             expect(endpoints[1].key).toBe('server-2');
         });
     });
+});
+
+describe('DynamicModelRouter', () => {
+  it('should select a flash model for low complexity tasks', () => {
+    const router = new DynamicModelRouter();
+    const model = router.selectModel({ complexity: 'low' });
+    expect(model).toContain('flash');
+  });
+
+  it('should select a pro model for high complexity tasks', () => {
+    const router = new DynamicModelRouter();
+    const model = router.selectModel({ complexity: 'high' });
+    expect(model).toContain('pro');
+  });
+
+  it('should select a flash model for medium complexity tasks', () => {
+    const router = new DynamicModelRouter();
+    const model = router.selectModel({ complexity: 'medium' });
+    expect(model).toContain('flash');
+  });
 });

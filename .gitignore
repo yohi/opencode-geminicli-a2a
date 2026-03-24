@@ -7,3 +7,5 @@ docs/plans/
 *.log
 coderabbit_*.log
 .worktrees/
+diff.txt
+*.diff
