@@ -745,11 +745,16 @@ describe('OpenCodeGeminiA2AProvider', () => {
             
 
             try {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    parts.push(value);
-                }
+                await Promise.race([
+                    (async () => {
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            parts.push(value);
+                        }
+                    })(),
+                    timeout,
+                ]);
             } catch (e: any) {
                 expect(e.message).not.toContain('HANG DETECTED');
             }

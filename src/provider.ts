@@ -62,15 +62,20 @@ function isAutoConfirmTarget(part: ExtendedFinishPart | undefined, textPartCount
 async function* withChunkTimeout<T>(iterable: AsyncIterable<T>, timeoutMs: number): AsyncIterable<T> {
     const iterator = iterable[Symbol.asyncIterator]();
     while (true) {
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
         const timeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(() => {
+            timeoutHandle = setTimeout(() => {
                 reject(new Error(`Chunk timeout after ${timeoutMs}ms. The upstream agent may be stuck.`));
             }, timeoutMs);
         });
-        const nextPromise = iterator.next();
-        const result = await Promise.race([nextPromise, timeoutPromise]);
-        if (result.done) break;
-        yield result.value;
+        try {
+            const nextPromise = iterator.next();
+            const result = await Promise.race([nextPromise, timeoutPromise]);
+            if (result.done) break;
+            yield result.value;
+        } finally {
+            clearTimeout(timeoutHandle);
+        }
     }
 }
 
@@ -236,7 +241,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
             headers = firstChatResponse.headers;
         } catch (error) {
             const currentFallbackConfig = resolveFallbackConfig(this.options.fallback);
-            if (isQuotaError(error) && currentFallbackConfig) {
+            if (isQuotaError(error, currentFallbackConfig) && currentFallbackConfig) {
                 const nextModel = getNextFallbackModel(this.modelId, currentFallbackConfig);
                 if (nextModel) {
                     Logger.warn(`Quota exceeded for ${this.modelId}. Falling back to ${nextModel}.`);
@@ -280,7 +285,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
 
         const startTime = Date.now();
         const isTestEnv = process.env.NODE_ENV === 'test';
-        const TIMEOUT_MS = isTestEnv ? 3000 : 30000;
+        const TIMEOUT_MS = isTestEnv ? 3000 : 300000;
         
         const timeoutAbortController = new AbortController();
         const timeoutHandle = setTimeout(() => {

@@ -107,10 +107,11 @@ function loadModelsFromConfig(): ModelInfo[] | undefined {
         }
 
         return parseModelsConfig(modelsConfig);
-        } catch (err) {
+    } catch (err) {
         Logger.error('[opencode-geminicli-a2a] Failed to load custom models configuration; using default models.', err);
         return undefined;
-        }}
+    }
+}
 
 /**
  * 静的モデルレジストリ。
