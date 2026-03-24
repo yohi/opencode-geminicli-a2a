@@ -80,14 +80,35 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
     private sessionStore: SessionStore;
     private contextToolFrequency: Map<string, Record<string, number>> = new Map();
     public readonly modelId: string;
+    public readonly modelID: string;
     public readonly specificationVersion = 'v2';
     public readonly provider = 'opencode-geminicli-a2a';
+    public readonly providerId = 'opencode-geminicli-a2a';
+    public readonly providerID = 'opencode-geminicli-a2a';
+    public readonly id = 'opencode-geminicli-a2a';
+    public readonly name = 'Gemini CLI (A2A)';
     public readonly supportedUrls: Record<string, RegExp[]> = {};
+
+    private unregisterConfigWatcher?: () => void;
 
     constructor(modelId: string, options: OpenCodeProviderOptions = {}) {
         this.modelId = modelId;
+        this.modelID = modelId;
         this.options = options;
         this.sessionStore = options.sessionStore || new InMemorySessionStore();
+
+        if (options.hotReload) {
+            this.unregisterConfigWatcher = ConfigManager.getInstance().onChange(() => {
+                Logger.info(`[Provider] Hot-reloading configuration for model ${this.modelId}`);
+                this.client = undefined; // Force re-creation on next use
+            });
+        }
+    }
+
+    public dispose() {
+        if (this.unregisterConfigWatcher) {
+            this.unregisterConfigWatcher();
+        }
     }
 
     private async ensureClient(): Promise<void> {

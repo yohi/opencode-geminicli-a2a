@@ -10,6 +10,12 @@ export const ConfigSchema = z.object({
 
 export type A2AConfig = z.infer<typeof ConfigSchema>;
 
+export const LiteLLMProxyConfigSchema = z.object({
+    url: z.string().url(),
+    apiKey: z.string().optional(),
+});
+export type LiteLLMProxyConfig = z.infer<typeof LiteLLMProxyConfigSchema>;
+
 export const GenerationConfigSchema = z.object({
     temperature: z.number().optional(),
     topP: z.number().optional(),

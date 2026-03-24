@@ -1,6 +1,6 @@
 import { ofetch, FetchError } from 'ofetch';
 import { APICallError } from '@ai-sdk/provider';
-import type { A2AConfig, A2AJsonRpcRequest } from './schemas';
+import type { A2AConfig, A2AJsonRpcRequest, LiteLLMProxyConfig } from './schemas';
 import { Logger } from './utils/logger';
 import crypto from 'node:crypto';
 
@@ -20,14 +20,16 @@ export interface ChatStreamResponse {
 }
 
 export class A2AClient {
-    private config: A2AConfig;
+    private config: A2AConfig & { litellmProxy?: LiteLLMProxyConfig };
     private endpoint: string;
 
-    constructor(config: A2AConfig) {
+    constructor(config: A2AConfig & { litellmProxy?: LiteLLMProxyConfig }) {
         this.config = config;
         // A2A SDK 通常、ルートまたは特定のベースパスで待機する。
         // 実情に合わせてルート (/) を指定。
-        this.endpoint = `${config.protocol ?? 'http'}://${config.host}:${config.port}/`;
+        this.endpoint = config.litellmProxy?.url 
+            ? (config.litellmProxy.url.endsWith('/') ? config.litellmProxy.url : `${config.litellmProxy.url}/`)
+            : `${config.protocol ?? 'http'}://${config.host}:${config.port}/`;
     }
 
     /**
@@ -44,9 +46,13 @@ export class A2AClient {
             headers['Idempotency-Key'] = idempotencyKey;
         }
 
-        if (this.config.token) {
+        if (this.config.litellmProxy?.apiKey) {
+            headers['Authorization'] = `Bearer ${this.config.litellmProxy.apiKey}`;
+        }
+
+        if (this.config.token && !this.config.litellmProxy) {
             const isSecure = this.endpoint.startsWith('https://');
-            const normalizedHost = this.config.host.replace(/^\[|\]$/g, '');
+            const normalizedHost = (this.config.host || '').replace(/^\[|\]$/g, '');
             const isLocalhost = normalizedHost === '127.0.0.1' || normalizedHost === 'localhost' || normalizedHost === '::1';
             if (isSecure || isLocalhost) {
                 headers['Authorization'] = `Bearer ${this.config.token}`;
