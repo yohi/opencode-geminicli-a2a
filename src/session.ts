@@ -139,3 +139,17 @@ export class InMemorySessionStore implements SessionStore {
         }
     }
 }
+
+export interface SessionState {
+  history: Array<{ role: string, content: string }>;
+}
+
+export class ContextManager {
+  exportContext(state: SessionState): string {
+    return JSON.stringify(state);
+  }
+
+  importContext(serialized: string): SessionState {
+    return JSON.parse(serialized);
+  }
+}
