@@ -619,8 +619,16 @@ export class A2AStreamMapper {
                         }
 
                         // Argument normalization for Schema Bridging
-                        if (req.args && typeof req.args === 'object') {
-                            const args: any = req.args;
+                        let args: any = req.args;
+                        if (typeof args === 'string') {
+                            try {
+                                args = JSON.parse(args);
+                            } catch (e) {
+                                // Keep as string if not valid JSON
+                            }
+                        }
+
+                        if (args && typeof args === 'object') {
                             if (args.file_path && !args.filePath) args.filePath = args.file_path;
                             if (args.path && !args.filePath) args.filePath = args.path;
                             if (args.cmd && !args.command) args.command = args.cmd;
@@ -751,14 +759,19 @@ export class A2AStreamMapper {
 
                     // DEFAULT_INTERNAL_TOOLS に含まれるツール（activate_skill 等）は
                     // clientTools に存在しなくても「未知ツール」扱いにしない。
-                    let argsForKey = { ...(typeof toolInfo.args === 'object' && toolInfo.args ? toolInfo.args as any : {}) };
-                    if (typeof toolInfo.args === 'string') {
+                    let argsForKey: any = toolInfo.args;
+                    if (typeof argsForKey === 'string') {
                         try {
-                            argsForKey = JSON.parse(toolInfo.args);
+                            argsForKey = JSON.parse(argsForKey);
                         } catch {
-                            // ignore
+                            argsForKey = {};
                         }
+                    } else if (!argsForKey || typeof argsForKey !== 'object') {
+                        argsForKey = {};
+                    } else {
+                        argsForKey = { ...argsForKey };
                     }
+
                     delete argsForKey.description;
                     const isInvalidToolName = toolInfo.toolName === 'invalid';
                     let isInternalTool = this.internalTools.has(toolInfo.toolName) || this.internalTools.has(originalToolName);

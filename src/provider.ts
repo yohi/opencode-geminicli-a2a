@@ -61,20 +61,30 @@ function isAutoConfirmTarget(part: ExtendedFinishPart | undefined, textPartCount
 
 async function* withChunkTimeout<T>(iterable: AsyncIterable<T>, timeoutMs: number): AsyncIterable<T> {
     const iterator = iterable[Symbol.asyncIterator]();
-    while (true) {
-        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-        const timeoutPromise = new Promise<never>((_, reject) => {
-            timeoutHandle = setTimeout(() => {
-                reject(new Error(`Chunk timeout after ${timeoutMs}ms. The upstream agent may be stuck.`));
-            }, timeoutMs);
-        });
-        try {
-            const nextPromise = iterator.next();
-            const result = await Promise.race([nextPromise, timeoutPromise]);
-            if (result.done) break;
-            yield result.value;
-        } finally {
-            clearTimeout(timeoutHandle);
+    try {
+        while (true) {
+            let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                timeoutHandle = setTimeout(() => {
+                    reject(new Error(`Chunk timeout after ${timeoutMs}ms. The upstream agent may be stuck.`));
+                }, timeoutMs);
+            });
+            try {
+                const nextPromise = iterator.next();
+                const result = await Promise.race([nextPromise, timeoutPromise]);
+                if (result.done) break;
+                yield result.value;
+            } finally {
+                clearTimeout(timeoutHandle);
+            }
+        }
+    } finally {
+        if (typeof iterator.return === 'function') {
+            try {
+                await iterator.return();
+            } catch (e) {
+                // Ignore errors during iterator closure
+            }
         }
     }
 }
@@ -226,7 +236,9 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
         
         const toolsArr = (options as any).mode?.type === 'regular' ? (options as any).mode.tools : ((options as any).tools || []);
         const clientTools = toolsArr ? toolsArr.map((t: any) => t.function?.name || t.name || t.type) : [];
-        const isNewUserTurn = options.prompt.length > (session.processedMessagesCount || 0);
+        
+        // session.processedMessagesCount 以降に 'user' ロールのメッセージがあるかを確認して新規ユーザーターンと判定する
+        const isNewUserTurn = options.prompt.slice(session.processedMessagesCount || 0).some(m => m.role === 'user');
 
         const startTime = Date.now();
         const isTestEnv = process.env.NODE_ENV === 'test';
@@ -307,7 +319,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
             internalTools: resolvedBaseConfig.internalTools,
             clientTools: clientTools as string[],
             initialToolCallFrequency: instanceFreq ?? session.toolCallFrequency,
-            maxToolCallFrequency: this.options?.maxToolCallFrequency,
+            maxToolCallFrequency: resolvedBaseConfig.maxToolCallFrequency ?? this.options?.maxToolCallFrequency,
         });
 
         const stream = new ReadableStream<LanguageModelV2StreamPart>({
@@ -367,7 +379,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         let currentRequest = initialRequestData;
                         let autoConfirmCount = 0;
                         let toolCallConfirmCount = 0;
-                        const MAX_AUTO_CONFIRM = this.options?.maxAutoConfirm ?? 50;
+                        const MAX_AUTO_CONFIRM = resolvedBaseConfig.maxAutoConfirm ?? this.options?.maxAutoConfirm ?? 50;
                         const MAX_TOOL_CONFIRM = 1;
 
                         let firstResponse: any = { stream: responseStream, headers: headers || {} };
@@ -391,7 +403,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 firstResponse = undefined;
 
                                 mapper.startNewTurn();
-                                const chunkTimeoutMs = this.options?.chunkTimeoutMs ?? DEFAULT_CHUNK_TIMEOUT_MS;
+                                const chunkTimeoutMs = resolvedBaseConfig.chunkTimeoutMs ?? this.options?.chunkTimeoutMs ?? DEFAULT_CHUNK_TIMEOUT_MS;
                                 const chunkGenerator = withChunkTimeout(parseA2AStream(response.stream), chunkTimeoutMs);
 
                                 for await (const chunk of chunkGenerator) {
@@ -434,8 +446,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                                             type: 'finish',
                                                             finishReason: unifiedFinishReason as LanguageModelV2FinishReason,
                                                             usage: {
-                                                                promptTokens: lastFinishPart.usage.promptTokens,
-                                                                completionTokens: lastFinishPart.usage.completionTokens,
+                                                                inputTokens: { total: lastFinishPart.usage.promptTokens },
+                                                                outputTokens: { total: lastFinishPart.usage.completionTokens },
                                                             },
                                                         } as any);
                                                     }
@@ -464,8 +476,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         type: 'finish',
                                         finishReason: 'stop',
                                         usage: {
-                                            promptTokens: lastFinishPart.usage.promptTokens || 0,
-                                            completionTokens: lastFinishPart.usage.completionTokens || 0,
+                                            inputTokens: { total: lastFinishPart.usage.promptTokens || 0 },
+                                            outputTokens: { total: lastFinishPart.usage.completionTokens || 0 },
                                         },
                                     } as any);
                                     
@@ -501,7 +513,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         safeEnqueue({
                                             type: 'finish',
                                             finishReason: 'stop',
-                                            usage: { promptTokens: 0, completionTokens: 0 },
+                                            usage: { inputTokens: { total: 0 }, outputTokens: { total: 0 } },
                                         } as any);
                                         break;
                                     }
@@ -525,7 +537,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         safeEnqueue({
                                             type: 'finish',
                                             finishReason: 'stop',
-                                            usage: { promptTokens: 0, completionTokens: 0 },
+                                            usage: { inputTokens: { total: 0 }, outputTokens: { total: 0 } },
                                         } as any);
                                         break;
                                     }
@@ -546,8 +558,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 type: 'finish',
                                 finishReason: 'stop',
                                 usage: {
-                                    promptTokens: 0,
-                                    completionTokens: 0,
+                                    inputTokens: { total: 0 },
+                                    outputTokens: { total: 0 },
                                 },
                             } as any);
                         } else {
@@ -632,8 +644,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                     case 'finish':
                         finishReason = value.finishReason;
                         if (value.usage) {
-                            usage.promptTokens = (value.usage as any).promptTokens ?? 0;
-                            usage.completionTokens = (value.usage as any).completionTokens ?? 0;
+                            usage.promptTokens = (value.usage as any).inputTokens?.total ?? (value.usage as any).promptTokens ?? 0;
+                            usage.completionTokens = (value.usage as any).outputTokens?.total ?? (value.usage as any).completionTokens ?? 0;
                         }
                         break;
                 }

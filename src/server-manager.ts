@@ -63,7 +63,7 @@ interface ManagedServer {
 export class ServerManager {
     private static instance: ServerManager | undefined;
     private servers = new Map<number, ManagedServer>(); // keyed by port
-    private startingUp = new Map<number, Promise<() => void>>(); // keyed by port
+    private startingUp = new Map<number, Promise<(() => Promise<void>) | null>>(); // keyed by port
     private cleanupRegistered = false;
     private cachedNpmRoot: string | null = null;
 
@@ -112,8 +112,8 @@ export class ServerManager {
         }
 
         // 並行呼び出しでのレースコンディションを防ぐため、外部チェックの前に一旦予約する
-        let resolveInflight: (val: any) => void;
-        const inflightPromise = new Promise(r => { resolveInflight = r; });
+        let resolveInflight: (val: (() => Promise<void>) | null) => void;
+        const inflightPromise = new Promise<(() => Promise<void>) | null>(r => { resolveInflight = r; });
         this.startingUp.set(port, inflightPromise);
 
         try {
@@ -163,7 +163,7 @@ export class ServerManager {
                         waitForPort(port, host, timeoutMs, pollMs),
                         new Promise<void>((_, reject) => {
                             if (!proc) return;
-                            proc.on('error', (err: Error) => reject(new Error(`A2A server spawn error: ${err.message}`)));
+                            proc.once('error', (err: Error) => reject(new Error(`A2A server spawn error: ${err.message}`)));
                             proc.once('exit', (code: number | null) => {
                                 if (code !== 0 && code !== null) {
                                     reject(new Error(`A2A server exited early with code ${code}`));
@@ -220,8 +220,6 @@ export class ServerManager {
                 const result = await execAsync('npm root -g', { timeout: 5000 });
                 if (result && typeof result.stdout === 'string') {
                     this.cachedNpmRoot = result.stdout.trim();
-                } else if (typeof (result as any) === 'string') {
-                    this.cachedNpmRoot = (result as any).trim();
                 }
             }
             if (this.cachedNpmRoot) {
@@ -251,9 +249,9 @@ export class ServerManager {
         );
     }
 
-    private makeReleaseFn(port: number, debug: boolean): () => void {
+    private makeReleaseFn(port: number, debug: boolean): () => Promise<void> {
         let released = false;
-        return () => {
+        return async () => {
             if (released) return;
             released = true;
             const entry = this.servers.get(port);
