@@ -122,15 +122,6 @@ export class ServerManager {
                 await inflight.promise;
                 const existingInflight = this.servers.get(key);
                 if (existingInflight) {
-                    // refCount increment is now handled by the starter assigning the sum
-                    // but since this is an 'inflight' waiter, we already incremented waiterCount.
-                    // The starter will set refCount = 1 + waiterCount.
-                    // However, there's a race: if the starter finishes before we incremented waiterCount,
-                    // we'll find existingInflight here. We should check if we actually need to increment.
-                    // Actually, simpler: starter finishes, sets refCount, then resolves promise.
-                    // If we get here, the starter has already published the entry.
-                    // But wait, if multiple waiters were here, who increments refCount?
-                    // Better approach: the starter knows how many were waiting at the moment of publishing.
                     Logger.info(`[ServerManager] Reusing managed server on ${key} after inflight (refCount=${existingInflight.refCount})`);
                     return this.makeReleaseFn(key, debug, existingInflight);
                 }
@@ -284,26 +275,22 @@ export class ServerManager {
         // 1. グローバルインストールのパスを npm root -g で取得
         try {
             if (!this.cachedNpmRoot) {
-                const result = await execAsync('npm root -g', { timeout: 5000 });
-                if (result && typeof result.stdout === 'string') {
-                    this.cachedNpmRoot = result.stdout.trim();
-                }
+                const { stdout } = await execAsync('npm root -g', { timeout: 5000 });
+                this.cachedNpmRoot = stdout.trim();
             }
-            if (this.cachedNpmRoot) {
-                const globalPath = path.join(this.cachedNpmRoot, '@google', 'gemini-cli-a2a-server', 'dist', 'a2a-server.mjs');
-                if (existsSync(globalPath)) {
-                    return globalPath;
-                }
+            const globalPath = path.join(this.cachedNpmRoot, '@google', 'gemini-cli-a2a-server', 'dist', 'a2a-server.mjs');
+
+            if (existsSync(globalPath)) {
+                return globalPath;
             }
         } catch (err) {
             // npm が使えない場合はスキップ
             Logger.debug(`npm root -g failed: ${err instanceof Error ? err.message : String(err)}`);
         }
 
-        // 2. Homebrew (linuxbrew/macOS) など代替パスを確認
+        // 2. Homebrew (linuxbrew) など代替パスを確認
         const altPaths = [
             '/home/linuxbrew/.linuxbrew/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
-            '/opt/homebrew/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
             '/usr/local/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
             '/usr/lib/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs',
         ];
