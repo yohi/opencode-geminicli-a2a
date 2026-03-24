@@ -39,9 +39,11 @@ describe('DefaultMultiAgentRouter', () => {
             
             const res1 = router.resolve('gemini-2.5-pro');
             expect(res1?.endpoint.key).toBe('server-1');
+            expect(res1?.actualModelId).toBe('gemini-2.5-pro');
 
             const res2 = router.resolve('gemini-3.1-pro-preview');
             expect(res2?.endpoint.key).toBe('server-2');
+            expect(res2?.actualModelId).toBe('gemini-3.1-pro-preview');
         });
 
         it('モデル固有の設定（options）を正しく解決する', () => {
@@ -65,10 +67,12 @@ describe('DefaultMultiAgentRouter', () => {
             const res1 = router.resolve('model-with-opt');
             expect(res1?.endpoint.key).toBe('config-server');
             expect(res1?.config?.options?.generationConfig?.temperature).toBe(0.1);
+            expect(res1?.actualModelId).toBe('model-with-opt');
 
             const res2 = router.resolve('model-boolean');
             expect(res2?.endpoint.key).toBe('config-server');
             expect(res2?.config).toBeUndefined();
+            expect(res2?.actualModelId).toBe('model-boolean');
         });
 
         it('複数のモデルを持つエンドポイントでも正しくマッチする', () => {
@@ -77,6 +81,7 @@ describe('DefaultMultiAgentRouter', () => {
             const res = router.resolve('gemini-2.5-flash');
             expect(res).toBeDefined();
             expect(res?.endpoint.key).toBe('server-1');
+            expect(res?.actualModelId).toBe('gemini-2.5-flash');
         });
 
         it('マッチするモデルがない場合は undefined を返す', () => {
