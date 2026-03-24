@@ -431,7 +431,11 @@ function buildRequest(
             configuration: {
                 blocking: false,
                 ...(mappedTools && mappedTools.length > 0 ? { tools: mappedTools } : {}),
-                ...(toolChoice ? { toolChoice } : {}),
+                ...(toolChoice ? { 
+                    toolChoice: (typeof toolChoice === 'string' && toolMapping?.[toolChoice]) 
+                        ? toolMapping[toolChoice] 
+                        : toolChoice 
+                } : {}),
             },
             ...(generationConfig ? { generationConfig } : {}),
             ...(modelId ? { model: modelId } : {}),

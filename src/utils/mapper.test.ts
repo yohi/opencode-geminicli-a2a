@@ -37,6 +37,25 @@ describe('mapper', () => {
             expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
             expect((req.params.message.parts[1] as any).text).toBe('[SYSTEM]\nYou are a helpful assistant.\n');
         });
+
+        it('should apply toolMapping to toolChoice', () => {
+            const prompt: LanguageModelV2Prompt = [
+                { role: 'user', content: [{ type: 'text', text: 'Hello' }] }
+            ];
+            const tools = [
+                { type: 'function', function: { name: 'client_tool', parameters: {} } }
+            ];
+            const toolMapping = { 'client_tool': 'server_tool' };
+            const toolChoice = 'client_tool';
+
+            const req = mapPromptToA2AJsonRpcRequest(prompt, { 
+                tools: tools as any, 
+                toolMapping, 
+                toolChoice 
+            });
+
+            expect(req.params.configuration?.toolChoice).toBe('server_tool');
+        });
     });
 
     describe('mapA2AResponseToStreamParts', () => {
