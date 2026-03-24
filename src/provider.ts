@@ -83,9 +83,6 @@ function isAutoConfirmTarget(part: ExtendedFinishPart | undefined, textPartCount
     }
 
     if (isInternalRecall) {
-        // Also, skip auto-confirm if it's a meta tool being repeated, to force turn completion.
-        if (hasMetaTool && autoConfirmCount >= 1) return false;
-
         return !hasSpoken && part.inputRequired === true && part.hasExposedTools !== true;
     }
 
@@ -499,11 +496,11 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     }
                                 }
 
-                                if (!hasFinishedInThisTurn) {
+                                if (!hasFinishedInThisTurn || !lastFinishPart) {
                                     throw new Error('A2A stream disconnected before sending final status-update.');
                                 }
 
-                                if (lastFinishPart?.shouldInterruptLoop) {
+                                if (lastFinishPart.shouldInterruptLoop) {
                                     Logger.warn(`[auto-confirm] Loop detected. Force terminating.`);
                                     closeReasoning();
                                     enqueueText(`\n\n[opencode-geminicli-a2a] ⚠️ エージェントが同一の内部ツールを何度も呼び出したため、ループを強制中断しました。\n`);
@@ -529,6 +526,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 }
 
                                 const canAutoConfirm = isAutoConfirmTarget(lastFinishPart!, textPartCounter, autoConfirmCount);
+                                Logger.warn(`[Debug-Loop] canAutoConfirm: ${canAutoConfirm}, autoConfirmCount: ${autoConfirmCount}, lastFinishPart.coderAgentKind: ${lastFinishPart?.coderAgentKind}`);
                                 if (canAutoConfirm && lastFinishPart.taskId) {
                                     if (autoConfirmCount < MAX_AUTO_CONFIRM) {
                                         autoConfirmCount++;

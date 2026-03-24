@@ -819,20 +819,16 @@ export class A2AStreamMapper {
 
                     // DEFAULT_INTERNAL_TOOLS に含まれるツール（activate_skill 等）は
                     // clientTools に存在しなくても「未知ツール」扱いにしない。
-                    // ただし、2回目以降の呼び出しの場合は OpenCode 側に露出させることで 
-                    // 履歴に刻み込み、無限ループを抑制する。
-                    const metaTools = ['activate_skill', 'load_skill', 'search_skills', 'search_skills_by_id', 'search_skills_by_name'];
-                    const isMetaTool = metaTools.includes(toolInfo.toolName) || metaTools.includes(originalToolName);
                     
                     const argsKey = `${toolInfo.toolName}::${JSON.stringify(argsForKey)}`;
                     const freq = (this.toolCallFrequency.get(argsKey) ?? 0);
 
                     const isInvalidToolName = toolInfo.toolName === 'invalid';
-                    let isInternalTool = (this.internalTools.has(toolInfo.toolName) || this.internalTools.has(originalToolName))
-                        && !(isMetaTool && freq >= 1);
+                    const isInternalToolBase = this.internalTools.has(toolInfo.toolName) || this.internalTools.has(originalToolName);
+                    let isInternalTool = isInternalToolBase;
                     
                     const isUnknownToClient = this.clientTools
-                        ? (!this.clientTools.has(originalToolName) && !isInternalTool)
+                        ? (!this.clientTools.has(originalToolName) && !isInternalToolBase)
                         : false;
 
                     // 重複実行ループカウントをすべてのツール（未知・既知問わず）に対して記録
@@ -844,7 +840,7 @@ export class A2AStreamMapper {
 
                     if (currentFreq > this.maxToolCallFrequency) {
                         Logger.warn(`[DuplicateDetect] Tool '${originalToolName}' loop detected (${currentFreq} times).`);
-                        if (isInternalToolConfirmation || isInternalTool) {
+                        if (isInternalToolConfirmation || isInternalToolBase) {
                             this._shouldInterruptLoop = true;
                         } else {
                             const originalToolNameForMessage = toolInfo.toolName;
@@ -993,7 +989,7 @@ export class A2AStreamMapper {
                     ...(needsInput ? { 
                         inputRequired: true, 
                         rawState: result.status.state,
-                        ...(coderAgentKindValue !== undefined ? { coderAgent: coderAgentKindValue } : {})
+                        ...(coderAgentKindValue !== undefined ? { coderAgentKind: coderAgentKindValue } : {})
                     } : {})
                 };
                 parts.push(part as ExtendedStreamPart);
