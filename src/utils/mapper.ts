@@ -36,6 +36,7 @@ export interface ExtendedFinishPart {
     coderAgentKind?: string;
     hasExposedTools?: boolean;
     hasInternalTools?: boolean;
+    internalToolNames?: string[];
     shouldInterruptLoop?: boolean;
     taskId?: string;
 }
@@ -909,7 +910,8 @@ export class A2AStreamMapper {
                 // If input is required but no internal tools are being processed (because they were dropped, e.g., 'invalid')
                 // and no exposed tools are present, we must NOT set inputRequired to true, 
                 // otherwise provider.ts will auto-confirm an empty array into an infinite loop.
-                const shouldPromptInput = result.status.state === 'input-required';
+                const needsInput = result.status.state === 'input-required' && 
+                    (hasInternalTools || hasExposedTools || coderAgentKindValue !== 'tool-call-confirmation');
 
                 const part: ExtendedFinishPart = {
                     type: 'finish',
@@ -919,7 +921,7 @@ export class A2AStreamMapper {
                     shouldInterruptLoop: this._shouldInterruptLoop,
                     internalToolNames: this._lastInternalToolNames,
                     taskId: result.taskId,
-                    ...(shouldPromptInput ? { 
+                    ...(needsInput ? { 
                         inputRequired: true, 
                         rawState: result.status.state,
                         ...(coderAgentKindValue !== undefined ? { coderAgentKind: coderAgentKindValue } : {})

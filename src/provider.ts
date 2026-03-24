@@ -225,8 +225,23 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
         const serializedRequestForTest = JSON.stringify(initialRequestData);
         
         const toolsArr = (options as any).mode?.type === 'regular' ? (options as any).mode.tools : ((options as any).tools || []);
-        const clientTools = toolsArr ? toolsArr.map((t: any) => t.name || t.type) : [];
+        const clientTools = toolsArr ? toolsArr.map((t: any) => t.function?.name || t.name || t.type) : [];
         const isNewUserTurn = options.prompt.length > (session.processedMessagesCount || 0);
+
+        const startTime = Date.now();
+        const isTestEnv = process.env.NODE_ENV === 'test';
+        const TIMEOUT_MS = isTestEnv ? 3000 : 300000;
+        
+        const timeoutAbortController = new AbortController();
+        const timeoutHandle = setTimeout(() => {
+            timeoutAbortController.abort('EXECUTION_TIMEOUT');
+        }, TIMEOUT_MS);
+
+        const combinedAbortController = new AbortController();
+        if (options.abortSignal) {
+            options.abortSignal.addEventListener('abort', () => combinedAbortController.abort(options.abortSignal?.reason), { once: true });
+        }
+        timeoutAbortController.signal.addEventListener('abort', () => combinedAbortController.abort(timeoutAbortController.signal.reason), { once: true });
 
         let responseStream: ReadableStream<Uint8Array>;
         let headers: Record<string, string>;
@@ -235,7 +250,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
         try {
             const firstChatResponse = await this.client!.chatStream({ 
                 request: initialRequestData, 
-                abortSignal: options.abortSignal,
+                abortSignal: combinedAbortController.signal,
                 idempotencyKey
             });
             responseStream = firstChatResponse.stream;
@@ -243,27 +258,35 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
         } catch (error) {
             const currentFallbackConfig = resolveFallbackConfig(this.options.fallback);
             if (isQuotaError(error, currentFallbackConfig) && currentFallbackConfig) {
-                const nextModel = getNextFallbackModel(this.modelId, currentFallbackConfig);
-                if (nextModel) {
-                    Logger.warn(`Quota exceeded for ${this.modelId}. Falling back to ${nextModel}.`);
-                    const counters = (session as any).fallbackCounters || {};
-                    counters[this.modelId] = (counters[this.modelId] || 0) + 1;
-                    (session as any).fallbackCounters = counters;
-                    if (sessionId && sessionId !== 'undefined') await this.sessionStore.update(sessionId, { fallbackCounters: counters });
-                    
-                    const provider = new OpenCodeGeminiA2AProvider(nextModel, {
-                        ...this.options,
-                        sessionStore: this.sessionStore
-                    });
-                    return provider.doStream({
-                        ...options,
-                        headers: {
-                            ...options.headers,
-                            'idempotency-key': idempotencyKey
-                        }
-                    });
+                const counters = (session as any).fallbackCounters || {};
+                const totalRetries = Object.values(counters).reduce((sum: number, val: any) => sum + (val as number), 0);
+                
+                if (totalRetries < (currentFallbackConfig.maxRetries ?? 3)) {
+                    const nextModel = getNextFallbackModel(this.modelId, currentFallbackConfig);
+                    if (nextModel) {
+                        Logger.warn(`Quota exceeded for ${this.modelId}. Falling back to ${nextModel}. Total retries: ${totalRetries + 1}`);
+                        counters[this.modelId] = (counters[this.modelId] || 0) + 1;
+                        (session as any).fallbackCounters = counters;
+                        if (sessionId && sessionId !== 'undefined') await this.sessionStore.update(sessionId, { fallbackCounters: counters });
+                        
+                        const provider = new OpenCodeGeminiA2AProvider(nextModel, {
+                            ...this.options,
+                            sessionStore: this.sessionStore
+                        });
+                        clearTimeout(timeoutHandle);
+                        return provider.doStream({
+                            ...options,
+                            headers: {
+                                ...options.headers,
+                                'idempotency-key': idempotencyKey
+                            }
+                        });
+                    }
+                } else {
+                    Logger.error(`Max fallback retries reached (${totalRetries}). Giving up.`);
                 }
             }
+            clearTimeout(timeoutHandle);
             throw error;
         }
 
@@ -286,15 +309,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
             initialToolCallFrequency: instanceFreq ?? session.toolCallFrequency,
             maxToolCallFrequency: this.options?.maxToolCallFrequency,
         });
-
-        const startTime = Date.now();
-        const isTestEnv = process.env.NODE_ENV === 'test';
-        const TIMEOUT_MS = isTestEnv ? 3000 : 300000;
-        
-        const timeoutAbortController = new AbortController();
-        const timeoutHandle = setTimeout(() => {
-            timeoutAbortController.abort('EXECUTION_TIMEOUT');
-        }, TIMEOUT_MS);
 
         const stream = new ReadableStream<LanguageModelV2StreamPart>({
             start: (controller) => {
@@ -443,9 +457,9 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
 
                                 if (lastFinishPart?.shouldInterruptLoop) {
                                     Logger.warn(`[auto-confirm] Loop detected. Force terminating.`);
+                                    closeReasoning();
                                     enqueueText(`\n\n[opencode-geminicli-a2a] ⚠️ エージェントが同一の内部ツールを何度も呼び出したため、ループを強制中断しました。\n`);
                                     closeText();
-                                    closeReasoning();
                                     safeEnqueue({
                                         type: 'finish',
                                         finishReason: 'stop',
@@ -479,11 +493,11 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         continue;
                                     } else {
                                         Logger.warn(`[auto-confirm] MAX_AUTO_CONFIRM reached. Forcing stop.`);
+                                        closeReasoning();
                                         if (textPartCounter === 0) {
                                             enqueueText(`\n\n[opencode-geminicli-a2a] ⚠️ エージェントが内部処理を繰り返しすぎたため、処理を中断しました。回答が生成されていません。\n`);
                                         }
                                         closeText();
-                                        closeReasoning();
                                         safeEnqueue({
                                             type: 'finish',
                                             finishReason: 'stop',
@@ -506,8 +520,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         continue;
                                     } else {
                                         Logger.warn(`[auto-confirm] MAX_TOOL_CONFIRM reached. Forcing stop.`);
-                                        closeText();
                                         closeReasoning();
+                                        closeText();
                                         safeEnqueue({
                                             type: 'finish',
                                             finishReason: 'stop',

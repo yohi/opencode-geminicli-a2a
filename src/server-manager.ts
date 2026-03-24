@@ -6,6 +6,8 @@ import path from 'node:path';
 import { Logger } from './utils/logger';
 import { ConfigManager } from './config';
 
+const execAsync = promisify(exec);
+
 export interface AutoStartConfig {
     /** サーバーの .mjs ファイルへの絶対パス。未指定時は自動検出を試みる。 */
     serverPath?: string;
@@ -85,108 +87,122 @@ export class ServerManager {
         modelId: string,
         config: AutoStartConfig,
         debug: boolean
-    ): Promise<() => void> {
-        // 既に外部プロセスがリッスンしているか確認
-        if (await probePort(port, host)) {
-            Logger.info(`Port ${host}:${port} already listening. Skipping auto-start.`);
-            // 外部プロセスなので管理しない（リリース時にも何もしない）
-            return () => {};
-        }
-
-        // 既に本マネージャーが管理しているプロセスが存在するか確認
-        // 別モデルでA2Aサーバーポートが被るケースは現状除外（1ポート=1プロセス前提）
+    ): Promise<() => Promise<void>> {
+        // 1. 既に本マネージャーが管理しているプロセスが存在するか確認
         const existing = this.servers.get(port);
         if (existing) {
             existing.refCount++;
-            Logger.info(`Reusing managed server on ${host}:${port} (refCount=${existing.refCount})`);
+            Logger.info(`[ServerManager] Reusing managed server on ${host}:${port} (refCount=${existing.refCount})`);
             return this.makeReleaseFn(port, debug);
         }
 
-        // すでに起動処理が走っている場合はそれを待つ
+        // 2. すでに起動処理が走っている場合はそれを待つ
         const inflight = this.startingUp.get(port);
         if (inflight) {
-            Logger.debug(`Waiting for inflight startup on port ${port}...`);
+            Logger.debug(`[ServerManager] Waiting for inflight startup on port ${port}...`);
             await inflight;
             const existingInflight = this.servers.get(port);
             if (existingInflight) {
                 existingInflight.refCount++;
-                Logger.info(`Reusing managed server on ${host}:${port} after inflight (refCount=${existingInflight.refCount})`);
+                Logger.info(`[ServerManager] Reusing managed server on ${host}:${port} after inflight (new refCount=${existingInflight.refCount})`);
                 return this.makeReleaseFn(port, debug);
             }
-            // 失敗していた場合は再度起動を試みる
+            Logger.warn(`[ServerManager] Inflight startup on port ${port} finished but server not found in map. Retrying ensureRunning.`);
             return this.ensureRunning(port, host, modelId, config, debug);
         }
 
-        // 起動処理を登録
-        const startupPromise = (async () => {
-            let proc: any = undefined;
-            try {
-                // 新規起動
-                const serverPath = await this.resolveServerPath(config.serverPath);
-                const env: Record<string, string> = {
-                    ...process.env as Record<string, string>,
-                    CODER_AGENT_PORT: String(port),
-                    CODER_AGENT_HOST: host,
-                    A2A_GEMINI_MODEL: modelId,
-                    GEMINI_AUTO_APPROVE: 'false',
-                    ...config.env,
-                };
+        // 並行呼び出しでのレースコンディションを防ぐため、外部チェックの前に一旦予約する
+        let resolveInflight: (val: any) => void;
+        const inflightPromise = new Promise(r => { resolveInflight = r; });
+        this.startingUp.set(port, inflightPromise);
 
-                Logger.info(`Starting A2A server: node ${serverPath} (port=${port}, host=${host})`);
-
-                proc = spawn('node', [serverPath], {
-                    env,
-                    stdio: debug ? ['ignore', 'pipe', 'pipe'] : 'ignore',
-                    detached: false,
-                });
-
-                if (debug && proc.stdout) {
-                    proc.stdout.on('data', (d: Buffer) => process.stdout.write(`[A2A-${port}] ${d}`));
-                }
-                if (debug && proc.stderr) {
-                    proc.stderr.on('data', (d: Buffer) => process.stderr.write(`[A2A-${port}] ${d}`));
-                }
-
-                // 起動待機
-                const pollMs = config.pollIntervalMs ?? 200;
-                const timeoutMs = config.startupTimeoutMs ?? 15000;
-                await Promise.race([
-                    waitForPort(port, host, timeoutMs, pollMs),
-                    new Promise<void>((_, reject) => {
-                        proc.on('error', (err: any) => reject(new Error(`A2A server spawn error: ${err.message}`)));
-                        proc.once('exit', (code: any) => {
-                            if (code !== 0 && code !== null) {
-                                reject(new Error(`A2A server exited early with code ${code}`));
-                            }
-                        });
-                    })
-                ]);
-
-                const entry: ManagedServer = { proc, port, host, refCount: 1 };
-                this.servers.set(port, entry);
-                this.registerCleanup(debug);
-
-                proc.once('exit', (code: any) => {
-                    Logger.info(`A2A server on port ${port} exited (code=${code})`);
-                    if (this.servers.get(port)?.proc === proc) {
-                        this.servers.delete(port);
-                    }
-                });
-
-                Logger.info(`A2A server on ${host}:${port} is ready.`);
-                return this.makeReleaseFn(port, debug);
-            } catch (err) {
-                if (proc) {
-                    proc.kill();
-                }
-                throw err;
-            } finally {
+        try {
+            // 3. 既に外部プロセスがリッスンしているか確認
+            if (await probePort(port, host)) {
+                Logger.info(`Port ${host}:${port} already listening. Skipping auto-start.`);
                 this.startingUp.delete(port);
+                resolveInflight!(null);
+                // 外部プロセスなので管理しない（リリース時にも何もしない）
+                return async () => {};
             }
-        })();
 
-        this.startingUp.set(port, startupPromise);
-        return startupPromise;
+            // 起動処理を登録
+            const startupPromise = (async () => {
+                let proc: ChildProcess | undefined = undefined;
+                try {
+                    // 新規起動
+                    const serverPath = await this.resolveServerPath(config.serverPath);
+                    const env: Record<string, string> = {
+                        ...process.env as Record<string, string>,
+                        CODER_AGENT_PORT: String(port),
+                        CODER_AGENT_HOST: host,
+                        A2A_GEMINI_MODEL: modelId,
+                        GEMINI_AUTO_APPROVE: 'false',
+                        ...config.env,
+                    };
+
+                    Logger.info(`Starting A2A server: node ${serverPath} (port=${port}, host=${host})`);
+
+                    proc = spawn('node', [serverPath], {
+                        env,
+                        stdio: debug ? ['ignore', 'pipe', 'pipe'] : 'ignore',
+                        detached: false,
+                    });
+
+                    if (debug && proc.stdout) {
+                        proc.stdout.on('data', (d: Buffer) => process.stdout.write(`[A2A-${port}] ${d}`));
+                    }
+                    if (debug && proc.stderr) {
+                        proc.stderr.on('data', (d: Buffer) => process.stderr.write(`[A2A-${port}] ${d}`));
+                    }
+
+                    // 起動待機
+                    const pollMs = config.pollIntervalMs ?? 200;
+                    const timeoutMs = config.startupTimeoutMs ?? 15000;
+                    await Promise.race([
+                        waitForPort(port, host, timeoutMs, pollMs),
+                        new Promise<void>((_, reject) => {
+                            if (!proc) return;
+                            proc.on('error', (err: Error) => reject(new Error(`A2A server spawn error: ${err.message}`)));
+                            proc.once('exit', (code: number | null) => {
+                                if (code !== 0 && code !== null) {
+                                    reject(new Error(`A2A server exited early with code ${code}`));
+                                }
+                            });
+                        })
+                    ]);
+
+                    const entry: ManagedServer = { proc, port, host, refCount: 1 };
+                    this.servers.set(port, entry);
+                    this.registerCleanup(debug);
+
+                    proc.once('exit', (code: number | null) => {
+                        Logger.info(`A2A server on port ${port} exited (code=${code})`);
+                        if (this.servers.get(port)?.proc === proc) {
+                            this.servers.delete(port);
+                        }
+                    });
+
+                    Logger.info(`A2A server on ${host}:${port} is ready.`);
+                    return this.makeReleaseFn(port, debug);
+                } catch (err) {
+                    if (proc) {
+                        proc.kill();
+                    }
+                    throw err;
+                } finally {
+                    this.startingUp.delete(port);
+                }
+            })();
+
+            // 予約していた Promise を本物の起動 Promise で上書き（または連動）
+            startupPromise.then(res => resolveInflight!(res)).catch(err => resolveInflight!(null));
+            return startupPromise;
+        } catch (err) {
+            this.startingUp.delete(port);
+            resolveInflight!(null);
+            throw err;
+        }
     }
 
     /** @google/gemini-cli-a2a-server の .mjs ファイルを自動検出する */
@@ -201,14 +217,18 @@ export class ServerManager {
         // 1. グローバルインストールのパスを npm root -g で取得
         try {
             if (!this.cachedNpmRoot) {
-                const execAsync = promisify(exec);
-                const { stdout } = await execAsync('npm root -g', { timeout: 5000 });
-                this.cachedNpmRoot = stdout.trim();
+                const result = await execAsync('npm root -g', { timeout: 5000 });
+                if (result && typeof result.stdout === 'string') {
+                    this.cachedNpmRoot = result.stdout.trim();
+                } else if (typeof (result as any) === 'string') {
+                    this.cachedNpmRoot = (result as any).trim();
+                }
             }
-            const globalPath = path.join(this.cachedNpmRoot, '@google', 'gemini-cli-a2a-server', 'dist', 'a2a-server.mjs');
-
-            if (existsSync(globalPath)) {
-                return globalPath;
+            if (this.cachedNpmRoot) {
+                const globalPath = path.join(this.cachedNpmRoot, '@google', 'gemini-cli-a2a-server', 'dist', 'a2a-server.mjs');
+                if (existsSync(globalPath)) {
+                    return globalPath;
+                }
             }
         } catch (err) {
             // npm が使えない場合はスキップ
