@@ -26,8 +26,10 @@ describe('ServerManager', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         ServerManager._reset();
-        // デフォルトでは existsSync は全て true を返す
-        vi.mocked(existsSync).mockReturnValue(true);
+        // デフォルトでは local node_modules を false にして npm root -g ルートへ落ちるようにする
+        vi.mocked(existsSync).mockImplementation((p: any) => {
+            return typeof p === 'string' && !p.includes(process.cwd());
+        });
 
         // デフォルトの exec モック（npm root -g のシミュレーション）
         vi.mocked(exec).mockImplementation(((cmd: string, opts: any, cb: any) => {

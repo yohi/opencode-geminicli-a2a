@@ -34,7 +34,7 @@ describe('mapper', () => {
             ];
             const req = mapPromptToA2AJsonRpcRequest(prompt as any);
             expect(req.params.message.parts).toHaveLength(2);
-            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL INSTRUCTION');
+            expect((req.params.message.parts[0] as any).text).toContain('CRITICAL:');
             expect((req.params.message.parts[1] as any).text).toBe('[SYSTEM]\nYou are a helpful assistant.\n');
         });
 

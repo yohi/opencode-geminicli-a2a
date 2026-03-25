@@ -134,14 +134,12 @@ export interface TaskRequirements {
 
 export class DynamicModelRouter {
   selectModel(req: TaskRequirements): string {
+    // We strictly respect Flash to avoid quota issues on Pro models
     if (req.complexity === 'high') {
       return MODEL_PRO;
     }
-    if (req.complexity === 'medium') {
-      return MODEL_FLASH; // Explicitly map 'medium' to Flash for clarity
-    }
     if (req.complexity === 'auto') {
-      return MODEL_AUTO; // Let the backend A2A server decide dynamically
+      return MODEL_AUTO;
     }
     return MODEL_FLASH;
   }

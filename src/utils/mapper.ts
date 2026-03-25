@@ -22,7 +22,9 @@ export const DEFAULT_INTERNAL_TOOLS = [
     'save_memory',
     'cli_help',
     'codebase_investigator',
-    'generalist'
+    'generalist',
+    'brainstorming',
+    'writing-plans'
 ];
 
 export interface ExtendedFinishPart {
@@ -175,7 +177,7 @@ export function mapPromptToA2AJsonRpcRequest(
     if (!contextId) {
         parts.push({
             kind: 'text',
-            text: `[SYSTEM]\nCRITICAL INSTRUCTION: When calling tools, you MUST use their exact full names as they appear in your 'Available tools' list. Do NOT use short aliases or guess prefixes! If a tool is listed WITH a prefix (e.g., 'docker-mcp-gateway_read_file'), you MUST include it. If it is listed WITHOUT a prefix (e.g., 'read'), you MUST NOT add one. The server will reject the tool call with an 'invalid' error if the name does not match exactly.\n`
+            text: `[SYSTEM]\nCRITICAL: You are Gemini CLI. Strictly follow the user's language policy (Japanese).\n\nSPECIAL SHORTCUT FOR GREETINGS: If the user message is just a simple greeting like 'hello', 'hi', 'こんにちは', 'どうも', or similar, YOU MUST NOT use any skills, tools, or complex workflows. JUST respond with a friendly greeting in Japanese and ask how you can help. DO NOT call 'activate_skill' until a real task is provided.\n\nTOOL USAGE: When calling tools, you MUST use their exact full names. If a tool is listed with a prefix (e.g., 'docker-mcp-gateway_read_file'), you MUST include it.\n`
         });
     }
 
@@ -229,7 +231,8 @@ export function mapPromptToA2AJsonRpcRequest(
 export function buildConfirmationRequest(
     taskId: string,
     modelId?: string,
-    confirmation: boolean = true
+    confirmation: boolean = true,
+    contextId?: string
 ): A2AJsonRpcRequest {
     const ts = Date.now();
     return {
@@ -246,6 +249,9 @@ export function buildConfirmationRequest(
                 blocking: false
             },
             taskId,
+            // contextId を渡すことで A2A サーバーが同一会話コンテキストとして処理し、
+            // エージェントが会話履歴なしの新しいセッションで再起動するのを防ぐ
+            ...(contextId ? { contextId } : {}),
             ...(modelId ? { model: modelId } : {})
         }
     };
@@ -467,8 +473,8 @@ function buildRequest(
                         ? toolMapping[toolChoice] 
                         : toolChoice 
                 } : {}),
-                // Some A2A servers expect model inside configuration
-                ...(modelId ? { model: modelId } : {}),
+                // Some A2A servers expect model inside configuration or coderAgent
+                ...(modelId ? { model: modelId, coderAgent: { model: modelId } } : {}),
             },
             ...(generationConfig ? { generationConfig } : {}),
             // Default A2A location for dynamic model selection
@@ -530,7 +536,7 @@ export class A2AStreamMapper {
 
     constructor(options?: { toolMapping?: Record<string, string>, internalTools?: string[], clientTools?: string[], initialToolCallFrequency?: Record<string, number>, maxToolCallFrequency?: number }) {
         this.toolMapping = options?.toolMapping ?? {};
-        this.maxToolCallFrequency = options?.maxToolCallFrequency ?? 3;
+        this.maxToolCallFrequency = options?.maxToolCallFrequency ?? 10;
         this.internalTools = new Set(options?.internalTools ?? DEFAULT_INTERNAL_TOOLS);
         if (options?.clientTools) {
             this.clientTools = new Set(options.clientTools);

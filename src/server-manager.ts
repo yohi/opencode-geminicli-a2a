@@ -183,6 +183,9 @@ export class ServerManager {
                         CODER_AGENT_HOST: host,
                         A2A_GEMINI_MODEL: modelId,
                         GEMINI_AUTO_APPROVE: 'false',
+                        // 非対話型環境（stdin なし）でも ADC 認証で起動できるようにする
+                        // 参照: https://goo.gle/geminicli-updates
+                        GEMINI_CLI_USE_COMPUTE_ADC: 'true',
                         ...config.env,
                     };
 

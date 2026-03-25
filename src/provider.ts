@@ -72,10 +72,15 @@ function isAutoConfirmTarget(
     if (autoConfirmCount >= maxAutoConfirm) return false;
 
     const internalToolNames = part.internalToolNames || [];
-    const hasMetaTool = internalToolNames.some(name => META_TOOLS.includes(name));
-    if (hasMetaTool) return false;
-
     const isBackgroundTool = internalToolNames.some(name => BACKGROUND_TOOLS.includes(name));
+    const isMetaTool = internalToolNames.some(name => META_TOOLS.includes(name));
+    
+    // We allow auto-confirming internal skills and meta-tools even after starting thinking/speaking, 
+    // as A2A servers often decide to activate skills or search for documentation mid-thought during initialization.
+    if (isMetaTool) {
+        return part.inputRequired === true && part.hasExposedTools !== true;
+    }
+
     const hasSpoken = textPartCounter > 0 || reasoningPartCounter > 0;
 
     if (part.coderAgentKind === 'tool-call-confirmation') {
@@ -88,15 +93,15 @@ function isAutoConfirmTarget(
 
     const isInternalRecall = part.coderAgentKind === 'internal-tool-call';
     if (isInternalRecall) {
-        // We only auto-confirm internal tools if we haven't spoken yet.
-        // This prevents redundant loops once the agent has already started thinking or responding.
-        return !hasSpoken && part.inputRequired === true && part.hasExposedTools !== true;
+        // We allow auto-confirming internal tools even after starting thinking/speaking, 
+        // as A2A servers often use them to navigate skills or set up the environment mid-thought.
+        return part.inputRequired === true && part.hasExposedTools !== true;
     }
 
     // A2A server might trigger state change that requires continuation without exposing tools to OpenCode.
-    // We only allow this IF the model hasn't spoken yet to avoid redundant loops after a response.
+    // We allow this even after speaking/thinking, relying on consecutiveNoProgressTurns to break loops.
     if (part.coderAgentKind === 'state-change') {
-        return !hasSpoken && part.inputRequired === true && part.hasExposedTools !== true;
+        return part.inputRequired === true && part.hasExposedTools !== true;
     }
 
     return false;
@@ -294,7 +299,10 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
 
         let agentOptions: any = undefined;
         let actualModelId = this.modelId;
-        if (baseConfig.agents) {
+        
+        // Only perform routing/agent resolution if agents are configured
+        // and we are NOT using a fully-qualified model ID that we want to preserve.
+        if (baseConfig.agents && this.modelId === 'auto') {
             const router = new DefaultMultiAgentRouter(baseConfig.agents);
             const resolved = router.resolve(this.modelId);
             if (resolved) {
@@ -499,6 +507,21 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         delta: delta
                     } as any);
                 };
+                const enqueueReasoning = (delta: string | undefined | null) => {
+                    if (typeof delta !== 'string' || delta.length === 0) return;
+                    if (resolvedBaseConfig.showReasoning === false) return;
+                    closeText();
+                    if (activeReasoningId === undefined) {
+                        activeReasoningId = `reasoning-${reasoningPartCounter++}`;
+                        safeEnqueue({ type: 'reasoning-start', id: activeReasoningId } as any);
+                    }
+                    safeEnqueue({ 
+                        type: 'reasoning-delta', 
+                        id: activeReasoningId, 
+                        reasoningDelta: delta,
+                        delta: delta
+                    } as any);
+                };
 
                 (async () => {
                     try {
@@ -520,6 +543,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
 
                                 let hasFinishedInThisTurn = false;
                                 let turnProducedText = false;
+                                let turnProducedReasoning = false;
                                 let turnProducedToolCall = false;
 
                                 const response = firstResponse || await this.client!.chatStream({ 
@@ -550,6 +574,9 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                                     }
                                                     enqueueText(text);
                                                 }
+                                                if (part.type === 'reasoning-delta') {
+                                                    turnProducedReasoning = true;
+                                                }
                                                 if (part.type === 'tool-call') {
                                                     turnProducedToolCall = true;
                                                 }
@@ -573,6 +600,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                                         } as any);
                                                         break;
                                                     }
+                                                    
+// ... (rest of the switch)
 
                                                     case 'tool-call': {
                                                         closeText();
@@ -588,7 +617,11 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                                     case 'finish': {
                                                         hasFinishedInThisTurn = true;
                                                         lastFinishPart = part as ExtendedFinishPart;
-                                                        if (!isAutoConfirmTarget(lastFinishPart, textPartCounter, autoConfirmCount, MAX_AUTO_CONFIRM)) {
+                                                        if (!isAutoConfirmTarget(lastFinishPart, textPartCounter, reasoningPartCounter, autoConfirmCount, MAX_AUTO_CONFIRM)) {
+                                                            if (autoConfirmCount >= MAX_AUTO_CONFIRM) {
+                                                                closeReasoning();
+                                                                enqueueText(`\n\n[opencode-geminicli-a2a] ⚠️ 内部ツールの自動実行が上限（${MAX_AUTO_CONFIRM}回）に達しました。処理を中断します。\n`);
+                                                            }
                                                             closeText();
                                                             closeReasoning();
                                                             const unifiedFinishReason = (lastFinishPart.finishReason === 'unknown' ? 'stop' : lastFinishPart.finishReason);
@@ -639,7 +672,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     
                                     // A2Aサーバーがinput-requiredのままでハングしないよう、Cancelを送信する
                                     if (lastFinishPart.taskId) {
-                                        const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, actualModelId, false);
+                                        const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, actualModelId, false, mapper.contextId);
                                         this.client!.chatStream({ request: cancelParam, abortSignal: timeoutAbortController.signal }).catch((err: any) => {
                                             Logger.error(`[Provider] Failed to send loop-interrupt Cancel to A2A server:`, err);
                                         });
@@ -658,15 +691,16 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 
                                 if (canAutoConfirm) {
                                     // Progress check: increment counter if no progress in this turn
-                                    if (!turnProducedText && !turnProducedToolCall) {
+                                    if (!turnProducedText && !turnProducedToolCall && !turnProducedReasoning) {
                                         consecutiveNoProgressTurns++;
                                     } else {
                                         consecutiveNoProgressTurns = 0;
                                     }
 
-                                // Break if stuck in a loop without progress for 2 turns to save quota
-                                    if (consecutiveNoProgressTurns >= 2) {
-                                        Logger.warn(`[Provider] Detected possible reasoning loop (2 turns without progress). Breaking to save quota.`);
+                                    // Break if stuck in a loop without progress for many turns to save quota
+                                    // Increased to 5 for models with very long reasoning phases like gemini-3-flash
+                                    if (consecutiveNoProgressTurns >= 5) {
+                                        Logger.warn(`[Provider] Detected possible reasoning loop (5 turns without progress). Breaking to save quota.`);
                                         closeText();
                                         closeReasoning();
                                         safeEnqueue({
@@ -677,20 +711,31 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         
                                         // Tell the server to cancel to prevent hanging
                                         if (lastFinishPart.taskId) {
-                                            const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, actualModelId, false);
+                                            const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, actualModelId, false, mapper.contextId);
                                             this.client!.chatStream({ request: cancelParam, abortSignal: timeoutAbortController.signal }).catch(() => {});
                                         }
                                         break;
                                     }
 
                                     autoConfirmCount++;
+                                    const internalToolInfo = lastFinishPart.internalToolNames?.length 
+                                        ? ` (内部ツール: ${lastFinishPart.internalToolNames.join(', ')})` 
+                                        : '';
+                                    
+                                    if (autoConfirmCount === 1) {
+                                        enqueueReasoning(`[opencode-geminicli-a2a] エージェントの初期化を自動承認しています${internalToolInfo}...\n`);
+                                    } else {
+                                        enqueueReasoning(`[opencode-geminicli-a2a] 内部的な対話を継続しています (${autoConfirmCount}回目)...\n`);
+                                    }
+                                    
                                     Logger.warn(`[Debug-Loop] canAutoConfirm: true, autoConfirmCount: ${autoConfirmCount}, lastFinishPart.coderAgentKind: ${lastFinishPart.coderAgentKind}`);
                                     
                                     if (lastFinishPart.taskId) {
                                         currentRequest = buildConfirmationRequest(
                                             lastFinishPart.taskId!,
                                             actualModelId,
-                                            true
+                                            true,
+                                            mapper.contextId
                                         );
                                         mapper.startNewTurn();
                                         continue;
@@ -704,7 +749,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         currentRequest = buildConfirmationRequest(
                                             lastFinishPart.taskId!,
                                             actualModelId,
-                                            true
+                                            true,
+                                            mapper.contextId
                                         );
                                         mapper.startNewTurn();
                                         continue;
@@ -720,7 +766,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         
                                         // Tell server to cancel
                                         if (lastFinishPart.taskId) {
-                                            const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, actualModelId, false);
+                                            const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, actualModelId, false, mapper.contextId);
                                             this.client!.chatStream({ request: cancelParam, abortSignal: timeoutAbortController.signal }).catch(() => {});
                                         }
                                         break;
@@ -730,7 +776,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 // No more auto-confirm, exit the loop
                                 // If it was an internal tool or state-change that we didn't confirm, tell the server to cancel it
                                 if (lastFinishPart.taskId && !canAutoConfirm && lastFinishPart.inputRequired) {
-                                    const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, actualModelId, false);
+                                    const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, actualModelId, false, mapper.contextId);
                                     this.client!.chatStream({ request: cancelParam, abortSignal: timeoutAbortController.signal }).catch(() => {});
                                 }
 

@@ -37,6 +37,9 @@ describe('resolveConfig', () => {
             generationConfig: undefined,
             toolMapping: defaultToolMapping,
             internalTools: undefined,
+            agents: undefined,
+            litellmProxy: undefined,
+            showReasoning: true,
         });
     });
 
@@ -54,6 +57,9 @@ describe('resolveConfig', () => {
             generationConfig: undefined,
             toolMapping: defaultToolMapping,
             internalTools: undefined,
+            agents: undefined,
+            litellmProxy: undefined,
+            showReasoning: true,
         });
     });
 
@@ -78,6 +84,9 @@ describe('resolveConfig', () => {
             generationConfig: undefined,
             toolMapping: defaultToolMapping,
             internalTools: undefined,
+            agents: undefined,
+            litellmProxy: undefined,
+            showReasoning: true,
         });
     });
 
@@ -106,6 +115,9 @@ describe('resolveConfig', () => {
             generationConfig: undefined,
             toolMapping: defaultToolMapping,
             internalTools: undefined,
+            agents: undefined,
+            litellmProxy: undefined,
+            showReasoning: true,
         });
     });
 
@@ -128,6 +140,9 @@ describe('resolveConfig', () => {
             generationConfig: undefined,
             toolMapping: defaultToolMapping,
             internalTools: undefined,
+            agents: undefined,
+            litellmProxy: undefined,
+            showReasoning: true,
         });
 
         const configWithOptions = resolveConfig({
@@ -143,6 +158,9 @@ describe('resolveConfig', () => {
             generationConfig: undefined,
             toolMapping: defaultToolMapping,
             internalTools: undefined,
+            agents: undefined,
+            litellmProxy: undefined,
+            showReasoning: true,
         });
     });
 
