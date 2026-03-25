@@ -190,7 +190,7 @@ export class ServerManager {
 
                     proc = spawn('node', [serverPath], {
                         env,
-                        stdio: debug ? ['ignore', 'pipe', 'pipe'] : 'ignore',
+                        stdio: ['ignore', 'pipe', 'pipe'],
                         detached: false,
                     });
                     
@@ -206,17 +206,32 @@ export class ServerManager {
 
                     // 起動待機
                     const pollMs = config.pollIntervalMs ?? 200;
-                    const timeoutMs = config.startupTimeoutMs ?? 15000;
-                    await Promise.race([
-                        waitForPort(port, host, timeoutMs, pollMs),
-                        new Promise<void>((_, reject) => {
-                            if (!proc) return;
-                            proc.once('error', (err: Error) => reject(new Error(`A2A server spawn error: ${err.message}`)));
-                            proc.once('exit', (code: number | null) => {
-                                reject(new Error(`A2A server exited early with code ${code ?? 'unknown'}`));
-                            });
-                        })
-                    ]);
+                    const timeoutMs = config.startupTimeoutMs ?? 60000;
+                    
+                    let stdoutBuffer = '';
+                    let stderrBuffer = '';
+                    if (proc.stdout) proc.stdout.on('data', (d) => stdoutBuffer += d.toString());
+                    if (proc.stderr) proc.stderr.on('data', (d) => stderrBuffer += d.toString());
+
+                    try {
+                        await Promise.race([
+                            waitForPort(port, host, timeoutMs, pollMs),
+                            new Promise<void>((_, reject) => {
+                                if (!proc) return;
+                                proc.once('error', (err: Error) => reject(new Error(`A2A server spawn error: ${err.message}`)));
+                                proc.once('exit', (code: number | null) => {
+                                    const context = stderrBuffer ? `\nServer Error Log:\n${stderrBuffer}` : '';
+                                    reject(new Error(`A2A server exited early with code ${code ?? 'unknown'}${context}`));
+                                });
+                            })
+                        ]);
+                    } catch (waitErr: any) {
+                        const logContext = stderrBuffer || stdoutBuffer;
+                        if (logContext) {
+                            Logger.error(`[ServerManager] Startup failure context:\n${logContext}`);
+                        }
+                        throw waitErr;
+                    }
 
                     if (this.startingUp.get(key) !== slot) {
                         proc.kill();

@@ -93,9 +93,9 @@ function isAutoConfirmTarget(
     }
 
     // A2A server might trigger state change that requires continuation without exposing tools to OpenCode.
-    // We always allow this to keep the session alive during server-side state transitions.
+    // We only allow this IF the model hasn't spoken yet to avoid redundant loops after a response.
     if (part.coderAgentKind === 'state-change') {
-        return part.inputRequired === true && part.hasExposedTools !== true;
+        return !hasSpoken && part.inputRequired === true && part.hasExposedTools !== true;
     }
 
     return false;
@@ -444,13 +444,14 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                             // 4. Yet others expect chunk.delta.length (string has .length)
 
                             const content = (part as any).textDelta || (part as any).reasoningDelta || "";
-
+                            
                             const compatibilityPart = {
                                 ...part,
                                 // Satisfy 'expected string, received undefined' for path: ['delta']
-                                delta: content,
+                                // Ensure it's never undefined or null
+                                delta: typeof content === 'string' ? content : "",
                                 // Satisfy 'evaluating chunk.delta.content'
-                                content: content,
+                                content: typeof content === 'string' ? content : "",
                             };
 
                             controller.enqueue(compatibilityPart as any);
@@ -513,6 +514,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
 
                         let firstResponse: any = { stream: responseStream, headers: headers || {} };
 
+                        let consecutiveNoProgressTurns = 0;
+
                         const loop = async () => {
                             while (true) {
                                 if (Date.now() - startTime > TIMEOUT_MS) {
@@ -520,9 +523,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 }
 
                                 let hasFinishedInThisTurn = false;
-                                const combinedSignal = options.abortSignal 
-                                    ? anySignal([options.abortSignal, timeoutAbortController.signal])
-                                    : timeoutAbortController.signal;
+                                let turnProducedText = false;
+                                let turnProducedToolCall = false;
 
                                 const response = firstResponse || await this.client!.chatStream({ 
                                     request: currentRequest, 
@@ -543,12 +545,16 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         if ('result' in chunk && chunk.result) {
                                             const parts = mapper.mapResult(chunk.result);
                                             for (const part of parts) {
+                                                if (part.type === 'text-delta') turnProducedText = true;
+                                                if (part.type === 'tool-call') turnProducedToolCall = true;
+
                                                 switch (part.type) {
                                                     case 'text-delta': {
                                                         enqueueText((part as any).textDelta);
                                                         break;
                                                     }
                                                     case 'reasoning-delta': {
+                                                        if (resolvedBaseConfig.showReasoning === false) break;
                                                         closeText();
                                                         if (activeReasoningId === undefined) {
                                                             activeReasoningId = `reasoning-${reasoningPartCounter++}`;
@@ -637,10 +643,32 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 }
 
                                 const canAutoConfirm = isAutoConfirmTarget(lastFinishPart!, textPartCounter, autoConfirmCount, MAX_AUTO_CONFIRM);
-                                Logger.warn(`[Debug-Loop] canAutoConfirm: ${canAutoConfirm}, autoConfirmCount: ${autoConfirmCount}, lastFinishPart.coderAgentKind: ${lastFinishPart?.coderAgentKind}`);
-                                if (lastFinishPart.taskId) {
-                                    if (canAutoConfirm) {
-                                        autoConfirmCount++;
+                                
+                                if (canAutoConfirm) {
+                                    // Progress check: increment counter if no progress in this turn
+                                    if (!turnProducedText && !turnProducedToolCall) {
+                                        consecutiveNoProgressTurns++;
+                                    } else {
+                                        consecutiveNoProgressTurns = 0;
+                                    }
+
+                                    // Break if stuck in a loop without progress for 2 turns to save quota
+                                    if (consecutiveNoProgressTurns >= 2) {
+                                        Logger.warn(`[Provider] Detected possible reasoning loop (2 turns without progress). Breaking to save quota.`);
+                                        closeText();
+                                        closeReasoning();
+                                        safeEnqueue({
+                                            type: 'finish',
+                                            finishReason: 'stop',
+                                            usage: { promptTokens: 0, completionTokens: 0 }
+                                        } as any);
+                                        break;
+                                    }
+
+                                    autoConfirmCount++;
+                                    Logger.warn(`[Debug-Loop] canAutoConfirm: true, autoConfirmCount: ${autoConfirmCount}, lastFinishPart.coderAgentKind: ${lastFinishPart.coderAgentKind}`);
+                                    
+                                    if (lastFinishPart.taskId) {
                                         currentRequest = buildConfirmationRequest(
                                             lastFinishPart.taskId!,
                                             actualModelId,
@@ -648,19 +676,6 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         );
                                         mapper.startNewTurn();
                                         continue;
-                                    } else if (autoConfirmCount >= MAX_AUTO_CONFIRM && isAutoConfirmTarget(lastFinishPart!, textPartCounter, 0, Infinity)) {
-                                        Logger.warn(`[auto-confirm] MAX_AUTO_CONFIRM reached. Forcing stop.`);
-                                        closeReasoning();
-                                        if (textPartCounter === 0) {
-                                            enqueueText(`\n\n[opencode-geminicli-a2a] ⚠️ エージェントが内部処理を繰り返しすぎたため、処理を中断しました。回答が生成されていません。\n`);
-                                        }
-                                        closeText();
-                                        safeEnqueue({
-                                            type: 'finish',
-                                            finishReason: 'stop',
-                                            usage: { promptTokens: 0, completionTokens: 0 },
-                                        } as any);
-                                        break;
                                     }
                                 }
 
