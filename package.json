@@ -58,6 +58,7 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
+    "postinstall": "patch-package",
     "typecheck": "tsc --noEmit",
     "update-models": "tsx scripts/update-models.ts"
   },
@@ -69,9 +70,11 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@google/gemini-cli-a2a-server": "^0.35.0",
     "@types/node": "^22.0.0",
     "dotenv": "^17.3.1",
     "esbuild": "^0.24.0",
+    "patch-package": "^8.0.1",
     "tsup": "^8.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",

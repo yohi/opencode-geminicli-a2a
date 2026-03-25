@@ -272,6 +272,13 @@ export class ServerManager {
             return overridePath;
         }
 
+        // 0. プロジェクトローカルの node_modules を最優先でチェック (パッチ適用済みバージョンを優先)
+        const localPath = path.join(process.cwd(), 'node_modules', '@google', 'gemini-cli-a2a-server', 'dist', 'a2a-server.mjs');
+        if (existsSync(localPath)) {
+            Logger.info(`[ServerManager] Using local patched A2A server: ${localPath}`);
+            return localPath;
+        }
+
         // 1. グローバルインストールのパスを npm root -g で取得
         try {
             if (!this.cachedNpmRoot) {
