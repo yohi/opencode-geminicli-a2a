@@ -87,7 +87,15 @@ function isAutoConfirmTarget(
 
     const isInternalRecall = part.coderAgentKind === 'internal-tool-call';
     if (isInternalRecall) {
-        return !hasSpoken && part.inputRequired === true && part.hasExposedTools !== true;
+        // Even if the model has spoken (e.g. reasoning), we should auto-confirm internal tools 
+        // to keep the flow moving, as long as no tools are exposed to the user.
+        return part.inputRequired === true && part.hasExposedTools !== true;
+    }
+
+    // A2A server might trigger state change that requires continuation without exposing tools to OpenCode.
+    // We always allow this to keep the session alive during server-side state transitions.
+    if (part.coderAgentKind === 'state-change') {
+        return part.inputRequired === true && part.hasExposedTools !== true;
     }
 
     return false;
@@ -126,6 +134,7 @@ async function* withChunkTimeout<T>(iterable: AsyncIterable<T>, timeoutMs: numbe
 export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
     private options: OpenCodeProviderOptions;
     private client: A2AClient | undefined;
+    private serverVersionChecked = false;
     private sessionStore: SessionStore;
     private contextToolFrequency: Map<string, Record<string, number>> = new Map();
     public readonly modelId: string;
@@ -161,7 +170,10 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
     }
 
     private async ensureClient(): Promise<void> {
-        if (this.client) return;
+        if (this.client) {
+            await this.checkServerVersion();
+            return;
+        }
         const config = resolveConfig(this.options);
         
         // マルチエージェント対応: modelId に対応するエンドポイントがあればそれを使う
@@ -178,11 +190,51 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                     token: resolved.endpoint.token || config.token,
                 };
                 this.client = new A2AClient(agentConfig);
+                await this.checkServerVersion();
                 return;
             }
         }
         
         this.client = new A2AClient(config);
+        await this.checkServerVersion();
+    }
+
+    /**
+     * A2Aサーバーのバージョンを確認し、必要条件(>=0.35.0)を満たさない場合は警告またはエラーを出す。
+     */
+    private async checkServerVersion(): Promise<void> {
+        if (!this.client || this.serverVersionChecked || process.env.NODE_ENV === 'test') return;
+
+        try {
+            const info = await this.client.getServerInfo();
+            if (!info || !info.version) {
+                Logger.warn('[Provider] Could not verify A2A server version. Some features might not work as expected.');
+                this.serverVersionChecked = true;
+                return;
+            }
+
+            const version = info.version;
+            const [major, minor, patch] = version.split('.').map(Number);
+            
+            // v0.35.0 未満の場合はエラー（または警告）
+            if (major === 0 && minor < 35) {
+                const errorMsg = `[Provider] A2A server version ${version} is outdated. ` +
+                                `Version 0.35.0 or higher is required for dynamic model selection and improved tool handling. ` +
+                                `Please update with 'npm install -g @google/gemini-cli-a2a-server@latest'.`;
+                Logger.error(errorMsg);
+                throw new Error(errorMsg);
+            }
+
+            Logger.info(`[Provider] Connected to A2A server v${version}`);
+            this.serverVersionChecked = true;
+        } catch (err) {
+            if (err instanceof Error && err.message.includes('outdated')) {
+                throw err;
+            }
+            Logger.debug('[Provider] Version check failed, continuing anyway:', err);
+            // 接続エラー等の場合は一旦無視して進む（doStream側でエラーになるため）
+            this.serverVersionChecked = true; 
+        }
     }
 
     private get resolvedOptions() {
@@ -194,6 +246,17 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
         request?: { body?: string };
         response?: { headers?: Record<string, string> };
     }> {
+        // If the server is being auto-started, wait for it to be ready
+        const serverReady = (this as any)._serverReady;
+        if (serverReady instanceof Promise) {
+            try {
+                await serverReady;
+            } catch (err) {
+                Logger.error('[Provider] Aborting stream because server failed to start:', err);
+                throw err;
+            }
+        }
+
         await this.ensureClient();
         
         const sessionId = options.headers?.['x-opencode-session-id'] || options.headers?.['x-session-id'] || (options as any).providerMetadata?.opencode?.sessionId;
@@ -374,9 +437,17 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                 const safeEnqueue = (part: LanguageModelV2StreamPart) => {
                     if (!isControllerClosed) {
                         try {
-                            controller.enqueue(part);
+                            // Inject 'delta' property for extreme compatibility with strict OpenCode/ Bun consumers
+                            const compatibilityPart = {
+                                ...part,
+                                delta: (part as any).delta ?? ""
+                            };
+                            controller.enqueue(compatibilityPart as any);
                         } catch (e) {
-                            Logger.warn('[Provider] controller closed prematurely');
+                            // Controller can be closed by the client (OpenCode) at any time.
+                            if (process.env.DEBUG_OPENCODE) {
+                                Logger.debug('[Provider] controller closed while enqueuing part');
+                            }
                             isControllerClosed = true;
                         }
                     }
@@ -406,13 +477,19 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         activeReasoningId = undefined;
                     }
                 };
-                const enqueueText = (delta: string) => {
-                    if (!delta) return;
+                const enqueueText = (delta: string | undefined | null) => {
+                    if (typeof delta !== 'string' || delta.length === 0) return;
                     if (activeTextId === undefined) {
                         activeTextId = `text-${textPartCounter++}`;
                         safeEnqueue({ type: 'text-start', id: activeTextId } as any);
                     }
-                    safeEnqueue({ type: 'text-delta', id: activeTextId, textDelta: delta } as any);
+                    safeEnqueue({ 
+                        type: 'text-delta', 
+                        id: activeTextId, 
+                        textDelta: delta,
+                        // Compatibility for older/strict OpenCode consumers
+                        delta: delta
+                    } as any);
                 };
 
                 (async () => {
@@ -420,7 +497,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                         let currentRequest = initialRequestData;
                         let autoConfirmCount = 0;
                         let toolCallConfirmCount = 0;
-                        const MAX_AUTO_CONFIRM = this.options.maxAutoConfirm || 5;
+                        const MAX_AUTO_CONFIRM = this.options.maxAutoConfirm || 100;
                         const MAX_TOOL_CONFIRM = 1;
 
                         let firstResponse: any = { stream: responseStream, headers: headers || {} };
@@ -438,7 +515,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
 
                                 const response = firstResponse || await this.client!.chatStream({ 
                                     request: currentRequest, 
-                                    abortSignal: combinedSignal,
+                                    abortSignal: combinedAbortController.signal,
                                     idempotencyKey
                                 });
                                 firstResponse = undefined;
@@ -447,61 +524,76 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 const chunkTimeoutMs = resolvedBaseConfig.chunkTimeoutMs ?? this.options?.chunkTimeoutMs ?? DEFAULT_CHUNK_TIMEOUT_MS;
                                 const chunkGenerator = withChunkTimeout(parseA2AStream(response.stream), chunkTimeoutMs);
 
-                                for await (const chunk of chunkGenerator) {
-                                    if ('result' in chunk && chunk.result) {
-                                        const parts = mapper.mapResult(chunk.result);
-                                        for (const part of parts) {
-                                            switch (part.type) {
-                                                case 'text-delta': {
-                                                    enqueueText((part as any).textDelta);
-                                                    break;
-                                                }
-                                                case 'reasoning-delta': {
-                                                    closeText();
-                                                    if (activeReasoningId === undefined) {
-                                                        activeReasoningId = `reasoning-${reasoningPartCounter++}`;
-                                                        safeEnqueue({ type: 'reasoning-start', id: activeReasoningId } as any);
+                                try {
+                                    for await (const chunk of chunkGenerator) {
+                                        if (combinedAbortController.signal.aborted) {
+                                            throw combinedAbortController.signal.reason || new Error('Aborted');
+                                        }
+                                        if ('result' in chunk && chunk.result) {
+                                            const parts = mapper.mapResult(chunk.result);
+                                            for (const part of parts) {
+                                                switch (part.type) {
+                                                    case 'text-delta': {
+                                                        enqueueText((part as any).textDelta);
+                                                        break;
                                                     }
-                                                    safeEnqueue(part as any);
-                                                    break;
-                                                }
-                                                case 'tool-call': {
-                                                    closeText();
-                                                    closeReasoning();
-                                                    safeEnqueue({
-                                                        type: 'tool-call',
-                                                        toolCallId: part.toolCallId,
-                                                        toolName: part.toolName,
-                                                        args: typeof (part as any).args === 'string' ? (part as any).args : JSON.stringify((part as any).args),
-                                                    } as any);
-                                                    break;
-                                                }
-                                                case 'finish': {
-                                                    hasFinishedInThisTurn = true;
-                                                    lastFinishPart = part as ExtendedFinishPart;
-                                                    if (!isAutoConfirmTarget(lastFinishPart, textPartCounter, autoConfirmCount, MAX_AUTO_CONFIRM)) {
+                                                    case 'reasoning-delta': {
+                                                        closeText();
+                                                        if (activeReasoningId === undefined) {
+                                                            activeReasoningId = `reasoning-${reasoningPartCounter++}`;
+                                                            safeEnqueue({ type: 'reasoning-start', id: activeReasoningId } as any);
+                                                        }
+                                                        safeEnqueue({
+                                                            type: 'reasoning-delta',
+                                                            id: activeReasoningId,
+                                                            reasoningDelta: (part as any).reasoningDelta,
+                                                        } as any);
+                                                        break;
+                                                    }
+
+                                                    case 'tool-call': {
                                                         closeText();
                                                         closeReasoning();
-                                                        const unifiedFinishReason = (lastFinishPart.finishReason === 'unknown' ? 'stop' : lastFinishPart.finishReason);
                                                         safeEnqueue({
-                                                            type: 'finish',
-                                                            finishReason: unifiedFinishReason as LanguageModelV2FinishReason,
-                                                            usage: {
-                                                                promptTokens: lastFinishPart.usage.promptTokens,
-                                                                completionTokens: lastFinishPart.usage.completionTokens,
-                                                            },
+                                                            type: 'tool-call',
+                                                            toolCallId: part.toolCallId,
+                                                            toolName: part.toolName,
+                                                            args: typeof (part as any).args === 'string' ? (part as any).args : JSON.stringify((part as any).args),
                                                         } as any);
+                                                        break;
                                                     }
-                                                    break;
+                                                    case 'finish': {
+                                                        hasFinishedInThisTurn = true;
+                                                        lastFinishPart = part as ExtendedFinishPart;
+                                                        if (!isAutoConfirmTarget(lastFinishPart, textPartCounter, autoConfirmCount, MAX_AUTO_CONFIRM)) {
+                                                            closeText();
+                                                            closeReasoning();
+                                                            const unifiedFinishReason = (lastFinishPart.finishReason === 'unknown' ? 'stop' : lastFinishPart.finishReason);
+                                                            safeEnqueue({
+                                                                type: 'finish',
+                                                                finishReason: unifiedFinishReason as LanguageModelV2FinishReason,
+                                                                usage: {
+                                                                    promptTokens: lastFinishPart.usage.promptTokens,
+                                                                    completionTokens: lastFinishPart.usage.completionTokens,
+                                                                },
+                                                            } as any);
+                                                        }
+                                                        break;
+                                                    }
+                                                    default:
+                                                        safeEnqueue(part as any);
+                                                        break;
                                                 }
-                                                default:
-                                                    safeEnqueue(part as any);
-                                                    break;
                                             }
+                                        } else if ('error' in chunk && chunk.error) {
+                                            throw new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`);
                                         }
-                                    } else if ('error' in chunk && chunk.error) {
-                                        throw new Error(`A2A JSON-RPC Error: [${chunk.error.code}] ${chunk.error.message}`);
                                     }
+                                } catch (e: any) {
+                                    if (e.message === 'CHUNK_TIMEOUT') {
+                                        Logger.warn(`[Provider] Chunk timeout reached (${chunkTimeoutMs}ms).`);
+                                    }
+                                    throw e;
                                 }
 
                                 if (!hasFinishedInThisTurn || !lastFinishPart) {
@@ -606,7 +698,19 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                 },
                             } as any);
                         } else {
-                            safeError(err);
+                            // Fallback error messaging instead of raw safeError(err) to prevent OpenCode consumer crash
+                            const message = err instanceof Error ? err.message : String(err);
+                            Logger.error(`[Provider] Fatal stream error:`, err);
+                            
+                            closeReasoning();
+                            enqueueText(`\n\n[opencode-geminicli-a2a] ❌ 致命的なエラーが発生しました: ${message}\n`);
+                            closeText();
+                            
+                            safeEnqueue({
+                                type: 'finish',
+                                finishReason: 'error',
+                                usage: { promptTokens: 0, completionTokens: 0 },
+                            } as any);
                         }
                     } finally {
                         clearTimeout(timeoutHandle);

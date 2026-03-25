@@ -137,12 +137,20 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
         Logger.info('Provider instance created successfully');
         
         if (!isGeminiA2AProvider(createModel)) {
-            throw new Error('Runtime type check failed: createModel does not satisfy GeminiA2AProvider');
+            const missing = [];
+            if (typeof createModel !== 'function') missing.push('type is not function');
+            if (typeof createModel.languageModel !== 'function') missing.push('languageModel is not function');
+            if (typeof createModel.providerId !== 'string') missing.push('providerId is not string');
+            throw new Error(`Runtime type check failed: createModel does not satisfy GeminiA2AProvider (${missing.join(', ')})`);
         }
         return createModel;
     } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         Logger.error('CRITICAL ERROR IN FACTORY:', err);
-        throw err;
+        // OpenCode 側で認識されやすいように詳細を含めてスロー
+        const initError = new Error(`ProviderInitError: ${message}`);
+        (initError as any).originalError = err;
+        throw initError;
     }
 }
 

@@ -157,14 +157,17 @@ export function mapPromptToA2AJsonRpcRequest(
     }
 
     let newMessages = prompt;
-    if (contextId && options.processedMessagesCount !== undefined && options.processedMessagesCount > 0) {
-        // AI SDK のツール実行フローでは、直前の assistant レスポンス（ツール呼び出しを含む）
-        // が再送されることがある。A2A サーバー側では既にコンテキストとして保持されている
-        // ため、それらが二重にヒストリに追加されないよう、 assistant ロールの場合はスキップする。
-        const skipCount = prompt[options.processedMessagesCount]?.role === 'assistant' 
-            ? options.processedMessagesCount + 1 
-            : options.processedMessagesCount;
-        newMessages = prompt.slice(skipCount);
+    if (contextId) {
+        // A2A servers maintain state. Sending full history causes 'Payload Too Large'.
+        // We only send messages that haven't been processed yet.
+        const startIdx = options.processedMessagesCount ?? 0;
+        newMessages = prompt.slice(startIdx);
+        
+        // If the first message in the slice is an 'assistant' message (often a repeat from AI SDK), 
+        // skip it to avoid redundant history on the server.
+        if (newMessages.length > 0 && newMessages[0].role === 'assistant') {
+            newMessages = newMessages.slice(1);
+        }
     }
 
     let parts: A2AJsonRpcRequest['params']['message']['parts'] = [];
@@ -193,6 +196,25 @@ export function mapPromptToA2AJsonRpcRequest(
             parts.push({ kind: 'text', text: `[TOOL RESULT]\n${formatToolResults(msg.content, toolMapping)}\n` });
         }
     }
+
+    // Safety check: Truncate total prompt size to avoid 'Payload Too Large' (413)
+    // A2A servers often have limits around 1-2MB. 
+    // We target a conservative 20k characters to be absolutely safe in restricted environments.
+    const MAX_PROMPT_CHARS = 20000;
+    let currentTotal = 0;
+    const reversedParts = [...parts].reverse();
+    const keptParts: A2AJsonRpcRequest['params']['message']['parts'] = [];
+    
+    for (const p of reversedParts) {
+        const len = p.kind === 'text' ? p.text.length : 1000; 
+        if (currentTotal + len > MAX_PROMPT_CHARS) {
+            keptParts.push({ kind: 'text', text: '... (truncated due to A2A size limits) ...' });
+            break;
+        }
+        keptParts.push(p);
+        currentTotal += len;
+    }
+    parts = keptParts.reverse();
 
     if (parts.length === 0) {
         parts = [{ kind: 'text' as const, text: '(empty prompt)' }];
@@ -430,14 +452,19 @@ function buildRequest(
             },
             configuration: {
                 blocking: false,
-                ...(mappedTools && mappedTools.length > 0 ? { tools: mappedTools } : {}),
+                // Only send tools if it's the first turn (no contextId) 
+                // or if we are forced to (optional optimization)
+                ...(!contextId && mappedTools && mappedTools.length > 0 ? { tools: mappedTools } : {}),
                 ...(toolChoice ? { 
                     toolChoice: (typeof toolChoice === 'string' && toolMapping?.[toolChoice]) 
                         ? toolMapping[toolChoice] 
                         : toolChoice 
                 } : {}),
+                // Some A2A servers expect model inside configuration
+                ...(modelId ? { model: modelId } : {}),
             },
             ...(generationConfig ? { generationConfig } : {}),
+            // Default A2A location for dynamic model selection
             ...(modelId ? { model: modelId } : {}),
             ...(contextId ? { contextId } : {}),
             ...(taskId ? { taskId } : {}),
@@ -615,11 +642,15 @@ export class A2AStreamMapper {
                                 parts.push({
                                     type: 'reasoning-delta',
                                     reasoningDelta: delta,
+                                    // Compatibility
+                                    delta: delta || ''
                                 } as any);
                             } else {
                                 parts.push({
                                     type: 'text-delta',
                                     textDelta: delta,
+                                    // Extreme compatibility: OpenCode schema expects 'delta' to be a string
+                                    delta: delta || ''
                                 } as any);
                             }
                         }

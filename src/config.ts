@@ -267,19 +267,29 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & {
         litellmProxy: options?.litellmProxy ?? external.litellmProxy ?? (envLiteLLMUrl ? { url: envLiteLLMUrl, apiKey: envLiteLLMKey } : undefined),
     };
 
-    const parsedData = parseSchema.parse(mergedConfig);
-    const baseConfig = ConfigSchema.parse(parsedData);
+    try {
+        const parsedData = parseSchema.parse(mergedConfig);
+        const baseConfig = ConfigSchema.parse(parsedData);
 
-    return {
-        ...baseConfig,
-        generationConfig: parsedData.generationConfig,
-        toolMapping: {
-            ...DEFAULT_TOOL_MAPPING,
-            ...external.toolMapping,
-            ...options?.toolMapping,
-        },
-        internalTools: options?.internalTools ?? external.internalTools,
-        agents: options?.agents ?? external.agents,
-        litellmProxy: parsedData.litellmProxy,
-    };
+        return {
+            ...baseConfig,
+            generationConfig: parsedData.generationConfig,
+            toolMapping: {
+                ...DEFAULT_TOOL_MAPPING,
+                ...external.toolMapping,
+                ...options?.toolMapping,
+            },
+            internalTools: options?.internalTools ?? external.internalTools,
+            agents: options?.agents ?? external.agents,
+            litellmProxy: parsedData.litellmProxy,
+        };
+    } catch (err) {
+        if (err instanceof z.ZodError) {
+            const issues = err.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ');
+            const errorMsg = `Configuration validation failed: ${issues}. Current config: ${JSON.stringify(mergedConfig)}`;
+            Logger.error(errorMsg);
+            throw new Error(`[GeminiA2A] Invalid configuration: ${issues}`);
+        }
+        throw err;
+    }
 }

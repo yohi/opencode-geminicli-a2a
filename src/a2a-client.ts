@@ -33,6 +33,33 @@ export class A2AClient {
     }
 
     /**
+     * サーバーの情報を取得する（バージョン確認用等）
+     */
+    async getServerInfo(abortSignal?: AbortSignal): Promise<any> {
+        const headers: Record<string, string> = {
+            'Accept': 'application/json',
+        };
+
+        if (this.config.token && !this.config.litellmProxy) {
+            headers['Authorization'] = `Bearer ${this.config.token}`;
+        }
+
+        try {
+            // A2A サーバーはルートへの GET リクエストで情報を返す
+            const info = await ofetch(this.endpoint, {
+                method: 'GET',
+                headers,
+                signal: abortSignal,
+                timeout: 5000,
+            });
+            return info;
+        } catch (error) {
+            Logger.debug(`Failed to fetch server info from ${this.endpoint}:`, error);
+            return null;
+        }
+    }
+
+    /**
      * チャットリクエストを送信し、ストリームとレスポンスメタデータを返す
      */
     async chatStream({ request, idempotencyKey, abortSignal, traceId }: ChatStreamOptions): Promise<ChatStreamResponse> {
@@ -68,7 +95,11 @@ export class A2AClient {
 
         const retryCount = idempotencyKey ? 3 : 0;
         
-        Logger.debug(`Request to ${this.endpoint}:`, JSON.stringify(request, null, 2));
+        const bodyStr = JSON.stringify(request);
+        Logger.debug(`Request to ${this.endpoint} (size: ${bodyStr.length} bytes)`);
+        if (process.env.DEBUG_OPENCODE) {
+            Logger.debug(`Request body:`, JSON.stringify(request, null, 2));
+        }
 
         try {
             const response = await ofetch.raw(this.endpoint, {
