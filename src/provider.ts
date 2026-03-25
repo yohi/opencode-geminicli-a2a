@@ -88,9 +88,9 @@ function isAutoConfirmTarget(
 
     const isInternalRecall = part.coderAgentKind === 'internal-tool-call';
     if (isInternalRecall) {
-        // Even if the model has spoken (e.g. reasoning), we should auto-confirm internal tools 
-        // to keep the flow moving, as long as no tools are exposed to the user.
-        return part.inputRequired === true && part.hasExposedTools !== true;
+        // We only auto-confirm internal tools if we haven't spoken yet.
+        // This prevents redundant loops once the agent has already started thinking or responding.
+        return !hasSpoken && part.inputRequired === true && part.hasExposedTools !== true;
     }
 
     // A2A server might trigger state change that requires continuation without exposing tools to OpenCode.
@@ -544,7 +544,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                                 if (part.type === 'text-delta') {
                                                     const text = (part as any).textDelta || "";
                                                     // Ignore meta-talk/explanations about constraints as actual progress
-                                                    const isMetaTalk = /non-interactive|confirmation|allow-tool-execution|environment|制限|確認|非対話/i.test(text);
+                                                    const isMetaTalk = /non-interactive|confirmation|allow-tool-execution|environment|制限|確認|非対話|承認|許可|フラグ|環境変数|headless/i.test(text);
                                                     if (!isMetaTalk) {
                                                         turnProducedText = true;
                                                     }
@@ -664,7 +664,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         consecutiveNoProgressTurns = 0;
                                     }
 
-                                    // Break if stuck in a loop without progress for 2 turns to save quota
+                                // Break if stuck in a loop without progress for 2 turns to save quota
                                     if (consecutiveNoProgressTurns >= 2) {
                                         Logger.warn(`[Provider] Detected possible reasoning loop (2 turns without progress). Breaking to save quota.`);
                                         closeText();
@@ -674,6 +674,12 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                             finishReason: 'stop',
                                             usage: { promptTokens: 0, completionTokens: 0 }
                                         } as any);
+                                        
+                                        // Tell the server to cancel to prevent hanging
+                                        if (lastFinishPart.taskId) {
+                                            const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, actualModelId, false);
+                                            this.client!.chatStream({ request: cancelParam, abortSignal: timeoutAbortController.signal }).catch(() => {});
+                                        }
                                         break;
                                     }
 
@@ -711,8 +717,21 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                             finishReason: 'stop',
                                             usage: { promptTokens: 0, completionTokens: 0 },
                                         } as any);
+                                        
+                                        // Tell server to cancel
+                                        if (lastFinishPart.taskId) {
+                                            const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, actualModelId, false);
+                                            this.client!.chatStream({ request: cancelParam, abortSignal: timeoutAbortController.signal }).catch(() => {});
+                                        }
                                         break;
                                     }
+                                }
+
+                                // No more auto-confirm, exit the loop
+                                // If it was an internal tool or state-change that we didn't confirm, tell the server to cancel it
+                                if (lastFinishPart.taskId && !canAutoConfirm && lastFinishPart.inputRequired) {
+                                    const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, actualModelId, false);
+                                    this.client!.chatStream({ request: cancelParam, abortSignal: timeoutAbortController.signal }).catch(() => {});
                                 }
 
                                 break;
