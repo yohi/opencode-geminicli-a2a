@@ -54,6 +54,12 @@ export interface OpenCodeProviderOptions {
         apiKey?: string;
     };
     /**
+     * 思考プロセス (Reasoning/Thought) を OpenCode に出力するか。
+     * 挨拶などの簡単なやり取りで冗長な思考プロセスを非表示にしたい場合は false に設定します。
+     * デフォルト: true
+     */
+    showReasoning?: boolean;
+    /**
      * A2A ストリームのチャンク間タイムアウト (ms)。
      * この時間内に次のチャンクが届かなければエラーとしてストリームを終了する。
      * codebase_investigator など長時間タスクを使う場合は大きめの値を設定してください。
@@ -209,6 +215,7 @@ const parseSchema = z.object({
     port: z.coerce.number().int().refine(n => Number.isFinite(n) && n > 0 && n <= 65535, 'invalid port').optional(),
     token: z.string().optional(),
     protocol: z.enum(['http', 'https']).optional(),
+    showReasoning: z.boolean().default(true),
     generationConfig: z.object({
         temperature: z.coerce.number().optional(),
         topP: z.coerce.number().optional(),
@@ -243,7 +250,8 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & {
     toolMapping?: Record<string, string>,
     internalTools?: string[],
     agents?: AgentEndpoint[],
-    litellmProxy?: { url: string; apiKey?: string; }
+    litellmProxy?: { url: string; apiKey?: string; },
+    showReasoning?: boolean
 } {
     const manager = ConfigManager.getInstance();
     if (options?.configPath) manager.setConfigPath(options.configPath);
@@ -263,6 +271,7 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & {
         port: getNormalizedValue(options?.port) ?? external.port ?? envPort,
         token: getNormalizedValue(options?.token) ?? external.token ?? envToken,
         protocol: getNormalizedValue(options?.protocol) ?? external.protocol ?? (envProtocol as 'http' | 'https' | undefined),
+        showReasoning: options?.showReasoning ?? true,
         generationConfig: options?.generationConfig,
         litellmProxy: options?.litellmProxy ?? external.litellmProxy ?? (envLiteLLMUrl ? { url: envLiteLLMUrl, apiKey: envLiteLLMKey } : undefined),
     };
@@ -282,6 +291,7 @@ export function resolveConfig(options?: OpenCodeProviderOptions): A2AConfig & {
             internalTools: options?.internalTools ?? external.internalTools,
             agents: options?.agents ?? external.agents,
             litellmProxy: parsedData.litellmProxy,
+            showReasoning: parsedData.showReasoning,
         };
     } catch (err) {
         if (err instanceof z.ZodError) {

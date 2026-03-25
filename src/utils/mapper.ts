@@ -511,6 +511,8 @@ export class A2AStreamMapper {
     private emittedTextByIndex = new Map<number, string>();
     /** 現在のインデックスが思考プロセス中かどうかを保持するマップ */
     private indexIsReasoning = new Map<number, boolean>();
+    /** 最後に送信した思考のハッシュ値（重複排除用） */
+    private lastThoughtHash?: string;
     /** 現在のチャンクの coderAgentKind */
     private _currentCoderAgentKind?: string;
     /** 最後の finishReason */
@@ -778,13 +780,18 @@ export class A2AStreamMapper {
                         }
 
                         if (textDelta) {
-                            // v2 ストリーム形式では reasoning-start/reasoning-delta/reasoning-end
-                            // がサポートされている。provider.ts の v1→v2 変換レイヤーで
-                            // 適切な v2 ライフサイクルイベントに変換される。
-                            parts.push({
-                                type: 'reasoning-delta',
-                                reasoningDelta: textDelta,
-                            } as any);
+                            const thoughtHash = crypto.createHash('md5').update(textDelta).digest('hex');
+                            if (thoughtHash !== this.lastThoughtHash) {
+                                // v2 ストリーム形式では reasoning-start/reasoning-delta/reasoning-end
+                                // がサポートされている。provider.ts の v1→v2 変換レイヤーで
+                                // 適切な v2 ライフサイクルイベントに変換される。
+                                parts.push({
+                                    type: 'reasoning-delta',
+                                    reasoningDelta: textDelta,
+                                    delta: textDelta // Compatibility for strict OpenCode consumers
+                                } as any);
+                                this.lastThoughtHash = thoughtHash;
+                            }
                         }
                         continue;
                     } else if (p.kind === 'image') {

@@ -64,6 +64,7 @@ function anySignal(signals: (AbortSignal | undefined)[]): AbortSignal {
 function isAutoConfirmTarget(
     part: ExtendedFinishPart | undefined, 
     textPartCounter: number = 0, 
+    reasoningPartCounter: number = 0,
     autoConfirmCount: number = 0,
     maxAutoConfirm: number = 5
 ): boolean {
@@ -75,7 +76,7 @@ function isAutoConfirmTarget(
     if (hasMetaTool) return false;
 
     const isBackgroundTool = internalToolNames.some(name => BACKGROUND_TOOLS.includes(name));
-    const hasSpoken = textPartCounter > 0;
+    const hasSpoken = textPartCounter > 0 || reasoningPartCounter > 0;
 
     if (part.coderAgentKind === 'tool-call-confirmation') {
         return part.inputRequired === true && part.hasExposedTools !== true;
@@ -346,7 +347,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
 
         const startTime = Date.now();
         const isTestEnv = process.env.NODE_ENV === 'test';
-        const TIMEOUT_MS = isTestEnv ? 3000 : 300000;
+        const TIMEOUT_MS = isTestEnv ? 3000 : 600000;
         
         const timeoutAbortController = new AbortController();
         const timeoutHandle = setTimeout(() => {
@@ -437,23 +438,18 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                 const safeEnqueue = (part: LanguageModelV2StreamPart) => {
                     if (!isControllerClosed) {
                         try {
-                            // Ultimate compatibility for OpenCode/Bun consumers:
-                            // 1. V2 uses textDelta
-                            // 2. Some strict V1 consumers expect a top-level 'delta' string
-                            // 3. Others expect 'delta' to be an object with 'content' (evaluating chunk.delta.content)
-                            // 4. Yet others expect chunk.delta.length (string has .length)
-
+                            const isDeltaPart = part.type === 'text-delta' || part.type === 'reasoning-delta';
                             const content = (part as any).textDelta || (part as any).reasoningDelta || "";
                             
-                            const compatibilityPart = {
+                            const compatibilityPart = isDeltaPart ? {
                                 ...part,
-                                // Satisfy 'expected string, received undefined' for path: ['delta']
-                                // Ensure it's never undefined or null
+                                // Satisfy 'expected string, received object' -> must be string
+                                // Satisfy 'evaluating chunk.delta.length' -> must not be undefined
                                 delta: typeof content === 'string' ? content : "",
-                                // Satisfy 'evaluating chunk.delta.content'
+                                // Some consumers might look for top-level content
                                 content: typeof content === 'string' ? content : "",
-                            };
-
+                            } : part;
+                            
                             controller.enqueue(compatibilityPart as any);
                         } catch (e) {
                             // Controller can be closed by the client (OpenCode) at any time.
@@ -545,12 +541,22 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         if ('result' in chunk && chunk.result) {
                                             const parts = mapper.mapResult(chunk.result);
                                             for (const part of parts) {
-                                                if (part.type === 'text-delta') turnProducedText = true;
-                                                if (part.type === 'tool-call') turnProducedToolCall = true;
+                                                if (part.type === 'text-delta') {
+                                                    const text = (part as any).textDelta || "";
+                                                    // Ignore meta-talk/explanations about constraints as actual progress
+                                                    const isMetaTalk = /non-interactive|confirmation|allow-tool-execution|environment|制限|確認|非対話/i.test(text);
+                                                    if (!isMetaTalk) {
+                                                        turnProducedText = true;
+                                                    }
+                                                    enqueueText(text);
+                                                }
+                                                if (part.type === 'tool-call') {
+                                                    turnProducedToolCall = true;
+                                                }
 
                                                 switch (part.type) {
                                                     case 'text-delta': {
-                                                        enqueueText((part as any).textDelta);
+                                                        // Handled above by turnProducedText logic
                                                         break;
                                                     }
                                                     case 'reasoning-delta': {
@@ -642,7 +648,13 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                     break;
                                 }
 
-                                const canAutoConfirm = isAutoConfirmTarget(lastFinishPart!, textPartCounter, autoConfirmCount, MAX_AUTO_CONFIRM);
+                                const canAutoConfirm = isAutoConfirmTarget(
+                                    lastFinishPart!, 
+                                    textPartCounter, 
+                                    reasoningPartCounter,
+                                    autoConfirmCount, 
+                                    MAX_AUTO_CONFIRM
+                                );
                                 
                                 if (canAutoConfirm) {
                                     // Progress check: increment counter if no progress in this turn
