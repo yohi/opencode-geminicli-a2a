@@ -96,7 +96,8 @@ export class A2AClient {
         const retryCount = idempotencyKey ? 3 : 0;
         
         const bodyStr = JSON.stringify(request);
-        Logger.debug(`Request to ${this.endpoint} (size: ${bodyStr.length} bytes)`);
+        Logger.info(`[A2AClient] Sending request to ${this.endpoint} (Size: ${bodyStr.length} bytes)`);
+        
         if (process.env.DEBUG_OPENCODE) {
             Logger.debug(`Request body:`, JSON.stringify(request, null, 2));
         }

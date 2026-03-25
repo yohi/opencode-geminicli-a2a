@@ -421,7 +421,7 @@ function buildRequest(
     const { tools, contextId, taskId, modelId, generationConfig, toolMapping, toolChoice } = options;
 
     // ツール名のマッピング適用し、OpenAIスキーマのラッパーを解除する
-    const mappedTools = tools?.map(tool => {
+    let mappedTools = tools?.map(tool => {
         const toolObj = tool as any;
         const isWrapped = toolObj.type === 'function' && typeof toolObj.function === 'object';
         const flatTool = isWrapped ? {
@@ -435,6 +435,13 @@ function buildRequest(
         }
         return flatTool;
     });
+
+    // Safety: Limit number of tools to prevent 413 Payload Too Large.
+    // OpenCode can have 50+ tools, which results in huge requests.
+    if (mappedTools && mappedTools.length > 30) {
+        Logger.info(`[Mapper] Truncating tools from ${mappedTools.length} to 30 to stay within payload limits.`);
+        mappedTools = mappedTools.slice(0, 30);
+    }
 
     const parts = typeof content === 'string'
         ? [{ kind: 'text' as const, text: content }]
