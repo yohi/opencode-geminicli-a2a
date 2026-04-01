@@ -141,11 +141,13 @@ export async function sendA2AMessage(
             }
 
             if (data.artifactUpdate && onProgress) {
-              const text = data.artifactUpdate.artifact.parts
-                ?.map((p: any) => p.text ?? "")
-                .join("");
-              if (text) {
-                onProgress(text);
+              const parts = data.artifactUpdate.artifact.parts;
+              if (Array.isArray(parts)) {
+                for (const part of parts) {
+                  if (part.text) {
+                    onProgress(part.text);
+                  }
+                }
               }
             }
 

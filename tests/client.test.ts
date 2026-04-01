@@ -23,15 +23,20 @@ test("sendA2AMessage should parse SSE stream and trigger onProgress for multiple
 
   try {
     let accumulated = "";
+    const chunks: string[] = [];
     const result = await sendA2AMessage(
       `http://localhost:${server.port}`,
       { message: { role: "ROLE_USER", parts: [{text: "hello"}] } },
       undefined,
-      (text) => { accumulated += text; }
+      (text) => {
+        accumulated += text;
+        chunks.push(text);
+      }
     );
 
     expect(result.task?.status.state).toBe("TASK_STATE_COMPLETED");
     expect(accumulated).toBe("chunk1chunk2chunk3");
+    expect(chunks).toEqual(["chunk1", "chunk2", "chunk3"]);
   } finally {
     server.stop();
   }
@@ -92,7 +97,7 @@ test("sendA2AMessage sends Authorization header if token is provided", async () 
   }
 });
 
-test("sendA2AMessage throws on invalid JSON response", async () => {
+test("sendA2AMessage throws when stream ends without a terminal task event", async () => {
   const server = Bun.serve({
     port: 0,
     fetch() {
