@@ -201,10 +201,10 @@ export class ServerManager {
                     this.registerCleanup(debug);
 
                     if (debug && proc.stdout) {
-                        proc.stdout.on('data', (d: Buffer) => process.stdout.write(`[A2A-${port}] ${d}`));
+                        proc.stdout.on('data', (d: Buffer) => Logger.debug(`[A2A-${port}-stdout] ${d}`));
                     }
                     if (debug && proc.stderr) {
-                        proc.stderr.on('data', (d: Buffer) => process.stderr.write(`[A2A-${port}] ${d}`));
+                        proc.stderr.on('data', (d: Buffer) => Logger.debug(`[A2A-${port}-stderr] ${d}`));
                     }
 
                     // 起動待機

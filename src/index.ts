@@ -70,14 +70,26 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
             );
             const providerInstance = new OpenCodeGeminiA2AProvider(modelId, { ...options, sessionStore, ...sanitizedSettings });
 
-            if (options?.autoStart) {
+            // OpenCode sometimes strips custom options via strict Zod validation schemas.
+            // For robust A2A integration, default to auto-starting if not explicitly disabled.
+            const shouldAutoStart = (options?.autoStart as any) !== false;
+            
+            if (shouldAutoStart) {
                 const manager = ServerManager.getInstance();
                 const debug = !!process.env['DEBUG_OPENCODE'];
                 
                 // プロバイダー内で解決された最終的な接続先を取得
                 const providerOpts = providerInstance as unknown as { options?: { host?: string; port?: number } };
-                const resolvedHost = providerOpts.options?.host ?? options.host ?? 'localhost';
-                const resolvedPort = providerOpts.options?.port ?? options.port ?? 41242;
+                const resolvedHost = providerOpts.options?.host ?? options?.host ?? 'localhost';
+                const resolvedPort = providerOpts.options?.port ?? options?.port ?? 41242;
+
+                // A2A サーバーに引き継ぐ環境変数の構築
+                const autoStartConfig = typeof options?.autoStart === 'object' ? { ...options.autoStart } : {};
+                autoStartConfig.env = {
+                    USE_CCPA: 'true',
+                    ...autoStartConfig.env,
+                    ...(options?.token ? { GEMINI_API_KEY: options.token } : {}),
+                };
 
                 // サーバー起動は非同期なので Promise としてプロバイダーに持たせる
                 Logger.debug(`AutoStart configured for model '${modelId}' on ${resolvedHost}:${resolvedPort}`);
@@ -85,7 +97,7 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
                     resolvedPort,
                     resolvedHost,
                     modelId,
-                    options.autoStart,
+                    autoStartConfig,
                     debug
                 ).catch((err: unknown) => {
                     Logger.error(`Failed to auto-start server for model '${modelId}' on ${resolvedHost}:${resolvedPort}`, err);
@@ -102,9 +114,9 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
         // プロパティを付与して ProviderV1 互換にする。
         // これにより ESM/CJS 両方で provider('model-id') の直接呼び出し構文が動作する。
         const providerProperties: Record<string, unknown> = {
-            providerId: 'opencode-geminicli-a2a',
-            providerID: 'opencode-geminicli-a2a',
-            id: 'opencode-geminicli-a2a',
+            providerId: 'opencode-geminicli-a2a-dev',
+            providerID: 'opencode-geminicli-a2a-dev',
+            id: 'opencode-geminicli-a2a-dev',
             specificationVersion: 'v2',
             models,
             languageModel: createModel,
@@ -139,13 +151,15 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
         if (!isGeminiA2AProvider(createModel)) {
             const missing = [];
             if (typeof createModel !== 'function') missing.push('type is not function');
-            if (typeof createModel.languageModel !== 'function') missing.push('languageModel is not function');
-            if (typeof createModel.providerId !== 'string') missing.push('providerId is not string');
+            if (typeof (createModel as any).languageModel !== 'function') missing.push('languageModel is not function');
+            if (typeof (createModel as any).providerId !== 'string') missing.push('providerId is not string');
             throw new Error(`Runtime type check failed: createModel does not satisfy GeminiA2AProvider (${missing.join(', ')})`);
         }
         return createModel;
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        console.error('--- GeminiA2A Factory Initialization Error ---');
+        console.error(err);
         Logger.error('CRITICAL ERROR IN FACTORY:', err);
         // OpenCode 側で認識されやすいように詳細を含めてスロー
         const initError = new Error(`ProviderInitError: ${message}`);
@@ -159,36 +173,6 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
  */
 export const createProvider = createGeminiA2AProvider;
 
-let _providerInstance: GeminiA2AProvider | undefined;
-
-/**
- * OpenCode 向けのプロバイダーを初期化・取得します。
- * 初回呼び出し時の `config` を用いてインスタンス化し、以降の呼び出しでは
- * 同じインスタンスを返します。(後続の異なる config は無視されます)
- */
-export function initProvider(config?: OpenCodeProviderOptions): GeminiA2AProvider {
-    if (!_providerInstance) {
-        _providerInstance = createGeminiA2AProvider(config);
-    } else if (config !== undefined) {
-        Logger.warn('initProvider called with new config while _providerInstance already exists. The new config will be ignored.');
-    }
-    return _providerInstance;
-}
-
-export const provider = new Proxy(Function.prototype as unknown as GeminiA2AProvider, {
-    get(_, prop) {
-        if (!_providerInstance) {
-            throw new Error('Provider not initialized. Call initProvider(config) first.');
-        }
-        return (_providerInstance as any)[prop];
-    },
-    apply(_, __, args) {
-        if (!_providerInstance) {
-            throw new Error('Provider not initialized. Call initProvider(config) first.');
-        }
-        return (_providerInstance as any)(...args);
-    }
-});
-
-export const opencodeGeminicliA2a = provider;
+export const provider = createGeminiA2AProvider;
+export const opencodeGeminicliA2a = createGeminiA2AProvider;
 export default createGeminiA2AProvider;

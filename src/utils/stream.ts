@@ -10,6 +10,9 @@ function parseChunkLine(chunkDataSync: string): A2AJsonRpcResponse | null {
         chunkDataSync = chunkDataSync.slice(6).trim();
     } else if (chunkDataSync.startsWith('data:')) {
         chunkDataSync = chunkDataSync.slice(5).trim();
+    } else if (chunkDataSync.startsWith('{')) {
+        // It might be a direct JSON-RPC error response instead of an SSE stream frame
+        // Leave it as-is so it gets parsed below
     } else {
         // SSE のコメント行や空行は無視
         return null;

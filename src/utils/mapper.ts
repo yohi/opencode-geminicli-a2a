@@ -736,17 +736,20 @@ export class A2AStreamMapper {
                         // Common Gemini hallucinations to Server names
                         const commonHallucinations: Record<string, string> = {
                             'read_file': 'read',
-                            'write_file': 'write',
+                            'readFile': 'read',
                             'list_directory': 'glob',
+                            'listDirectory': 'glob',
                             'directory_tree': 'glob',
                             'search_files': 'grep',
+                            'searchFiles': 'grep',
+                            'grep_search': 'grep',
                             'edit_file': 'edit',
+                            'editFile': 'edit',
                             'run_shell_command': 'bash',
+                            'runShellCommand': 'bash',
                             'run_command': 'bash',
                             'exec_command': 'bash',
                             'shell': 'bash',
-                            // Normalize 'sequentialthinking' to its full MCP server/tool name format
-                            // to ensure correct routing in A2A server.
                             'sequentialthinking': 'sequential-thinking_sequentialthinking'
                         };
 

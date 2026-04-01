@@ -146,10 +146,10 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
     public readonly modelId: string;
     public readonly modelID: string;
     public readonly specificationVersion = 'v2';
-    public readonly provider = 'opencode-geminicli-a2a';
-    public readonly providerId = 'opencode-geminicli-a2a';
-    public readonly providerID = 'opencode-geminicli-a2a';
-    public readonly id = 'opencode-geminicli-a2a';
+    public readonly provider = 'opencode-geminicli-a2a-dev';
+    public readonly providerId = 'opencode-geminicli-a2a-dev';
+    public readonly providerID = 'opencode-geminicli-a2a-dev';
+    public readonly id = 'opencode-geminicli-a2a-dev';
     public readonly name = 'Gemini CLI (A2A)';
     public readonly supportedUrls: Record<string, RegExp[]> = {};
 
@@ -321,14 +321,19 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
         const generationConfig: Record<string, any> = {
             ...(baseConfig.generationConfig || {}),
             ...(agentOptions?.generationConfig || {}),
-            ...(options as any).generationConfig || {},
+            ...((options as any).generationConfig || {}),
         };
 
-        if ((options as any).temperature !== undefined) generationConfig.temperature = (options as any).temperature;
-        if ((options as any).topP !== undefined) generationConfig.topP = (options as any).topP;
-        if ((options as any).topK !== undefined) generationConfig.topK = (options as any).topK;
-        if ((options as any).maxTokens !== undefined) generationConfig.maxOutputTokens = (options as any).maxTokens;
-        if ((options as any).stopSequences !== undefined) generationConfig.stopSequences = (options as any).stopSequences;
+        // 型安全なパラメータ設定 (OpenCode 側のスキーマ衝突を回避)
+        const setNum = (key: string, val: any) => {
+            if (typeof val === 'number') generationConfig[key] = val;
+        };
+
+        setNum('temperature', (options as any).temperature);
+        setNum('topP', (options as any).topP);
+        setNum('topK', (options as any).topK);
+        if (typeof (options as any).maxTokens === 'number') generationConfig.maxOutputTokens = (options as any).maxTokens;
+        if (Array.isArray((options as any).stopSequences)) generationConfig.stopSequences = (options as any).stopSequences;
 
         const mapOptions: MapPromptOptions = {
             tools: (options as any).mode?.type === 'regular' ? (options as any).mode.tools : ((options as any).tools || undefined),
@@ -562,20 +567,30 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         if (combinedAbortController.signal.aborted) {
                                             throw combinedAbortController.signal.reason || new Error('Aborted');
                                         }
+                                        if ('error' in chunk && chunk.error) {
+                                            throw new Error(`A2A Server Error: ${chunk.error.code} - ${chunk.error.message}`);
+                                        }
+
                                         if ('result' in chunk && chunk.result) {
                                             const parts = mapper.mapResult(chunk.result);
                                             for (const part of parts) {
                                                 if (part.type === 'text-delta') {
                                                     const text = (part as any).textDelta || "";
-                                                    // Ignore meta-talk/explanations about constraints as actual progress
+                                                    // メタな会話（制限や確認に関する説明）は「進展」とはみなさない
                                                     const isMetaTalk = /non-interactive|confirmation|allow-tool-execution|environment|制限|確認|非対話|承認|許可|フラグ|環境変数|headless/i.test(text);
-                                                    if (!isMetaTalk) {
+                                                    if (!isMetaTalk && text.trim().length > 0) {
                                                         turnProducedText = true;
                                                     }
                                                     enqueueText(text);
                                                 }
                                                 if (part.type === 'reasoning-delta') {
-                                                    turnProducedReasoning = true;
+                                                    const reason = (part as any).reasoningDelta || "";
+                                                    // 思考プロセスも、ツール実行エラーに対する反省ばかりの場合は進展とみなさない
+                                                    const isMetaReasoning = /confirmation|failed|error|blocked|requires|supported/i.test(reason);
+                                                    if (!isMetaReasoning && reason.trim().length > 0) {
+                                                        turnProducedReasoning = true;
+                                                    }
+                                                    enqueueReasoning(reason);
                                                 }
                                                 if (part.type === 'tool-call') {
                                                     turnProducedToolCall = true;
@@ -583,21 +598,11 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
 
                                                 switch (part.type) {
                                                     case 'text-delta': {
-                                                        // Handled above by turnProducedText logic
+                                                        // 上で処理済み
                                                         break;
                                                     }
                                                     case 'reasoning-delta': {
-                                                        if (resolvedBaseConfig.showReasoning === false) break;
-                                                        closeText();
-                                                        if (activeReasoningId === undefined) {
-                                                            activeReasoningId = `reasoning-${reasoningPartCounter++}`;
-                                                            safeEnqueue({ type: 'reasoning-start', id: activeReasoningId } as any);
-                                                        }
-                                                        safeEnqueue({
-                                                            type: 'reasoning-delta',
-                                                            id: activeReasoningId,
-                                                            reasoningDelta: (part as any).reasoningDelta,
-                                                        } as any);
+                                                        // 上で処理済み
                                                         break;
                                                     }
                                                     
@@ -697,19 +702,21 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                         consecutiveNoProgressTurns = 0;
                                     }
 
-                                    // Break if stuck in a loop without progress for many turns to save quota
-                                    // Increased to 5 for models with very long reasoning phases like gemini-3-flash
-                                    if (consecutiveNoProgressTurns >= 5) {
-                                        Logger.warn(`[Provider] Detected possible reasoning loop (5 turns without progress). Breaking to save quota.`);
+                                    // Break if stuck in a loop without progress for many turns
+                                    // Reduced to 3 to prevent long UI hangs in OpenCode
+                                    if (consecutiveNoProgressTurns >= 3) {
+                                        Logger.warn(`[Provider] Detected possible reasoning/confirmation loop (3 turns without progress). Breaking to unlock UI.`);
                                         closeText();
                                         closeReasoning();
+                                        
+                                        // OpenCode に終了を伝える
                                         safeEnqueue({
                                             type: 'finish',
                                             finishReason: 'stop',
                                             usage: { promptTokens: 0, completionTokens: 0 }
                                         } as any);
                                         
-                                        // Tell the server to cancel to prevent hanging
+                                        // サーバー側にもキャンセルを送り、ハングを防ぐ
                                         if (lastFinishPart.taskId) {
                                             const cancelParam = buildConfirmationRequest(lastFinishPart.taskId, actualModelId, false, mapper.contextId);
                                             this.client!.chatStream({ request: cancelParam, abortSignal: timeoutAbortController.signal }).catch(() => {});
