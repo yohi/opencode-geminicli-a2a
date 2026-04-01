@@ -137,21 +137,15 @@ export async function sendA2AMessage(
           try {
             const data = JSON.parse(event.data);
             if (!isValidStreamResponse(data)) {
-              if (!resolved) {
-                resolved = true;
-                reject(new Error("Invalid A2A response: Missing required fields"));
-              }
               return;
             }
 
             if (data.artifactUpdate && onProgress) {
-              const parts = data.artifactUpdate.artifact.parts;
-              if (Array.isArray(parts)) {
-                for (const part of parts) {
-                  if (part.text) {
-                    onProgress(part.text);
-                  }
-                }
+              const text = data.artifactUpdate.artifact.parts
+                ?.map((p: any) => p.text ?? "")
+                .join("");
+              if (text) {
+                onProgress(text);
               }
             }
 
@@ -170,10 +164,7 @@ export async function sendA2AMessage(
               }
             }
           } catch (e) {
-            if (!resolved) {
-              resolved = true;
-              reject(new Error("Invalid A2A response: Failed to parse JSON"));
-            }
+            // Ignore parse errors for non-JSON lines or comments
           }
         }
       });
@@ -184,6 +175,8 @@ export async function sendA2AMessage(
           for await (const chunk of response.body as any) {
             parser.feed(decoder.decode(chunk, { stream: true }));
           }
+          // Final flush
+          parser.feed(decoder.decode());
         } catch (e) {
           if (!resolved) {
             resolved = true;
@@ -196,11 +189,6 @@ export async function sendA2AMessage(
         if (!resolved) {
           resolved = true;
           reject(new Error("Stream ended without a terminal task event"));
-        }
-      }).catch((e) => {
-        if (!resolved) {
-          resolved = true;
-          reject(e);
         }
       });
     });

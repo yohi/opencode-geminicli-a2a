@@ -79,7 +79,8 @@ test("sendA2AMessage throws on invalid JSON response", async () => {
   });
 
   try {
-    await expect(sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } })).rejects.toThrow("Invalid A2A response: Failed to parse JSON");
+    // We now ignore invalid JSON parts. If only invalid parts exist, the stream ends without a terminal event.
+    await expect(sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } })).rejects.toThrow("Stream ended without a terminal task event");
   } finally {
     server.stop();
   }
