@@ -80,7 +80,7 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
                 
                 // プロバイダー内で解決された最終的な接続先を取得
                 const providerOpts = providerInstance as unknown as { options?: { host?: string; port?: number } };
-                const resolvedHost = providerOpts.options?.host ?? options?.host ?? 'localhost';
+                const resolvedHost = providerOpts.options?.host ?? options?.host ?? '127.0.0.1';
                 const resolvedPort = providerOpts.options?.port ?? options?.port ?? 41242;
 
                 // A2A サーバーに引き継ぐ環境変数の構築
