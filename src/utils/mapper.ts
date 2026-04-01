@@ -177,7 +177,7 @@ export function mapPromptToA2AJsonRpcRequest(
     if (!contextId) {
         parts.push({
             kind: 'text',
-            text: `[SYSTEM]\nCRITICAL: You are Gemini CLI. Strictly follow the user's language policy (Japanese).\n\nSPECIAL SHORTCUT FOR GREETINGS: If the user message is just a simple greeting like 'hello', 'hi', 'こんにちは', 'どうも', or similar, YOU MUST NOT use any skills, tools, or complex workflows. JUST respond with a friendly greeting in Japanese and ask how you can help. DO NOT call 'activate_skill' until a real task is provided.\n\nTOOL USAGE: When calling tools, you MUST use their exact full names. If a tool is listed with a prefix (e.g., 'docker-mcp-gateway_read_file'), you MUST include it.\n`
+            text: `[SYSTEM]\nCRITICAL: You are Gemini CLI. Strictly follow the user's language policy (Japanese).\n\nSPECIAL SHORTCUT FOR GREETINGS: If the user message is just a simple greeting like 'hello', 'hi', 'こんにちは', 'どうも', or similar, YOU MUST NOT use any skills, tools, or complex workflows. JUST respond with a friendly greeting in Japanese and ask how you can help. DO NOT call 'activate_skill' until a real task is provided. This is mandatory to prevent unnecessary initialization loops.\n\nTOOL USAGE: When calling tools, you MUST use their exact full names. If a tool is listed with a prefix (e.g., 'docker-mcp-gateway_read_file'), you MUST include it.\n`
         });
     }
 
@@ -444,9 +444,9 @@ function buildRequest(
 
     // Safety: Limit number of tools to prevent 413 Payload Too Large.
     // OpenCode can have 50+ tools, which results in huge requests.
-    if (mappedTools && mappedTools.length > 30) {
-        Logger.info(`[Mapper] Truncating tools from ${mappedTools.length} to 30 to stay within payload limits.`);
-        mappedTools = mappedTools.slice(0, 30);
+    if (mappedTools && mappedTools.length > 10) {
+        Logger.info(`[Mapper] Truncating tools from ${mappedTools.length} to 10 to stay within payload limits.`);
+        mappedTools = mappedTools.slice(0, 10);
     }
 
     const parts = typeof content === 'string'

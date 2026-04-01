@@ -146,10 +146,10 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
     public readonly modelId: string;
     public readonly modelID: string;
     public readonly specificationVersion = 'v2';
-    public readonly provider = 'opencode-geminicli-a2a-dev';
-    public readonly providerId = 'opencode-geminicli-a2a-dev';
-    public readonly providerID = 'opencode-geminicli-a2a-dev';
-    public readonly id = 'opencode-geminicli-a2a-dev';
+    public readonly provider = 'opencode-geminicli-a2a';
+    public readonly providerId = 'opencode-geminicli-a2a';
+    public readonly providerID = 'opencode-geminicli-a2a';
+    public readonly id = 'opencode-geminicli-a2a';
     public readonly name = 'Gemini CLI (A2A)';
     public readonly supportedUrls: Record<string, RegExp[]> = {};
 
@@ -577,7 +577,7 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                                 if (part.type === 'text-delta') {
                                                     const text = (part as any).textDelta || "";
                                                     // メタな会話（制限や確認に関する説明）は「進展」とはみなさない
-                                                    const isMetaTalk = /non-interactive|confirmation|allow-tool-execution|environment|制限|確認|非対話|承認|許可|フラグ|環境変数|headless/i.test(text);
+                                                    const isMetaTalk = /non-interactive|confirmation|allow-tool-execution|environment|制限|確認|非対話|承認|許可|フラグ|環境変数|headless|proceeding|initializing/i.test(text);
                                                     if (!isMetaTalk && text.trim().length > 0) {
                                                         turnProducedText = true;
                                                     }
@@ -585,8 +585,8 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                                 }
                                                 if (part.type === 'reasoning-delta') {
                                                     const reason = (part as any).reasoningDelta || "";
-                                                    // 思考プロセスも、ツール実行エラーに対する反省ばかりの場合は進展とみなさない
-                                                    const isMetaReasoning = /confirmation|failed|error|blocked|requires|supported/i.test(reason);
+                                                    // 思考プロセスも、ツール実行エラーに対する反省やメタな準備ばかりの場合は進展とみなさない
+                                                    const isMetaReasoning = /confirmation|failed|error|blocked|requires|supported|initializing|preparing|checking/i.test(reason);
                                                     if (!isMetaReasoning && reason.trim().length > 0) {
                                                         turnProducedReasoning = true;
                                                     }
@@ -611,11 +611,25 @@ export class OpenCodeGeminiA2AProvider implements LanguageModelV2 {
                                                     case 'tool-call': {
                                                         closeText();
                                                         closeReasoning();
+                                                        
+                                                        // A2A サーバー側での名前解決を補助するための正規化ロジック
+                                                        let toolName = part.toolName;
+                                                        const args = typeof (part as any).args === 'string' ? (part as any).args : JSON.stringify((part as any).args);
+                                                        
+                                                        // 幻覚（Hallucination）や不一致の補正
+                                                        if (toolName === 'list_directory' || toolName === 'list') {
+                                                            toolName = 'glob';
+                                                        } else if (toolName === 'run_shell_command' || toolName === 'execute_command') {
+                                                            toolName = 'bash';
+                                                        } else if (toolName === 'read_file' || toolName === 'read_multiple_files') {
+                                                            toolName = 'read';
+                                                        }
+
                                                         safeEnqueue({
                                                             type: 'tool-call',
                                                             toolCallId: part.toolCallId,
-                                                            toolName: part.toolName,
-                                                            args: typeof (part as any).args === 'string' ? (part as any).args : JSON.stringify((part as any).args),
+                                                            toolName: toolName,
+                                                            args: args,
                                                         } as any);
                                                         break;
                                                     }

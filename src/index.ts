@@ -8,7 +8,7 @@ import { Logger } from './utils/logger';
 
 /**
  * @note これはプロセス内シングルトンであり、サーバレスやマルチプロセス環境では
-...
+ * 永続的な SessionStore (Redis 等) を使用する必要があります。
  */
 export const sharedSessionStore = new InMemorySessionStore();
 
@@ -50,7 +50,7 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
                     logPayload[key] = '***REDACTED***';
                 } else if (key === 'sessionStore' || key === 'modelRegistry') {
                     logPayload[key] = `<${key}>`;
-                } else if (typeof value !== 'object' && typeof value !== 'function') {
+                } else if (['string', 'number', 'boolean'].includes(typeof value) || value === null) {
                     logPayload[key] = value;
                 }
             }
@@ -114,9 +114,10 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
         // プロパティを付与して ProviderV1 互換にする。
         // これにより ESM/CJS 両方で provider('model-id') の直接呼び出し構文が動作する。
         const providerProperties: Record<string, unknown> = {
-            providerId: 'opencode-geminicli-a2a-dev',
-            providerID: 'opencode-geminicli-a2a-dev',
-            id: 'opencode-geminicli-a2a-dev',
+            provider: 'opencode-geminicli-a2a',
+            providerId: 'opencode-geminicli-a2a',
+            providerID: 'opencode-geminicli-a2a',
+            id: 'opencode-geminicli-a2a',
             specificationVersion: 'v2',
             models,
             languageModel: createModel,
@@ -158,12 +159,15 @@ function createGeminiA2AProvider(options?: OpenCodeProviderOptions): GeminiA2APr
         return createModel;
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error('--- GeminiA2A Factory Initialization Error ---');
-        console.error(err);
+        const stack = err instanceof Error ? err.stack : undefined;
+
         Logger.error('CRITICAL ERROR IN FACTORY:', err);
+
         // OpenCode 側で認識されやすいように詳細を含めてスロー
         const initError = new Error(`ProviderInitError: ${message}`);
+        initError.name = 'ProviderInitError';
         (initError as any).originalError = err;
+        (initError as any).stack = stack;
         throw initError;
     }
 }
