@@ -10,6 +10,8 @@
 
 ---
 
+## Tasks
+
 ### Task 1: Add `eventsource-parser` dependency
 
 **Files:**

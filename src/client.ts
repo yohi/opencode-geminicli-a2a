@@ -93,7 +93,8 @@ export async function sendA2AMessage(
   baseUrl: string,
   request: SendMessageRequest,
   token?: string,
-  onProgress?: (text: string) => void
+  onProgress?: (text: string) => void,
+  timeoutMs: number = 120_000
 ): Promise<StreamResponse> {
   const headers: Record<string, string> = {
     "Content-Type": "application/a2a+json",
@@ -104,7 +105,7 @@ export async function sendA2AMessage(
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30_000);
+  const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
 
   try {
     const response = await fetch(`${baseUrl}/message:stream`, {
@@ -144,9 +145,13 @@ export async function sendA2AMessage(
             }
 
             if (data.artifactUpdate && onProgress) {
-              const text = data.artifactUpdate.artifact.parts?.[0]?.text;
-              if (text) {
-                onProgress(text);
+              const parts = data.artifactUpdate.artifact.parts;
+              if (Array.isArray(parts)) {
+                for (const part of parts) {
+                  if (part.text) {
+                    onProgress(part.text);
+                  }
+                }
               }
             }
 
@@ -202,10 +207,12 @@ export async function sendA2AMessage(
 
   } catch (error: any) {
     if (error.name === "AbortError") {
-      throw new Error(`A2A Request timeout: Request took longer than 30 seconds`);
+      throw new Error(`A2A Request timeout: Request took longer than ${timeoutMs}ms`);
     }
     throw error;
   } finally {
-    clearTimeout(timeoutId);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
   }
 }

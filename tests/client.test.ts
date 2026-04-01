@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { sendA2AMessage } from "../src/client";
 
-test("sendA2AMessage should parse SSE stream and trigger onProgress", async () => {
+test("sendA2AMessage should parse SSE stream and trigger onProgress for multiple parts", async () => {
   const server = Bun.serve({
     port: 0,
     fetch(req) {
@@ -9,8 +9,8 @@ test("sendA2AMessage should parse SSE stream and trigger onProgress", async () =
         const stream = new ReadableStream({
           start(controller) {
             controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-1", "status": {"state": "TASK_STATE_WORKING"}}}\n\n`));
-            controller.enqueue(new TextEncoder().encode(`data: {"artifactUpdate": {"taskId": "task-1", "artifact": {"artifactId": "art-1", "parts": [{"text": "chunk1"}]}}}\n\n`));
-            controller.enqueue(new TextEncoder().encode(`data: {"artifactUpdate": {"taskId": "task-1", "artifact": {"artifactId": "art-1", "parts": [{"text": "chunk2"}]}}}\n\n`));
+            controller.enqueue(new TextEncoder().encode(`data: {"artifactUpdate": {"taskId": "task-1", "artifact": {"artifactId": "art-1", "parts": [{"text": "chunk1"}, {"text": "chunk2"}]}}}\n\n`));
+            controller.enqueue(new TextEncoder().encode(`data: {"artifactUpdate": {"taskId": "task-1", "artifact": {"artifactId": "art-1", "parts": [{"text": "chunk3"}]}}}\n\n`));
             controller.enqueue(new TextEncoder().encode(`data: {"task": {"id": "task-1", "status": {"state": "TASK_STATE_COMPLETED"}}}\n\n`));
             controller.close();
           }
@@ -31,7 +31,7 @@ test("sendA2AMessage should parse SSE stream and trigger onProgress", async () =
     );
 
     expect(result.task?.status.state).toBe("TASK_STATE_COMPLETED");
-    expect(accumulated).toBe("chunk1chunk2");
+    expect(accumulated).toBe("chunk1chunk2chunk3");
   } finally {
     server.stop();
   }
@@ -80,6 +80,25 @@ test("sendA2AMessage throws on invalid JSON response", async () => {
 
   try {
     await expect(sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } })).rejects.toThrow("Invalid A2A response: Failed to parse JSON");
+  } finally {
+    server.stop();
+  }
+});
+
+test("sendA2AMessage throws on timeout with custom message", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          resolve(new Response("Delayed response", { status: 200 }));
+        }, 100);
+      });
+    },
+  });
+
+  try {
+    await expect(sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, undefined, undefined, 50)).rejects.toThrow("A2A Request timeout: Request took longer than 50ms");
   } finally {
     server.stop();
   }
