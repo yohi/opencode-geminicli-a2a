@@ -1,3 +1,4 @@
+import { createParser } from "eventsource-parser";
 import type { SendMessageRequest, StreamResponse } from "./a2a-types";
 
 const VALID_STATES = [
@@ -106,7 +107,7 @@ export async function sendA2AMessage(
   const timeoutId = setTimeout(() => controller.abort(), 30_000);
 
   try {
-    const response = await fetch(`${baseUrl}/message:send`, {
+    const response = await fetch(`${baseUrl}/message:stream`, {
       method: "POST",
       headers,
       body: JSON.stringify(request),
@@ -123,18 +124,82 @@ export async function sendA2AMessage(
       throw new Error(`A2A Request failed: ${response.status} ${response.statusText} - ${errorBody}`);
     }
 
-    let data: any;
-    try {
-      data = await response.json();
-    } catch (e) {
-      throw new Error("Invalid A2A response: Failed to parse JSON");
+    if (!response.body) {
+      throw new Error("No response body");
     }
 
-    if (!isValidStreamResponse(data)) {
-      throw new Error("Invalid A2A response: Missing required fields");
-    }
+    return await new Promise<StreamResponse>((resolve, reject) => {
+      let resolved = false;
 
-    return data as StreamResponse;
+      const parser = createParser({
+        onEvent(event) {
+          try {
+            const data = JSON.parse(event.data);
+            if (!isValidStreamResponse(data)) {
+              if (!resolved) {
+                resolved = true;
+                reject(new Error("Invalid A2A response: Missing required fields"));
+              }
+              return;
+            }
+
+            if (data.artifactUpdate && onProgress) {
+              const text = data.artifactUpdate.artifact.parts?.[0]?.text;
+              if (text) {
+                onProgress(text);
+              }
+            }
+
+            if (data.task && data.task.status) {
+              const state = data.task.status.state;
+              if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
+                if (!resolved) {
+                  resolved = true;
+                  resolve(data);
+                }
+              }
+            } else if (data.message) {
+              if (!resolved) {
+                resolved = true;
+                resolve(data);
+              }
+            }
+          } catch (e) {
+            if (!resolved) {
+              resolved = true;
+              reject(new Error("Invalid A2A response: Failed to parse JSON"));
+            }
+          }
+        }
+      });
+
+      const processStream = async () => {
+        try {
+          const decoder = new TextDecoder();
+          for await (const chunk of response.body as any) {
+            parser.feed(decoder.decode(chunk, { stream: true }));
+          }
+        } catch (e) {
+          if (!resolved) {
+            resolved = true;
+            reject(e);
+          }
+        }
+      };
+
+      processStream().then(() => {
+        if (!resolved) {
+          resolved = true;
+          reject(new Error("Stream ended without a terminal task event"));
+        }
+      }).catch((e) => {
+        if (!resolved) {
+          resolved = true;
+          reject(e);
+        }
+      });
+    });
+
   } catch (error: any) {
     if (error.name === "AbortError") {
       throw new Error(`A2A Request timeout: Request took longer than 30 seconds`);
