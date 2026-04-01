@@ -149,17 +149,30 @@ export async function sendA2AMessage(
               }
             }
 
-            if (data.task && data.task.status) {
+            if (data.statusUpdate?.status) {
+              const state = data.statusUpdate.status.state;
+              if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
+                if (!resolved) {
+                  resolved = true;
+                  controller.abort();
+                  resolve(data);
+                }
+              }
+            }
+
+            if (data.task?.status) {
               const state = data.task.status.state;
               if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
                 if (!resolved) {
                   resolved = true;
+                  controller.abort();
                   resolve(data);
                 }
               }
             } else if (data.message) {
               if (!resolved) {
                 resolved = true;
+                controller.abort();
                 resolve(data);
               }
             }
@@ -173,14 +186,19 @@ export async function sendA2AMessage(
         try {
           const decoder = new TextDecoder();
           for await (const chunk of response.body as any) {
+            if (resolved) break;
             parser.feed(decoder.decode(chunk, { stream: true }));
           }
           // Final flush
-          parser.feed(decoder.decode());
-        } catch (e) {
           if (!resolved) {
-            resolved = true;
-            reject(e);
+            parser.feed(decoder.decode());
+          }
+        } catch (e: any) {
+          if (!resolved) {
+            if (e.name !== "AbortError") {
+              resolved = true;
+              reject(e);
+            }
           }
         }
       };

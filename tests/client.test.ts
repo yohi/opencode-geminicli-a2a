@@ -37,6 +37,28 @@ test("sendA2AMessage should parse SSE stream and trigger onProgress for multiple
   }
 });
 
+test("sendA2AMessage should resolve on statusUpdate terminal state", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-1", "status": {"state": "TASK_STATE_COMPLETED"}}}\n\n`));
+          controller.close();
+        }
+      });
+      return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+    },
+  });
+
+  try {
+    const result = await sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } });
+    expect(result.statusUpdate?.status.state).toBe("TASK_STATE_COMPLETED");
+  } finally {
+    server.stop();
+  }
+});
+
 test("sendA2AMessage handles server 500 error", async () => {
   const server = Bun.serve({
     port: 0,
