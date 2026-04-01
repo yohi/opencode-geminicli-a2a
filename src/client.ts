@@ -31,7 +31,7 @@ export function isValidStreamResponse(obj: any): obj is StreamResponse {
 
   if ("artifactUpdate" in obj) {
     const au = obj.artifactUpdate;
-    if (!au || typeof au !== "object" || typeof au.taskId !== "string" || !au.artifact || typeof au.artifact !== "object" || typeof au.artifact.artifactId !== "string") {
+    if (!au || typeof au !== "object" || typeof au.taskId !== "string" || !au.artifact || typeof au.artifact !== "object" || typeof au.artifact.artifactId !== "string" || !Array.isArray(au.artifact.parts)) {
       return false;
     }
     hasValidField = true;
