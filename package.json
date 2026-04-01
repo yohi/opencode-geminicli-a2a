@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@opencode-ai/plugin": "^1.2.24",
+    "eventsource-parser": "^3.0.6",
     "zod": "^3.23.0"
   },
   "devDependencies": {
