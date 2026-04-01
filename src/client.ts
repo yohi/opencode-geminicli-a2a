@@ -177,7 +177,9 @@ export async function sendA2AMessage(
               }
             }
           } catch (e) {
-            // Ignore parse errors for non-JSON lines or comments
+            if (process.env.NODE_ENV !== "production") {
+              console.debug("Failed to parse SSE event data:", event.data, e);
+            }
           }
         }
       });
