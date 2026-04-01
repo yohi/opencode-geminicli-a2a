@@ -1,0 +1,51 @@
+[ERROR] 2026-03-25 22:28:45.360 PM -- Warning: unexpected file /home/y_ohi/.gemini/extensions/extension-enablement.json in extensions directory.
+Ignore file not found: /home/y_ohi/program/opencode-geminicli-a2a/.geminiignore, continue without it.
+[DEBUG] [MemoryDiscovery] Loading server hierarchical memory for CWD: /home/y_ohi/program/opencode-geminicli-a2a (importFormat: tree)
+[DEBUG] [MemoryDiscovery] Found readable global GEMINI.md: /home/y_ohi/.gemini/GEMINI.md
+[DEBUG] [MemoryDiscovery] deduplication: keeping /home/y_ohi/.gemini/GEMINI.md (dev: 66309, ino: 2686159)
+[DEBUG] [MemoryDiscovery] Successfully read and processed imports: /home/y_ohi/.gemini/GEMINI.md (Length: 10520)
+Ignore file not found: /home/y_ohi/program/opencode-geminicli-a2a/.geminiignore, continue without it.
+Ignore file not found: /home/y_ohi/program/opencode-geminicli-a2a/.geminiignore, continue without it.
+Ignore file not found: /home/y_ohi/program/opencode-geminicli-a2a/.geminiignore, continue without it.
+[MCP error] Error during discovery for MCP server 'docker-mcp-gateway': SSE error: TypeError: fetch failed: connect ECONNREFUSED 127.0.0.1:10888 SseError: SSE error: TypeError: fetch failed: connect ECONNREFUSED 127.0.0.1:10888
+    at _eventSource.onerror (file:///home/y_ohi/program/opencode-geminicli-a2a/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs:427698:28)
+    at EventSource.scheduleReconnect_fn (file:///home/y_ohi/program/opencode-geminicli-a2a/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs:427588:60)
+    at file:///home/y_ohi/program/opencode-geminicli-a2a/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs:427438:182
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  code: undefined,
+  event: {
+    type: 'error',
+    message: 'TypeError: fetch failed: connect ECONNREFUSED 127.0.0.1:10888',
+    code: undefined,
+    defaultPrevented: false,
+    cancelable: false,
+    timeStamp: 3125.850593
+  }
+}
+Registering notification handlers for server 'atlassian'. Capabilities: { logging: {}, resources: {}, tools: { listChanged: true } }
+Server 'atlassian' supports tool updates. Listening for changes...
+Server 'atlassian' has resources but did not declare 'listChanged' capability. Listening anyway for robustness...
+Scheduling MCP context refresh...
+Executing MCP context refresh...
+[DEBUG] [MemoryDiscovery] Loading server hierarchical memory for CWD: /home/y_ohi/program/opencode-geminicli-a2a (importFormat: tree)
+[DEBUG] [MemoryDiscovery] Found readable global GEMINI.md: /home/y_ohi/.gemini/GEMINI.md
+[DEBUG] [MemoryDiscovery] Searching for GEMINI.md starting from CWD: /home/y_ohi/program/opencode-geminicli-a2a
+[DEBUG] [MemoryDiscovery] Determined project root: /home/y_ohi/program/opencode-geminicli-a2a
+[DEBUG] [MemoryDiscovery] deduplication: keeping /home/y_ohi/.gemini/GEMINI.md (dev: 66309, ino: 2686159)
+[DEBUG] [MemoryDiscovery] Successfully read and processed imports: /home/y_ohi/.gemini/GEMINI.md (Length: 10520)
+MCP context refresh complete.
+Failed to load skills from /home/y_ohi/.agents/skills. The directory is not empty but no valid skills were discovered. Please ensure SKILL.md files are present in subdirectories and have valid frontmatter.
+Hook registry initialized with 0 hook entries
+Hook system initialized successfully
+[DEBUG] [MemoryDiscovery] Found global memory file: /home/y_ohi/.gemini/GEMINI.md
+[DEBUG] [MemoryDiscovery] Loading environment memory for trusted root: /home/y_ohi/program/opencode-geminicli-a2a (Stopping at git root: /home/y_ohi/program/opencode-geminicli-a2a)
+[DEBUG] [MemoryDiscovery] Starting upward search from /home/y_ohi/program/opencode-geminicli-a2a stopping at /home/y_ohi/program/opencode-geminicli-a2a
+[DEBUG] [MemoryDiscovery] deduplication: keeping /home/y_ohi/.gemini/GEMINI.md (dev: 66309, ino: 2686159)
+[DEBUG] [MemoryDiscovery] Successfully read and processed imports: /home/y_ohi/.gemini/GEMINI.md (Length: 10520)
+[STARTUP] StartupProfiler.flush() called with 1 phases
+[STARTUP] Recording metric for phase: discover_tools duration: 2023.78947
+[ERROR] 2026-03-25 22:28:51.833 PM -- [Config] Unable to set GeneratorConfig. Please provide a GEMINI_API_KEY or set USE_CCPA.
+[ERROR] 2026-03-25 22:28:51.833 PM -- [CoreAgent] Error during startup: [Config] Unable to set GeneratorConfig. Please provide a GEMINI_API_KEY or set USE_CCPA.
+{
+  "stack": "Error: [Config] Unable to set GeneratorConfig. Please provide a GEMINI_API_KEY or set USE_CCPA.\n    at refreshAuthentication (file:///home/y_ohi/program/opencode-geminicli-a2a/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs:452920:11)\n    at loadConfig (file:///home/y_ohi/program/opencode-geminicli-a2a/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs:452796:9)\n    at async createApp (file:///home/y_ohi/program/opencode-geminicli-a2a/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs:455323:21)\n    at async main (file:///home/y_ohi/program/opencode-geminicli-a2a/node_modules/@google/gemini-cli-a2a-server/dist/a2a-server.mjs:455456:24)"
+}

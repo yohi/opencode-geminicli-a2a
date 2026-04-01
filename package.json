@@ -1,0 +1,14 @@
+{
+  "name": "gemini-cli-a2a-plugin",
+  "version": "1.0.0",
+  "main": "src/index.ts",
+  "type": "module",
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.2.24",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "bun-types": "^1.1.0",
+    "typescript": "^5.0.0"
+  }
+}
