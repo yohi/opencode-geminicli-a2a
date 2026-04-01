@@ -2,7 +2,42 @@ import type { SendMessageRequest, StreamResponse } from "./a2a-types";
 
 export function isValidStreamResponse(obj: any): obj is StreamResponse {
   if (!obj || typeof obj !== "object") return false;
-  return "task" in obj || "message" in obj || "statusUpdate" in obj || "artifactUpdate" in obj;
+
+  let hasValidField = false;
+
+  if ("task" in obj) {
+    const t = obj.task;
+    if (!t || typeof t !== "object" || typeof t.id !== "string" || !t.status || typeof t.status !== "object" || typeof t.status.state !== "string") {
+      return false;
+    }
+    hasValidField = true;
+  }
+
+  if ("message" in obj) {
+    const m = obj.message;
+    if (!m || typeof m !== "object" || typeof m.role !== "string" || !Array.isArray(m.parts)) {
+      return false;
+    }
+    hasValidField = true;
+  }
+
+  if ("statusUpdate" in obj) {
+    const su = obj.statusUpdate;
+    if (!su || typeof su !== "object" || typeof su.taskId !== "string" || !su.status || typeof su.status !== "object" || typeof su.status.state !== "string") {
+      return false;
+    }
+    hasValidField = true;
+  }
+
+  if ("artifactUpdate" in obj) {
+    const au = obj.artifactUpdate;
+    if (!au || typeof au !== "object" || typeof au.taskId !== "string" || !au.artifact || typeof au.artifact !== "object" || typeof au.artifact.artifactId !== "string") {
+      return false;
+    }
+    hasValidField = true;
+  }
+
+  return hasValidField;
 }
 
 export async function sendA2AMessage(
