@@ -1,0 +1,36 @@
+[opencode-geminicli-a2a] DEBUG: PLUGIN SCRIPT LOADED
+[dotenv@17.3.1] injecting env (0) from .env -- tip: 🔐 prevent building .env in docker: https://dotenvx.com/prebuild
+[opencode-geminicli-a2a] INFO: Provider factory called with options: {}
+[opencode-geminicli-a2a] INFO: Provider instance created successfully
+Starting simulation...
+AI SDK Warning System: To turn off warning logging, set the AI_SDK_LOG_WARNINGS global to false.
+[opencode-geminicli-a2a] DEBUG: Request to http://127.0.0.1:41242/: {
+  "jsonrpc": "2.0",
+  "id": "e58f05bf-82b1-40e8-b4d8-da843dbc5414",
+  "method": "message/stream",
+  "params": {
+    "message": {
+      "messageId": "d4aa2c7d-b6a8-4bf1-8216-615414ea749b",
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "[SYSTEM]\nCRITICAL INSTRUCTION: When calling tools, you MUST use their exact full names as they appear in your 'Available tools' list. Do NOT use short aliases or guess prefixes! If a tool is listed WITH a prefix (e.g., 'my_server_read_file'), you MUST include it. If it is listed WITHOUT a prefix (e.g., 'read'), you MUST NOT add one. The server will reject the tool call with an 'invalid' error if the name does not match exactly.\n"
+        },
+        {
+          "kind": "text",
+          "text": "[USER]\n"
+        },
+        {
+          "kind": "text",
+          "text": "1+2+3+4+5は？"
+        }
+      ]
+    },
+    "configuration": {
+      "blocking": false
+    },
+    "model": "gemini-2.5-pro"
+  }
+}
+[opencode-geminicli-a2a] DEBUG: Response status: 200 OK
