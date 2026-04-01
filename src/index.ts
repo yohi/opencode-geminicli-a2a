@@ -23,7 +23,7 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
 
             if (response.task && response.task.status.state === "TASK_STATE_COMPLETED") {
                const artifacts = response.task.artifacts || [];
-               const resultText = artifacts.map(a => a.parts.map(p => p.text).join("")).join("\n");
+               const resultText = artifacts.map(a => a.parts.map(p => p.text ?? "").join("")).join("\n");
                return `Task completed by Gemini agent. Result:\n${resultText}`;
             }
 
@@ -33,7 +33,7 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
 
             return `Task initiated, but returned unexpected state: ${JSON.stringify(response)}`;
           } catch (error: any) {
-            throw new Error(`Error delegating task to Gemini: ${error.message}`);
+            throw new Error(`Error delegating task to Gemini: ${error?.message || String(error)}`);
           }
         },
       }),

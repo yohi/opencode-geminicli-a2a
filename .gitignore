@@ -4,3 +4,4 @@ dist/
 *.log
 diff.txt
 .opencode/
+!/.opencode/opencode.jsonc.example

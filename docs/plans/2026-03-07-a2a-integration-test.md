@@ -10,6 +10,8 @@
 
 ---
 
+## Tasks
+
 ### Task 1: OpenCode へのリンク設定
 
 **Files:**

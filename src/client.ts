@@ -1,5 +1,10 @@
 import type { SendMessageRequest, StreamResponse } from "./a2a-types";
 
+export function isValidStreamResponse(obj: any): obj is StreamResponse {
+  if (!obj || typeof obj !== "object") return false;
+  return "task" in obj || "message" in obj || "statusUpdate" in obj || "artifactUpdate" in obj;
+}
+
 export async function sendA2AMessage(
   baseUrl: string,
   request: SendMessageRequest,
@@ -14,20 +19,45 @@ export async function sendA2AMessage(
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30_000); // 30秒タイムアウト
+  const timeoutId = setTimeout(() => controller.abort(), 30_000);
 
-  const response = await fetch(`${baseUrl}/message:send`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(request),
-    signal: controller.signal,
-  });
-
-  clearTimeout(timeoutId);
-
-  if (!response.ok) {
-    throw new Error(`A2A Request failed: ${response.status} ${response.statusText}`);
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/message:send`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(request),
+      signal: controller.signal,
+    });
+  } catch (error: any) {
+    if (error.name === "AbortError") {
+      throw new Error(`A2A Request timeout: Request took longer than 30 seconds`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 
-  return (await response.json()) as StreamResponse;
+  if (!response.ok) {
+    let errorBody = "";
+    try {
+      errorBody = await response.text();
+    } catch (e) {
+      errorBody = "Failed to read response body";
+    }
+    throw new Error(`A2A Request failed: ${response.status} ${response.statusText} - ${errorBody}`);
+  }
+
+  let data: any;
+  try {
+    data = await response.json();
+  } catch (e) {
+    throw new Error("Invalid A2A response: Failed to parse JSON");
+  }
+
+  if (!isValidStreamResponse(data)) {
+    throw new Error("Invalid A2A response: Missing required fields");
+  }
+
+  return data as StreamResponse;
 }
