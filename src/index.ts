@@ -27,9 +27,13 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
                return `Task completed by Gemini agent. Result:\n${resultText}`;
             }
 
+            if (response.task && response.task.status.state === "TASK_STATE_FAILED") {
+              throw new Error(`Task failed on the Gemini agent side. Response: ${JSON.stringify(response)}`);
+            }
+
             return `Task initiated, but returned unexpected state: ${JSON.stringify(response)}`;
           } catch (error: any) {
-            return `Error delegating task to Gemini: ${error.message}`;
+            throw new Error(`Error delegating task to Gemini: ${error.message}`);
           }
         },
       }),

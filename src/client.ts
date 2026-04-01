@@ -13,11 +13,17 @@ export async function sendA2AMessage(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30_000); // 30秒タイムアウト
+
   const response = await fetch(`${baseUrl}/message:send`, {
     method: "POST",
     headers,
     body: JSON.stringify(request),
+    signal: controller.signal,
   });
+
+  clearTimeout(timeoutId);
 
   if (!response.ok) {
     throw new Error(`A2A Request failed: ${response.status} ${response.statusText}`);
