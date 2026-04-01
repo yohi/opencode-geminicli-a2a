@@ -91,7 +91,8 @@ export function isValidStreamResponse(obj: any): obj is StreamResponse {
 export async function sendA2AMessage(
   baseUrl: string,
   request: SendMessageRequest,
-  token?: string
+  token?: string,
+  onProgress?: (text: string) => void
 ): Promise<StreamResponse> {
   const headers: Record<string, string> = {
     "Content-Type": "application/a2a+json",

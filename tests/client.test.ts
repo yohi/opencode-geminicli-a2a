@@ -1,27 +1,37 @@
 import { expect, test } from "bun:test";
 import { sendA2AMessage } from "../src/client";
 
-test("sendA2AMessage should send request and parse response", async () => {
+test("sendA2AMessage should parse SSE stream and trigger onProgress", async () => {
   const server = Bun.serve({
     port: 0,
     fetch(req) {
-      if (req.method === "POST" && new URL(req.url).pathname === "/message:send") {
-        return new Response(JSON.stringify({
-          task: { id: "task-1", status: { state: "TASK_STATE_COMPLETED" }, artifacts: [{ artifactId: "art-1", parts: [{text: "result"}] }] }
-        }), { headers: { "Content-Type": "application/a2a+json" } });
+      if (req.method === "POST" && new URL(req.url).pathname === "/message:stream") {
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-1", "status": {"state": "TASK_STATE_WORKING"}}}\n\n`));
+            controller.enqueue(new TextEncoder().encode(`data: {"artifactUpdate": {"taskId": "task-1", "artifact": {"artifactId": "art-1", "parts": [{"text": "chunk1"}]}}}\n\n`));
+            controller.enqueue(new TextEncoder().encode(`data: {"artifactUpdate": {"taskId": "task-1", "artifact": {"artifactId": "art-1", "parts": [{"text": "chunk2"}]}}}\n\n`));
+            controller.enqueue(new TextEncoder().encode(`data: {"task": {"id": "task-1", "status": {"state": "TASK_STATE_COMPLETED"}}}\n\n`));
+            controller.close();
+          }
+        });
+        return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
       }
       return new Response("Not Found", { status: 404 });
     },
   });
 
   try {
+    let accumulated = "";
     const result = await sendA2AMessage(
       `http://localhost:${server.port}`,
-      { message: { role: "ROLE_USER", parts: [{text: "hello"}] } }
+      { message: { role: "ROLE_USER", parts: [{text: "hello"}] } },
+      undefined,
+      (text) => { accumulated += text; }
     );
 
     expect(result.task?.status.state).toBe("TASK_STATE_COMPLETED");
-    expect(result.task?.artifacts?.[0].parts[0].text).toBe("result");
+    expect(accumulated).toBe("chunk1chunk2");
   } finally {
     server.stop();
   }
@@ -48,7 +58,7 @@ test("sendA2AMessage sends Authorization header if token is provided", async () 
     port: 0,
     fetch(req) {
       authHeader = req.headers.get("Authorization") || "";
-      return new Response(JSON.stringify({ message: { role: "ROLE_AGENT", parts: [{text: "ok"}] } }), { headers: { "Content-Type": "application/a2a+json" } });
+      return new Response(`data: {"message": {"role": "ROLE_AGENT", "parts": [{"text": "ok"}]}}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
     },
   });
 
@@ -64,7 +74,7 @@ test("sendA2AMessage throws on invalid JSON response", async () => {
   const server = Bun.serve({
     port: 0,
     fetch() {
-      return new Response("not a json object", { status: 200, headers: { "Content-Type": "application/a2a+json" } });
+      return new Response("data: not a json object\n\n", { status: 200, headers: { "Content-Type": "text/event-stream" } });
     },
   });
 
