@@ -58,11 +58,27 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
                 // Polling loop
                 const maxPollingAttempts = 60; // 最大2分間（60回 × 2秒）
                 let pollingAttempts = 0;
+                let consecutiveErrorCount = 0;
                 while (true) {
                   if (pollingAttempts >= maxPollingAttempts) {
                     throw new Error(`Polling timed out after ${maxPollingAttempts} attempts for task ${currentTaskId}`);
                   }
-                  const task = await getA2ATask(baseUrl, currentTaskId, { token });
+
+                  let task;
+                  try {
+                    task = await getA2ATask(baseUrl, currentTaskId, { token });
+                    consecutiveErrorCount = 0;
+                  } catch (e: any) {
+                    consecutiveErrorCount++;
+                    console.error(`\nError fetching task ${currentTaskId}: ${e.message}`);
+                    if (consecutiveErrorCount > 5) {
+                      throw new Error(`Polling failed after ${consecutiveErrorCount} consecutive errors for task ${currentTaskId}`);
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    pollingAttempts++;
+                    continue;
+                  }
+
                   if (task.status.state === "TASK_STATE_COMPLETED" || task.status.state === "TASK_STATE_FAILED") {
                     finalTask = task;
                     break;
@@ -78,6 +94,9 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
             // If we only got a statusUpdate but no full task, fetch the full task to get artifacts
             if (!finalTask && currentTaskId) {
               finalTask = await getA2ATask(baseUrl, currentTaskId, { token });
+              if (!finalTask || !finalTask.status) {
+                throw new Error(`Failed to fetch valid task for ${currentTaskId}: ${JSON.stringify(finalTask)}`);
+              }
             }
 
             if (finalTask && finalTask.status.state === "TASK_STATE_COMPLETED") {

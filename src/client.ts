@@ -125,7 +125,7 @@ async function processA2AStream(
         try {
           onTaskId(taskId);
         } catch (e) {
-          // Ignore errors from onTaskId callback
+          console.error("Error in onTaskId callback for task", taskId, e);
         }
       }
     };
