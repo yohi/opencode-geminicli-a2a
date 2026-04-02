@@ -60,7 +60,7 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
                 let pollingAttempts = 0;
                 while (true) {
                   if (pollingAttempts >= maxPollingAttempts) {
-                    throw new Error(`Polling timed out after ${maxPollingAttempts} attempts`);
+                    throw new Error(`Polling timed out after ${maxPollingAttempts} attempts for task ${currentTaskId}`);
                   }
                   const task = await getA2ATask(baseUrl, currentTaskId, { token });
                   if (task.status.state === "TASK_STATE_COMPLETED" || task.status.state === "TASK_STATE_FAILED") {

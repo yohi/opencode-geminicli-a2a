@@ -24,27 +24,33 @@ function isValidArtifact(a: any): boolean {
   );
 }
 
+export function isValidTask(t: any): t is Task {
+  if (
+    !t ||
+    typeof t !== "object" ||
+    typeof t.id !== "string" ||
+    !t.status ||
+    typeof t.status !== "object" ||
+    !VALID_STATES.includes(t.status.state)
+  ) {
+    return false;
+  }
+  if (t.artifacts !== undefined) {
+    if (!Array.isArray(t.artifacts) || !t.artifacts.every(isValidArtifact)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function isValidStreamResponse(obj: any): obj is StreamResponse {
   if (!obj || typeof obj !== "object") return false;
 
   let hasValidField = false;
 
   if ("task" in obj) {
-    const t = obj.task;
-    if (
-      !t ||
-      typeof t !== "object" ||
-      typeof t.id !== "string" ||
-      !t.status ||
-      typeof t.status !== "object" ||
-      !VALID_STATES.includes(t.status.state)
-    ) {
+    if (!isValidTask(obj.task)) {
       return false;
-    }
-    if (t.artifacts !== undefined) {
-      if (!Array.isArray(t.artifacts) || !t.artifacts.every(isValidArtifact)) {
-        return false;
-      }
     }
     hasValidField = true;
   }
@@ -355,7 +361,7 @@ export async function subscribeToA2ATask(
   const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
 
   try {
-    const response = await fetch(`${baseUrl}/tasks/${taskId}:subscribe`, {
+    const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}:subscribe`, {
       method: "POST",
       headers,
       signal: controller.signal,
@@ -390,7 +396,7 @@ export async function subscribeToA2ATask(
 export async function getA2ATask(
   baseUrl: string,
   taskId: string,
-  options?: { token?: string }
+  options?: { token?: string; timeoutMs?: number }
 ): Promise<Task> {
   const headers: Record<string, string> = {
     "Accept": "application/a2a+json",
@@ -400,25 +406,48 @@ export async function getA2ATask(
     headers["Authorization"] = `Bearer ${options.token}`;
   }
 
-  const response = await fetch(`${baseUrl}/tasks/${taskId}`, {
-    method: "GET",
-    headers,
-  });
+  const timeoutMs = options?.timeoutMs ?? 120_000;
+  const controller = new AbortController();
+  const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
 
-  if (!response.ok) {
-    let errorBody = "";
-    try {
-      errorBody = await response.text();
-    } catch (e) {
-      errorBody = "Failed to read response body";
+  try {
+    const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      let errorBody = "";
+      try {
+        errorBody = await response.text();
+      } catch (e: any) {
+        if (e.name === "AbortError") {
+          throw e;
+        }
+        errorBody = "Failed to read response body";
+      }
+      throw new Error(`A2A GetTask failed: ${response.status} ${response.statusText} - ${errorBody}`);
     }
-    throw new Error(`A2A GetTask failed: ${response.status} ${response.statusText} - ${errorBody}`);
-  }
 
-  const data = await response.json();
-  if (!data || typeof data !== "object" || typeof data.id !== "string" || !data.status) {
-    throw new Error("Invalid task response from server");
-  }
+    const data = await response.json();
+    if (!isValidTask(data)) {
+      if (!data || typeof data !== "object") throw new Error("Invalid task response: not an object");
+      if (typeof data.id !== "string") throw new Error("Invalid task response: missing or invalid 'id'");
+      if (!data.status || typeof data.status !== "object") throw new Error("Invalid task response: missing or invalid 'status'");
+      if (!VALID_STATES.includes(data.status.state)) throw new Error(`Invalid task response: invalid status.state '${data.status.state}'`);
+      throw new Error("Invalid task response from server: failed validation in artifacts or parts");
+    }
 
-  return data as Task;
+    return data;
+  } catch (error: any) {
+    if (error.name === "AbortError") {
+      throw new Error(`A2A GetTask timeout: Request took longer than ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
