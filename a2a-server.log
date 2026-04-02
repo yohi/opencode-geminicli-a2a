@@ -1,9 +1,0 @@
-[ERROR] 2026-03-25 22:27:54.237 PM -- Warning: unexpected file /home/y_ohi/.gemini/extensions/extension-enablement.json in extensions directory.
-Ignore file not found: /home/y_ohi/program/opencode-geminicli-a2a/.geminiignore, continue without it.
-[DEBUG] [MemoryDiscovery] Loading server hierarchical memory for CWD: /home/y_ohi/program/opencode-geminicli-a2a (importFormat: tree)
-[DEBUG] [MemoryDiscovery] Found readable global GEMINI.md: /home/y_ohi/.gemini/GEMINI.md
-[DEBUG] [MemoryDiscovery] deduplication: keeping /home/y_ohi/.gemini/GEMINI.md (dev: 66309, ino: 2686159)
-[DEBUG] [MemoryDiscovery] Successfully read and processed imports: /home/y_ohi/.gemini/GEMINI.md (Length: 10520)
-Ignore file not found: /home/y_ohi/program/opencode-geminicli-a2a/.geminiignore, continue without it.
-Ignore file not found: /home/y_ohi/program/opencode-geminicli-a2a/.geminiignore, continue without it.
-Ignore file not found: /home/y_ohi/program/opencode-geminicli-a2a/.geminiignore, continue without it.
