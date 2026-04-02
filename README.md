@@ -25,7 +25,7 @@ Currently, this is a minimal proof-of-concept (PoC) implementation that connects
 
 ## Implementation Roadmap
 
-### 1. [COMPLETED] Streaming Support (Server-Sent Events: SSE)
+### 1. ✅ Streaming Support (Server-Sent Events: SSE)
 *   **Accomplished:** Switched to the `POST /message:stream` endpoint and implemented real-time event parsing using `eventsource-parser`. Progress and artifacts are surfaced to the CLI as they arrive.
 
 ### 2. Task Polling & Continuation [High Priority]
