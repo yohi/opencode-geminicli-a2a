@@ -1,3 +1,4 @@
+import { createParser } from "eventsource-parser";
 import type { SendMessageRequest, StreamResponse } from "./a2a-types";
 
 const VALID_STATES = [
@@ -88,11 +89,25 @@ export function isValidStreamResponse(obj: any): obj is StreamResponse {
   return hasValidField;
 }
 
+export interface SendA2AMessageOptions {
+  token?: string;
+  onProgress?: (text: string) => Promise<void> | void;
+  timeoutMs?: number;
+}
+
 export async function sendA2AMessage(
   baseUrl: string,
   request: SendMessageRequest,
-  token?: string
+  options?: SendA2AMessageOptions | string
 ): Promise<StreamResponse> {
+  if (typeof options === "string") {
+    options = { token: options };
+  }
+
+  const token = options?.token;
+  const onProgress = options?.onProgress;
+  const timeoutMs = options?.timeoutMs ?? 120_000;
+
   const headers: Record<string, string> = {
     "Content-Type": "application/a2a+json",
     "A2A-Version": "1.0",
@@ -102,10 +117,10 @@ export async function sendA2AMessage(
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30_000);
+  const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
 
   try {
-    const response = await fetch(`${baseUrl}/message:send`, {
+    const response = await fetch(`${baseUrl}/message:stream`, {
       method: "POST",
       headers,
       body: JSON.stringify(request),
@@ -116,30 +131,174 @@ export async function sendA2AMessage(
       let errorBody = "";
       try {
         errorBody = await response.text();
-      } catch (e) {
+      } catch (e: any) {
+        if (e.name === "AbortError") {
+          throw e;
+        }
         errorBody = "Failed to read response body";
       }
       throw new Error(`A2A Request failed: ${response.status} ${response.statusText} - ${errorBody}`);
     }
 
-    let data: any;
-    try {
-      data = await response.json();
-    } catch (e) {
-      throw new Error("Invalid A2A response: Failed to parse JSON");
+    if (!response.body) {
+      throw new Error("No response body");
     }
 
-    if (!isValidStreamResponse(data)) {
-      throw new Error("Invalid A2A response: Missing required fields");
-    }
+    return await new Promise<StreamResponse>((resolve, reject) => {
+      let resolved = false;
+      let terminalData: StreamResponse | null = null;
+      let streamError: any = null;
+      const progressQueue: Promise<void>[] = [];
 
-    return data as StreamResponse;
+      const parser = createParser({
+        onError(err) {
+          if (!resolved) {
+            resolved = true;
+            streamError = err;
+            controller.abort();
+          }
+        },
+        onEvent(event) {
+          if (resolved) return;
+          if (event.data === "") return;
+          let data: any;
+          try {
+            data = JSON.parse(event.data);
+            if (!isValidStreamResponse(data)) {
+              if (!resolved) {
+                resolved = true;
+                streamError = new Error("Invalid stream response: " + JSON.stringify(data));
+                controller.abort();
+              }
+              return;
+            }
+          } catch (e) {
+            if (!resolved) {
+              resolved = true;
+              streamError = new Error("Failed to parse SSE event data: " + event.data + " - " + (e instanceof Error ? e.message : String(e)));
+              controller.abort();
+            }
+            return;
+          }
+
+          if (data.artifactUpdate && onProgress) {
+            const parts = data.artifactUpdate.artifact.parts;
+            if (Array.isArray(parts)) {
+              for (const part of parts) {
+                if (part.text) {
+                  try {
+                    const res = onProgress(part.text);
+                    if (res && typeof res.then === 'function') {
+                      progressQueue.push(res.catch(e => {
+                        if (!streamError) {
+                          streamError = e;
+                        }
+                        if (!resolved) {
+                          resolved = true;
+                          controller.abort();
+                        }
+                      }));
+                    }
+                  } catch (e) {
+                    if (!streamError) {
+                      streamError = e;
+                    }
+                    if (!resolved) {
+                      resolved = true;
+                      controller.abort();
+                    }
+                    return;
+                  }
+                }
+              }
+            }
+          }
+
+          if (data.statusUpdate?.status) {
+            const state = data.statusUpdate.status.state;
+            if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
+              if (!resolved) {
+                resolved = true;
+                terminalData = data;
+                controller.abort();
+              }
+            }
+          }
+
+          if (data.task?.status) {
+            const state = data.task.status.state;
+            if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
+              if (!resolved) {
+                resolved = true;
+                terminalData = data;
+                controller.abort();
+              }
+            }
+          }
+          if (data.message) {
+            if (!resolved) {
+              resolved = true;
+              terminalData = data;
+              controller.abort();
+            }
+          }
+        }
+      });
+
+      const processStream = async () => {
+        try {
+          const decoder = new TextDecoder();
+          const reader = response.body!.getReader();
+          try {
+            while (true) {
+              if (resolved) break;
+              const { done, value } = await reader.read();
+              if (done) break;
+              parser.feed(decoder.decode(value, { stream: true }));
+            }
+          } finally {
+            reader.releaseLock();
+          }
+          // Final flush
+          if (!resolved) {
+            parser.feed(decoder.decode());
+            parser.reset({ consume: true });
+          }
+        } catch (e: any) {
+          if (!streamError) {
+            streamError = e;
+          }
+        }
+
+        try {
+          await Promise.all(progressQueue);
+        } catch (e) {
+          reject(e);
+          return;
+        }
+
+        if (streamError) {
+          reject(streamError);
+        } else if (terminalData) {
+          resolve(terminalData);
+        } else {
+          reject(new Error("Stream ended without a terminal event (task, statusUpdate, or message)"));
+        }
+      };
+
+      processStream().catch((err) => {
+        reject(err);
+      });
+    });
+
   } catch (error: any) {
     if (error.name === "AbortError") {
-      throw new Error(`A2A Request timeout: Request took longer than 30 seconds`);
+      throw new Error(`A2A Request timeout: Request took longer than ${timeoutMs}ms`);
     }
     throw error;
   } finally {
-    clearTimeout(timeoutId);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
   }
 }
