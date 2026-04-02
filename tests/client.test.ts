@@ -401,7 +401,7 @@ test("geminiA2aPlugin should recover via polling when streaming and subscribe fa
   });
 
   try {
-    const plugin = await geminiA2aPlugin({}, { baseUrl: `http://localhost:${server.port}` });
+    const plugin = await geminiA2aPlugin({}, { baseUrl: `http://localhost:${server.port}`, pollIntervalMs: 10 });
     const result = await plugin.tool.delegate_to_gemini.execute({ taskDescription: "test recovery" });
 
     expect(pollCount).toBe(3);

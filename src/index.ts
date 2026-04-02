@@ -5,6 +5,7 @@ import type { StreamResponse, Task } from "./a2a-types";
 export const geminiA2aPlugin: Plugin = async (input, options) => {
   const baseUrl = (options?.baseUrl as string) || "http://localhost:8080";
   const token = options?.token as string | undefined;
+  const pollIntervalMs = (options?.pollIntervalMs as number) || 2000;
 
   return {
     tool: {
@@ -77,7 +78,7 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
                     if (consecutiveErrorCount > 5) {
                       throw new Error(`Polling failed after ${consecutiveErrorCount} consecutive errors for task ${currentTaskId}`);
                     }
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
                     pollingAttempts++;
                     continue;
                   }
@@ -87,7 +88,7 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
                     break;
                   }
                   process.stdout.write("."); // tick
-                  await new Promise(resolve => setTimeout(resolve, 2000));
+                  await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
                   pollingAttempts++;
                 }
                 process.stdout.write("\n");
@@ -95,7 +96,7 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
             }
 
             if (finalMessage) {
-               const resultText = finalMessage.parts.map(p => p.text ?? "").join("");
+               const resultText = (finalMessage.parts || []).map(p => p.text ?? "").join("");
                return `Gemini agent replied:\n${resultText}`;
             }
 
