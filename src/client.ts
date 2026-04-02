@@ -134,6 +134,7 @@ export async function sendA2AMessage(
 
       const parser = createParser({
         onEvent(event) {
+          if (resolved) return;
           try {
             const data = JSON.parse(event.data);
             if (!isValidStreamResponse(data)) {
