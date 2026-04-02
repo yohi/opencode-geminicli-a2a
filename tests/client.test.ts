@@ -265,3 +265,18 @@ test("getA2ATask should fetch task successfully", async () => {
     server.stop();
   }
 });
+
+test("getA2ATask should throw on 404 response", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response("Not Found", { status: 404, statusText: "Not Found" });
+    },
+  });
+  try {
+    await expect(getA2ATask(`http://localhost:${server.port}`, "no-such-task"))
+      .rejects.toThrow("A2A GetTask failed: 404 Not Found");
+  } finally {
+    server.stop();
+  }
+});

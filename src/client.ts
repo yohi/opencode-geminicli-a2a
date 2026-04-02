@@ -344,7 +344,7 @@ export async function subscribeToA2ATask(
   const timeoutMs = options?.timeoutMs ?? 120_000;
 
   const headers: Record<string, string> = {
-    "Content-Type": "application/a2a+json",
+    "Accept": "text/event-stream",
     "A2A-Version": "1.0",
   };
   if (token) {
@@ -377,7 +377,7 @@ export async function subscribeToA2ATask(
     return await processA2AStream(response, controller, options?.onProgress, options?.onTaskId);
   } catch (error: any) {
     if (error.name === "AbortError") {
-      throw new Error(`A2A Request timeout: Request took longer than ${timeoutMs}ms`);
+      throw new Error(`A2A Subscribe timeout: Request took longer than ${timeoutMs}ms`);
     }
     throw error;
   } finally {

@@ -56,7 +56,12 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
                 process.stdout.write(`\nStreaming failed (${subErr.message}). Falling back to polling...\n`);
                 
                 // Polling loop
+                const maxPollingAttempts = 60; // 最大2分間（60回 × 2秒）
+                let pollingAttempts = 0;
                 while (true) {
+                  if (pollingAttempts >= maxPollingAttempts) {
+                    throw new Error(`Polling timed out after ${maxPollingAttempts} attempts`);
+                  }
                   const task = await getA2ATask(baseUrl, currentTaskId, { token });
                   if (task.status.state === "TASK_STATE_COMPLETED" || task.status.state === "TASK_STATE_FAILED") {
                     finalTask = task;
@@ -64,6 +69,7 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
                   }
                   process.stdout.write("."); // tick
                   await new Promise(resolve => setTimeout(resolve, 2000));
+                  pollingAttempts++;
                 }
                 process.stdout.write("\n");
               }
