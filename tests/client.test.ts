@@ -98,7 +98,7 @@ test("sendA2AMessage sends Authorization header if token is provided", async () 
   }
 });
 
-test("sendA2AMessage throws when stream ends without a terminal task event", async () => {
+test("sendA2AMessage throws when stream contains malformed JSON", async () => {
   const server = Bun.serve({
     port: 0,
     fetch() {
@@ -107,8 +107,8 @@ test("sendA2AMessage throws when stream ends without a terminal task event", asy
   });
 
   try {
-    // We now ignore invalid JSON parts. If only invalid parts exist, the stream ends without a terminal event.
-    await expect(sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } })).rejects.toThrow("Stream ended without a terminal event (task, statusUpdate, or message)");
+    // We now throw on invalid JSON parts instead of ignoring them.
+    await expect(sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } })).rejects.toThrow(/Failed to parse SSE event data: not a json object/);
   } finally {
     server.stop();
   }

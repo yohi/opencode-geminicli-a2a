@@ -91,7 +91,7 @@ export function isValidStreamResponse(obj: any): obj is StreamResponse {
 
 export interface SendA2AMessageOptions {
   token?: string;
-  onProgress?: (text: string) => void;
+  onProgress?: (text: string) => Promise<void> | void;
   timeoutMs?: number;
 }
 
@@ -144,20 +144,25 @@ export async function sendA2AMessage(
       let resolved = false;
 
       const parser = createParser({
-        onEvent(event) {
+        async onEvent(event) {
           if (resolved) return;
+          if (event.data === "") return;
           let data: any;
           try {
             data = JSON.parse(event.data);
             if (!isValidStreamResponse(data)) {
-              if (process.env.NODE_ENV !== "production") {
-                console.warn("Invalid stream response:", data);
+              if (!resolved) {
+                resolved = true;
+                controller.abort();
+                reject(new Error("Invalid stream response: " + JSON.stringify(data)));
               }
               return;
             }
           } catch (e) {
-            if (process.env.NODE_ENV !== "production") {
-              console.debug("Failed to parse SSE event data:", event.data, e);
+            if (!resolved) {
+              resolved = true;
+              controller.abort();
+              reject(new Error("Failed to parse SSE event data: " + event.data + " - " + (e instanceof Error ? e.message : String(e))));
             }
             return;
           }
@@ -168,7 +173,10 @@ export async function sendA2AMessage(
               for (const part of parts) {
                 if (part.text) {
                   try {
-                    onProgress(part.text);
+                    const res = onProgress(part.text);
+                    if (res && typeof res.then === 'function') {
+                      await res;
+                    }
                   } catch (e) {
                     if (!resolved) {
                       resolved = true;
