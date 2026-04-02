@@ -24,23 +24,36 @@ function isValidArtifact(a: any): boolean {
   );
 }
 
-export function isValidTask(t: any): t is Task {
-  if (
-    !t ||
-    typeof t !== "object" ||
-    typeof t.id !== "string" ||
-    !t.status ||
-    typeof t.status !== "object" ||
-    !VALID_STATES.includes(t.status.state)
-  ) {
-    return false;
+export function validateTask(t: any): { valid: true; task: Task } | { valid: false; errors: string[] } {
+  const errors: string[] = [];
+  if (!t || typeof t !== "object") {
+    errors.push("not an object");
+    return { valid: false, errors };
+  }
+  if (typeof t.id !== "string") {
+    errors.push("missing or invalid 'id'");
+  }
+  if (!t.status || typeof t.status !== "object") {
+    errors.push("missing or invalid 'status'");
+  } else if (!VALID_STATES.includes(t.status.state)) {
+    errors.push(`invalid status.state '${t.status.state}'`);
   }
   if (t.artifacts !== undefined) {
-    if (!Array.isArray(t.artifacts) || !t.artifacts.every(isValidArtifact)) {
-      return false;
+    if (!Array.isArray(t.artifacts)) {
+      errors.push("artifacts is not an array");
+    } else if (!t.artifacts.every(isValidArtifact)) {
+      errors.push("failed validation in artifacts or parts");
     }
   }
-  return true;
+
+  if (errors.length > 0) {
+    return { valid: false, errors };
+  }
+  return { valid: true, task: t as Task };
+}
+
+export function isValidTask(t: any): t is Task {
+  return validateTask(t).valid;
 }
 
 export function isValidStreamResponse(obj: any): obj is StreamResponse {
@@ -431,15 +444,12 @@ export async function getA2ATask(
     }
 
     const data = await response.json();
-    if (!isValidTask(data)) {
-      if (!data || typeof data !== "object") throw new Error("Invalid task response: not an object");
-      if (typeof data.id !== "string") throw new Error("Invalid task response: missing or invalid 'id'");
-      if (!data.status || typeof data.status !== "object") throw new Error("Invalid task response: missing or invalid 'status'");
-      if (!VALID_STATES.includes(data.status.state)) throw new Error(`Invalid task response: invalid status.state '${data.status.state}'`);
-      throw new Error("Invalid task response from server: failed validation in artifacts or parts");
+    const result = validateTask(data);
+    if (!result.valid) {
+      throw new Error(`Invalid task response: ${result.errors.join(", ")}`);
     }
 
-    return data;
+    return result.task;
   } catch (error: any) {
     if (error.name === "AbortError") {
       throw new Error(`A2A GetTask timeout: Request took longer than ${timeoutMs}ms`);

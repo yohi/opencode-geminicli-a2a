@@ -101,7 +101,7 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
 
             // If we only got a statusUpdate but no full task, fetch the full task to get artifacts
             if (!finalTask && currentTaskId) {
-              finalTask = await getA2ATask(baseUrl, currentTaskId, { token });
+              finalTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
               if (!finalTask || !finalTask.status) {
                 throw new Error(`Failed to fetch valid task for ${currentTaskId}: ${JSON.stringify(finalTask)}`);
               }
