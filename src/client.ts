@@ -138,6 +138,9 @@ export async function sendA2AMessage(
           try {
             const data = JSON.parse(event.data);
             if (!isValidStreamResponse(data)) {
+              if (process.env.NODE_ENV !== "production") {
+                console.warn("Invalid stream response:", data);
+              }
               return;
             }
 
@@ -191,9 +194,16 @@ export async function sendA2AMessage(
       const processStream = async () => {
         try {
           const decoder = new TextDecoder();
-          for await (const chunk of response.body as any) {
-            if (resolved) break;
-            parser.feed(decoder.decode(chunk, { stream: true }));
+          const reader = response.body!.getReader();
+          try {
+            while (true) {
+              if (resolved) break;
+              const { done, value } = await reader.read();
+              if (done) break;
+              parser.feed(decoder.decode(value, { stream: true }));
+            }
+          } finally {
+            reader.releaseLock();
           }
           // Final flush
           if (!resolved) {
@@ -201,10 +211,8 @@ export async function sendA2AMessage(
           }
         } catch (e: any) {
           if (!resolved) {
-            if (e.name !== "AbortError") {
-              resolved = true;
-              reject(e);
-            }
+            resolved = true;
+            reject(e);
           }
         }
       };
@@ -213,6 +221,11 @@ export async function sendA2AMessage(
         if (!resolved) {
           resolved = true;
           reject(new Error("Stream ended without a terminal task event"));
+        }
+      }).catch((err) => {
+        if (!resolved) {
+          resolved = true;
+          reject(err);
         }
       });
     });
