@@ -142,9 +142,19 @@ export async function sendA2AMessage(
 
     return await new Promise<StreamResponse>((resolve, reject) => {
       let resolved = false;
+      let terminalData: StreamResponse | null = null;
+      let streamError: any = null;
+      const progressQueue: Promise<void>[] = [];
 
       const parser = createParser({
-        async onEvent(event) {
+        onError(err) {
+          if (!resolved) {
+            resolved = true;
+            streamError = err;
+            controller.abort();
+          }
+        },
+        onEvent(event) {
           if (resolved) return;
           if (event.data === "") return;
           let data: any;
@@ -153,16 +163,16 @@ export async function sendA2AMessage(
             if (!isValidStreamResponse(data)) {
               if (!resolved) {
                 resolved = true;
+                streamError = new Error("Invalid stream response: " + JSON.stringify(data));
                 controller.abort();
-                reject(new Error("Invalid stream response: " + JSON.stringify(data)));
               }
               return;
             }
           } catch (e) {
             if (!resolved) {
               resolved = true;
+              streamError = new Error("Failed to parse SSE event data: " + event.data + " - " + (e instanceof Error ? e.message : String(e)));
               controller.abort();
-              reject(new Error("Failed to parse SSE event data: " + event.data + " - " + (e instanceof Error ? e.message : String(e))));
             }
             return;
           }
@@ -175,13 +185,13 @@ export async function sendA2AMessage(
                   try {
                     const res = onProgress(part.text);
                     if (res && typeof res.then === 'function') {
-                      await res;
+                      progressQueue.push(res);
                     }
                   } catch (e) {
                     if (!resolved) {
                       resolved = true;
+                      streamError = e;
                       controller.abort();
-                      reject(e);
                     }
                     return;
                   }
@@ -195,8 +205,8 @@ export async function sendA2AMessage(
             if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
               if (!resolved) {
                 resolved = true;
+                terminalData = data;
                 controller.abort();
-                resolve(data);
               }
             }
           }
@@ -206,16 +216,16 @@ export async function sendA2AMessage(
             if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
               if (!resolved) {
                 resolved = true;
+                terminalData = data;
                 controller.abort();
-                resolve(data);
               }
             }
           }
           if (data.message) {
             if (!resolved) {
               resolved = true;
+              terminalData = data;
               controller.abort();
-              resolve(data);
             }
           }
         }
@@ -238,25 +248,32 @@ export async function sendA2AMessage(
           // Final flush
           if (!resolved) {
             parser.feed(decoder.decode());
+            parser.reset({ consume: true });
           }
         } catch (e: any) {
-          if (!resolved) {
-            resolved = true;
-            reject(e);
+          if (!streamError) {
+            streamError = e;
           }
+        }
+
+        try {
+          await Promise.all(progressQueue);
+        } catch (e) {
+          reject(e);
+          return;
+        }
+
+        if (streamError) {
+          reject(streamError);
+        } else if (terminalData) {
+          resolve(terminalData);
+        } else {
+          reject(new Error("Stream ended without a terminal event (task, statusUpdate, or message)"));
         }
       };
 
-      processStream().then(() => {
-        if (!resolved) {
-          resolved = true;
-          reject(new Error("Stream ended without a terminal event (task, statusUpdate, or message)"));
-        }
-      }).catch((err) => {
-        if (!resolved) {
-          resolved = true;
-          reject(err);
-        }
+      processStream().catch((err) => {
+        reject(err);
       });
     });
 
