@@ -330,3 +330,31 @@ test("sendA2AMessage should accept string taskId in message and call onTaskId", 
     server.stop();
   }
 });
+
+test("sendA2AMessage should ignore empty or whitespace taskId and call onTaskId only with first real ID", async () => {
+  let capturedTaskIds: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"statusUpdate": {"taskId": "  ", "status": {"state": "TASK_STATE_WORKING"}}}\n\n'));
+          controller.enqueue(new TextEncoder().encode('data: {"statusUpdate": {"taskId": "", "status": {"state": "TASK_STATE_WORKING"}}}\n\n'));
+          controller.enqueue(new TextEncoder().encode('data: {"statusUpdate": {"taskId": "task-real", "status": {"state": "TASK_STATE_WORKING"}}}\n\n'));
+          controller.enqueue(new TextEncoder().encode('data: {"statusUpdate": {"taskId": "task-ignored", "status": {"state": "TASK_STATE_COMPLETED"}}}\n\n'));
+          controller.close();
+        }
+      });
+      return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+    },
+  });
+
+  try {
+    await sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, {
+      onTaskId: (id) => { capturedTaskIds.push(id); }
+    });
+    expect(capturedTaskIds).toEqual(["task-real"]);
+  } finally {
+    server.stop();
+  }
+});

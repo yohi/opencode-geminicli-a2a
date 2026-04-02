@@ -108,6 +108,17 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
             }
 
             if (finalTask && finalTask.status.state === "TASK_STATE_COMPLETED") {
+               if ((!finalTask.artifacts || finalTask.artifacts.length === 0) && currentTaskId) {
+                  // Perform one additional fetch to refresh canonical task artifacts
+                  try {
+                    const refreshedTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
+                    if (refreshedTask && refreshedTask.status.state === "TASK_STATE_COMPLETED") {
+                      finalTask = refreshedTask;
+                    }
+                  } catch (e) {
+                    console.error(`Failed to refresh task ${currentTaskId} for artifacts:`, e);
+                  }
+               }
                const artifacts = finalTask.artifacts || [];
                const resultText = artifacts.map(a => a.parts.map(p => p.text ?? "").join("")).join("\n");
                return `Task completed by Gemini agent. Result:\n${resultText}`;

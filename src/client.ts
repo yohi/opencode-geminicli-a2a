@@ -133,7 +133,7 @@ async function processA2AStream(
     let taskIdNotified = false;
 
     const notifyTaskId = (taskId: string) => {
-      if (!taskIdNotified && onTaskId) {
+      if (!taskIdNotified && onTaskId && taskId.trim()) {
         taskIdNotified = true;
         try {
           onTaskId(taskId);
