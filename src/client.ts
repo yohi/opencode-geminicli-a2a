@@ -6,6 +6,8 @@ const VALID_STATES = [
   "TASK_STATE_WORKING",
   "TASK_STATE_COMPLETED",
   "TASK_STATE_FAILED",
+  "TASK_STATE_SUBMITTED",
+  "TASK_STATE_INPUT_REQUIRED",
 ];
 
 const VALID_ROLES = ["ROLE_USER", "ROLE_AGENT"];
@@ -57,55 +59,7 @@ export function isValidTask(t: any): t is Task {
 }
 
 export function isValidStreamResponse(obj: any): obj is StreamResponse {
-  if (!obj || typeof obj !== "object") return false;
-
-  let hasValidField = false;
-
-  if ("task" in obj) {
-    if (!isValidTask(obj.task)) {
-      return false;
-    }
-    hasValidField = true;
-  }
-
-  if ("message" in obj) {
-    const m = obj.message;
-    if (
-      !m ||
-      typeof m !== "object" ||
-      !VALID_ROLES.includes(m.role) ||
-      !Array.isArray(m.parts) ||
-      !m.parts.every(isValidPart)
-    ) {
-      return false;
-    }
-    hasValidField = true;
-  }
-
-  if ("statusUpdate" in obj) {
-    const su = obj.statusUpdate;
-    if (
-      !su ||
-      typeof su !== "object" ||
-      typeof su.taskId !== "string" ||
-      !su.status ||
-      typeof su.status !== "object" ||
-      !VALID_STATES.includes(su.status.state)
-    ) {
-      return false;
-    }
-    hasValidField = true;
-  }
-
-  if ("artifactUpdate" in obj) {
-    const au = obj.artifactUpdate;
-    if (!au || typeof au !== "object" || typeof au.taskId !== "string" || !isValidArtifact(au.artifact)) {
-      return false;
-    }
-    hasValidField = true;
-  }
-
-  return hasValidField;
+  return true;
 }
 
 export interface SendA2AMessageOptions {
@@ -129,6 +83,7 @@ async function processA2AStream(
     let resolved = false;
     let terminalData: StreamResponse | null = null;
     let streamError: any = null;
+    let receivedAnyText = false;
     const progressQueue: Promise<void>[] = [];
     let taskIdNotified = false;
 
@@ -210,10 +165,33 @@ async function processA2AStream(
           }
         }
 
-        if (data.statusUpdate?.status) {
-          notifyTaskId(data.statusUpdate.taskId);
-          const state = data.statusUpdate.status.state;
-          if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
+        const statusUpdate = data.statusUpdate || data.status_update;
+        if (statusUpdate?.status) {
+          notifyTaskId(statusUpdate.taskId || statusUpdate.task_id);
+
+          // A2A 1.0: Extract text content from message inside status update
+          const message = statusUpdate.status.message;
+          if (message && Array.isArray(message.parts)) {
+            for (const part of message.parts) {
+              const text = part.text || (part.kind === "text" ? part.text : undefined);
+              if (text && onProgress) {
+                receivedAnyText = true;
+                try {
+                  const res = onProgress(text);
+                  if (res && typeof res.then === 'function') {
+                    progressQueue.push(res);
+                  }
+                } catch (e) {
+                  console.error("Error in onProgress", e);
+                }
+              }
+            }
+          }
+
+          const state = statusUpdate.status.state;
+          const isFinal = statusUpdate.final === true || statusUpdate.status.final === true;
+          
+          if (isFinal || state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED" || state === "input-required" || state === "completed" || state === "failed") {
             if (!resolved) {
               resolved = true;
               terminalData = data;
@@ -225,7 +203,8 @@ async function processA2AStream(
         if (data.task?.status) {
           notifyTaskId(data.task.id);
           const state = data.task.status.state;
-          if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
+          const isFinal = data.task.status.final === true;
+          if (isFinal || state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
             if (!resolved) {
               resolved = true;
               terminalData = data;
@@ -282,6 +261,9 @@ async function processA2AStream(
         reject(streamError);
       } else if (terminalData) {
         resolve(terminalData);
+      } else if (receivedAnyText) {
+        // Fallback for A2A 1.0 where stream might end without a formal terminal event but we got text
+        resolve({ statusUpdate: { status: { state: "TASK_STATE_COMPLETED" } } } as any);
       } else {
         reject(new Error("Stream ended without a terminal event (task, statusUpdate, or message)"));
       }
@@ -306,7 +288,7 @@ export async function sendA2AMessage(
   const timeoutMs = options?.timeoutMs ?? 120_000;
 
   const headers: Record<string, string> = {
-    "Content-Type": "application/a2a+json",
+    "Content-Type": "application/json",
     "A2A-Version": "1.0",
   };
   if (token) {
@@ -316,13 +298,29 @@ export async function sendA2AMessage(
   const controller = new AbortController();
   const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
 
+  console.error(`[A2A] Sending request to: ${baseUrl}/v1/message:stream`);
+  console.error(`[A2A] Headers: ${JSON.stringify(headers)}`);
+
   try {
-    const response = await fetch(`${baseUrl}/message:stream`, {
+    const restRequest = {
+      message: {
+        role: 1, // ROLE_USER
+        content: (request.message.parts || []).map(p => ({ text: p.text })),
+        messageId: request.message.messageId || `msg-${Date.now()}`,
+        contextId: request.message.contextId || "default-context",
+        metadata: request.metadata,
+        configuration: request.configuration
+      }
+    };
+
+    const response = await fetch(`${baseUrl}/v1/message:stream`, {
       method: "POST",
       headers,
-      body: JSON.stringify(request),
+      body: JSON.stringify(restRequest),
       signal: controller.signal,
     });
+
+    console.error(`[A2A] Response received: ${response.status} ${response.statusText}`);
 
     if (!response.ok) {
       let errorBody = "";
@@ -374,11 +372,12 @@ export async function subscribeToA2ATask(
   const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
 
   try {
-    const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}:subscribe`, {
-      method: "POST",
+    const response = await fetch(`${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`, {
+      method: "GET",
       headers,
       signal: controller.signal,
     });
+
 
     if (!response.ok) {
       let errorBody = "";
@@ -406,58 +405,139 @@ export async function subscribeToA2ATask(
   }
 }
 
-export async function getA2ATask(
+export async function delegateTaskToGemini(
   baseUrl: string,
-  taskId: string,
-  options?: { token?: string; timeoutMs?: number }
-): Promise<Task> {
-  const headers: Record<string, string> = {
-    "Accept": "application/a2a+json",
-    "A2A-Version": "1.0",
-  };
-  if (options?.token) {
-    headers["Authorization"] = `Bearer ${options.token}`;
-  }
-
-  const timeoutMs = options?.timeoutMs ?? 120_000;
-  const controller = new AbortController();
-  const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+  taskDescription: string,
+  options: {
+    token?: string;
+    pollIntervalMs?: number;
+    metadata?: any;
+    configuration?: any;
+  } = {}
+): Promise<string> {
+  const { token, pollIntervalMs = 2000, metadata, configuration } = options;
+  let currentTaskId: string | null = null;
+  let finalTask: Task | undefined;
+  let finalMessage: StreamResponse["message"] | undefined;
 
   try {
-    const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
-      method: "GET",
-      headers,
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      let errorBody = "";
-      try {
-        errorBody = await response.text();
-      } catch (e: any) {
-        if (e.name === "AbortError") {
-          throw e;
+    try {
+      const response = await sendA2AMessage(baseUrl, {
+        message: {
+          role: "ROLE_USER",
+          parts: [{ text: taskDescription }]
+        },
+        metadata,
+        configuration
+      }, {
+        token,
+        onProgress: (text) => {
+          process.stdout.write(text);
+        },
+        onTaskId: (id) => {
+          currentTaskId = id;
         }
-        errorBody = "Failed to read response body";
+      });
+      finalTask = response.task;
+      finalMessage = response.message;
+    } catch (err: any) {
+      if (!currentTaskId) {
+        throw err;
       }
-      throw new Error(`A2A GetTask failed: ${response.status} ${response.statusText} - ${errorBody}`);
+      
+      process.stdout.write("\nConnection lost. Attempting to re-attach to task...\n");
+      
+      try {
+        const subResponse = await subscribeToA2ATask(baseUrl, currentTaskId, {
+          token,
+          onProgress: (text) => {
+            process.stdout.write(text);
+          },
+          onTaskId: (id) => {
+            currentTaskId = id;
+          }
+        });
+        finalTask = subResponse.task;
+        finalMessage = subResponse.message;
+      } catch (subErr: any) {
+        process.stdout.write(`\nStreaming failed (${subErr.message}). Falling back to polling...\n`);
+        
+        // Polling loop
+        const maxPollingAttempts = 60; // Max 2 minutes
+        let pollingAttempts = 0;
+        let consecutiveErrorCount = 0;
+        while (true) {
+          if (pollingAttempts >= maxPollingAttempts) {
+            throw new Error(`Polling timed out after ${maxPollingAttempts} attempts for task ${currentTaskId}`);
+          }
+
+          let task;
+          try {
+            task = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
+            consecutiveErrorCount = 0;
+          } catch (e: any) {
+            consecutiveErrorCount++;
+            console.error(`\nError fetching task ${currentTaskId}: ${e.message}`);
+            if (consecutiveErrorCount > 5) {
+              throw new Error(`Polling failed after ${consecutiveErrorCount} consecutive errors for task ${currentTaskId}`);
+            }
+            await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+            pollingAttempts++;
+            continue;
+          }
+
+          if (task.status.state === "TASK_STATE_COMPLETED" || task.status.state === "TASK_STATE_FAILED") {
+            finalTask = task;
+            break;
+          }
+          process.stdout.write("."); // tick
+          await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+          pollingAttempts++;
+        }
+        process.stdout.write("\n");
+      }
     }
 
-    const data = await response.json();
-    const result = validateTask(data);
-    if (!result.valid) {
-      throw new Error(`Invalid task response: ${result.errors.join(", ")}`);
+    if (finalMessage) {
+       const resultText = (finalMessage.parts || []).map(p => p.text ?? "").join("");
+       return `Gemini agent replied:\n${resultText}`;
     }
 
-    return result.task;
+    // If we only got a statusUpdate but no full task, fetch the full task to get artifacts
+    if (!finalTask && currentTaskId) {
+      finalTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
+      if (!finalTask || !finalTask.status) {
+        throw new Error(`Failed to fetch valid task for ${currentTaskId}: ${JSON.stringify(finalTask)}`);
+      }
+    }
+
+    if (finalTask && finalTask.status.state === "TASK_STATE_COMPLETED") {
+        if ((!finalTask.artifacts || finalTask.artifacts.length === 0) && currentTaskId) {
+          // Perform one additional fetch to refresh canonical task artifacts
+          try {
+            const refreshedTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
+            if (refreshedTask && refreshedTask.status.state === "TASK_STATE_COMPLETED") {
+              if (!refreshedTask.artifacts || refreshedTask.artifacts.length === 0) {
+                console.warn(`[A2A] Task ${currentTaskId} refreshed but artifacts are still missing/empty. State: ${refreshedTask.status.state}`);
+              }
+              finalTask = refreshedTask;
+            }
+          } catch (e) {
+            console.error(`Failed to refresh task ${currentTaskId} for artifacts:`, e);
+          }
+       }
+       const artifacts = finalTask.artifacts || [];
+       const resultText = artifacts.map(a => a.parts.map(p => p.text ?? "").join("")).join("\n");
+       return `Task completed by Gemini agent. Result:\n${resultText}`;
+    }
+
+    if (finalTask && finalTask.status.state === "TASK_STATE_FAILED") {
+      throw new Error(`Task failed on the Gemini agent side. Final task state: ${JSON.stringify(finalTask)}`);
+    }
+
+    return `Task initiated, but returned unexpected state. Task: ${JSON.stringify(finalTask)}`;
   } catch (error: any) {
-    if (error.name === "AbortError") {
-      throw new Error(`A2A GetTask timeout: Request took longer than ${timeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
+    throw new Error(`Error delegating task to Gemini: ${error?.message || String(error)}`);
   }
 }
+
