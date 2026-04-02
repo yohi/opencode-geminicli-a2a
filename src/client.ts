@@ -185,7 +185,13 @@ export async function sendA2AMessage(
                   try {
                     const res = onProgress(part.text);
                     if (res && typeof res.then === 'function') {
-                      progressQueue.push(res);
+                      progressQueue.push(res.catch(e => {
+                        if (!resolved) {
+                          resolved = true;
+                          streamError = e;
+                          controller.abort();
+                        }
+                      }));
                     }
                   } catch (e) {
                     if (!resolved) {
