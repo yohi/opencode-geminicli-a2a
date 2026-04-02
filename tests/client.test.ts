@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { sendA2AMessage, subscribeToA2ATask, getA2ATask } from "../src/client";
+import { geminiA2aPlugin } from "../src/index";
 
 test("sendA2AMessage should parse SSE stream and trigger onProgress for multiple parts", async () => {
   const server = Bun.serve({
@@ -354,6 +355,57 @@ test("sendA2AMessage should ignore empty or whitespace taskId and call onTaskId 
       onTaskId: (id) => { capturedTaskIds.push(id); }
     });
     expect(capturedTaskIds).toEqual(["task-real"]);
+  } finally {
+    server.stop();
+  }
+});
+
+test("geminiA2aPlugin should recover via polling when streaming and subscribe fail", async () => {
+  let pollCount = 0;
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/message:stream") {
+        // First request: return a statusUpdate with taskId, then fail the stream
+        const stream = new ReadableStream({
+          async start(controller) {
+            controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-recovery", "status": {"state": "TASK_STATE_WORKING"}}}\n\n`));
+            await new Promise(r => setTimeout(r, 10)); // Give it a moment to be processed
+            controller.error(new Error("Streaming connection lost"));
+          }
+        });
+        return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+      }
+      if (url.pathname === "/tasks/task-recovery:subscribe") {
+        // Subscribe request: fail immediately
+        return new Response("Subscribe failed", { status: 500 });
+      }
+      if (url.pathname === "/tasks/task-recovery") {
+        pollCount++;
+        if (pollCount < 3) {
+          return new Response(JSON.stringify({
+            id: "task-recovery",
+            status: { state: "TASK_STATE_WORKING" }
+          }), { headers: { "Content-Type": "application/json" } });
+        } else {
+          return new Response(JSON.stringify({
+            id: "task-recovery",
+            status: { state: "TASK_STATE_COMPLETED" },
+            artifacts: [{ artifactId: "art-1", parts: [{ text: "Recovered result" }] }]
+          }), { headers: { "Content-Type": "application/json" } });
+        }
+      }
+      return new Response("Not Found", { status: 404 });
+    },
+  });
+
+  try {
+    const plugin = await geminiA2aPlugin({}, { baseUrl: `http://localhost:${server.port}` });
+    const result = await plugin.tool.delegate_to_gemini.execute({ taskDescription: "test recovery" });
+
+    expect(pollCount).toBe(3);
+    expect(result).toBe("Task completed by Gemini agent. Result:\nRecovered result");
   } finally {
     server.stop();
   }

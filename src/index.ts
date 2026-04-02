@@ -108,11 +108,14 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
             }
 
             if (finalTask && finalTask.status.state === "TASK_STATE_COMPLETED") {
-               if ((!finalTask.artifacts || finalTask.artifacts.length === 0) && currentTaskId) {
+                if ((!finalTask.artifacts || finalTask.artifacts.length === 0) && currentTaskId) {
                   // Perform one additional fetch to refresh canonical task artifacts
                   try {
                     const refreshedTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
                     if (refreshedTask && refreshedTask.status.state === "TASK_STATE_COMPLETED") {
+                      if (!refreshedTask.artifacts || refreshedTask.artifacts.length === 0) {
+                        console.warn(`[A2A] Task ${currentTaskId} refreshed but artifacts are still missing/empty. State: ${refreshedTask.status.state}`);
+                      }
                       finalTask = refreshedTask;
                     }
                   } catch (e) {
