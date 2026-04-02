@@ -100,6 +100,10 @@ export async function sendA2AMessage(
   request: SendMessageRequest,
   options?: SendA2AMessageOptions
 ): Promise<StreamResponse> {
+  if (typeof options === "string") {
+    options = { token: options };
+  }
+
   const token = options?.token;
   const onProgress = options?.onProgress;
   const timeoutMs = options?.timeoutMs ?? 120_000;
@@ -186,17 +190,21 @@ export async function sendA2AMessage(
                     const res = onProgress(part.text);
                     if (res && typeof res.then === 'function') {
                       progressQueue.push(res.catch(e => {
+                        if (!streamError) {
+                          streamError = e;
+                        }
                         if (!resolved) {
                           resolved = true;
-                          streamError = e;
                           controller.abort();
                         }
                       }));
                     }
                   } catch (e) {
+                    if (!streamError) {
+                      streamError = e;
+                    }
                     if (!resolved) {
                       resolved = true;
-                      streamError = e;
                       controller.abort();
                     }
                     return;
