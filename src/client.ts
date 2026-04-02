@@ -119,7 +119,10 @@ export async function sendA2AMessage(
       let errorBody = "";
       try {
         errorBody = await response.text();
-      } catch (e) {
+      } catch (e: any) {
+        if (e.name === "AbortError") {
+          throw e;
+        }
         errorBody = "Failed to read response body";
       }
       throw new Error(`A2A Request failed: ${response.status} ${response.statusText} - ${errorBody}`);
@@ -135,57 +138,68 @@ export async function sendA2AMessage(
       const parser = createParser({
         onEvent(event) {
           if (resolved) return;
+          let data: any;
           try {
-            const data = JSON.parse(event.data);
+            data = JSON.parse(event.data);
             if (!isValidStreamResponse(data)) {
               if (process.env.NODE_ENV !== "production") {
                 console.warn("Invalid stream response:", data);
               }
               return;
             }
+          } catch (e) {
+            if (process.env.NODE_ENV !== "production") {
+              console.debug("Failed to parse SSE event data:", event.data, e);
+            }
+            return;
+          }
 
-            if (data.artifactUpdate && onProgress) {
-              const parts = data.artifactUpdate.artifact.parts;
-              if (Array.isArray(parts)) {
-                for (const part of parts) {
-                  if (part.text) {
+          if (data.artifactUpdate && onProgress) {
+            const parts = data.artifactUpdate.artifact.parts;
+            if (Array.isArray(parts)) {
+              for (const part of parts) {
+                if (part.text) {
+                  try {
                     onProgress(part.text);
+                  } catch (e) {
+                    if (!resolved) {
+                      resolved = true;
+                      controller.abort();
+                      reject(e);
+                    }
+                    return;
                   }
                 }
               }
             }
+          }
 
-            if (data.statusUpdate?.status) {
-              const state = data.statusUpdate.status.state;
-              if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
-                if (!resolved) {
-                  resolved = true;
-                  controller.abort();
-                  resolve(data);
-                }
-              }
-            }
-
-            if (data.task?.status) {
-              const state = data.task.status.state;
-              if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
-                if (!resolved) {
-                  resolved = true;
-                  controller.abort();
-                  resolve(data);
-                }
-              }
-            }
-            if (data.message) {
+          if (data.statusUpdate?.status) {
+            const state = data.statusUpdate.status.state;
+            if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
               if (!resolved) {
                 resolved = true;
                 controller.abort();
                 resolve(data);
               }
             }
-          } catch (e) {
-            if (process.env.NODE_ENV !== "production") {
-              console.debug("Failed to parse SSE event data:", event.data, e);
+          }
+
+          if (data.task?.status) {
+            const state = data.task.status.state;
+            if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
+              if (!resolved) {
+                resolved = true;
+                controller.abort();
+                resolve(data);
+              }
+            }
+          }
+          if (data.message) {
+            if (!resolved) {
+              resolved = true;
+              controller.abort();
+              resolve(data);
             }
           }
         }
