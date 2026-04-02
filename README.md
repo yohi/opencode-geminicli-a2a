@@ -28,11 +28,8 @@ Currently, this is a minimal proof-of-concept (PoC) implementation that connects
 ### 1. ✅ Streaming Support (Server-Sent Events: SSE)
 *   **Accomplished:** Switched to the `POST /message:stream` endpoint and implemented real-time event parsing using `eventsource-parser`. Progress and artifacts are surfaced to the CLI as they arrive.
 
-### 2. Task Polling & Continuation [High Priority]
-*   **Current State:** Successfully handles `TASK_STATE_WORKING` and waits for a terminal state (`COMPLETED` or `FAILED`) within the stream.
-*   **Next Steps:**
-    *   Implement fallback polling using `GET /tasks/{id}` for environments where long-lived HTTP streams are unstable or restricted.
-    *   Handle task re-attachment (subscribing to an existing task) using `POST /tasks/{id}:subscribe`.
+### 2. ✅ Task Polling & Continuation
+*   **Accomplished:** Implemented robust task continuation to handle unstable long-lived HTTP streams. The client captures the `taskId` early and, upon stream failure, attempts to re-attach via `POST /tasks/{id}:subscribe`. If streaming remains unavailable, it automatically falls back to polling via `GET /tasks/{id}` until a terminal state is reached.
 
 ### 3. Human-in-the-Loop (Input/Auth Required) [High Priority]
 *   **Current State:** Cannot handle requests for clarification or authorization from the A2A server.

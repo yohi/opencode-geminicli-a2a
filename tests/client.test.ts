@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { sendA2AMessage } from "../src/client";
+import { sendA2AMessage, subscribeToA2ATask, getA2ATask } from "../src/client";
+import { geminiA2aPlugin } from "../src/index";
 
 test("sendA2AMessage should parse SSE stream and trigger onProgress for multiple parts", async () => {
   const server = Bun.serve({
@@ -125,7 +126,6 @@ test("sendA2AMessage throws when stream contains malformed JSON", async () => {
   });
 
   try {
-    // We now throw on invalid JSON parts instead of ignoring them.
     await expect(sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } })).rejects.toThrow(/Failed to parse SSE event data: not a json object/);
   } finally {
     server.stop();
@@ -158,8 +158,10 @@ test("sendA2AMessage throws on timeout during stream reading", async () => {
       const stream = new ReadableStream({
         start(controller) {
           setTimeout(() => {
-            controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-1", "status": {"state": "TASK_STATE_WORKING"}}}\n\n`));
-            controller.close();
+            try {
+              controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-1", "status": {"state": "TASK_STATE_WORKING"}}}\n\n`));
+              controller.close();
+            } catch (e) {}
           }, 100);
         }
       });
@@ -169,6 +171,241 @@ test("sendA2AMessage throws on timeout during stream reading", async () => {
 
   try {
     await expect(sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, { timeoutMs: 50 })).rejects.toThrow("A2A Request timeout: Request took longer than 50ms");
+  } finally {
+    server.stop();
+  }
+});
+
+test("sendA2AMessage should call onTaskId when taskId is first seen", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-abc", "status": {"state": "TASK_STATE_WORKING"}}}\n\n`));
+          controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-abc", "status": {"state": "TASK_STATE_COMPLETED"}}}\n\n`));
+          controller.close();
+        }
+      });
+      return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+    },
+  });
+
+  try {
+    let capturedTaskId = "";
+    let callCount = 0;
+    await sendA2AMessage(
+      `http://localhost:${server.port}`,
+      { message: { role: "ROLE_USER", parts: [] } },
+      {
+        onTaskId: (id) => {
+          capturedTaskId = id;
+          callCount++;
+        }
+      }
+    );
+    expect(capturedTaskId).toBe("task-abc");
+    expect(callCount).toBe(1); // Should only be called once
+  } finally {
+    server.stop();
+  }
+});
+
+test("subscribeToA2ATask should process stream successfully", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (req.method === "POST" && new URL(req.url).pathname === "/tasks/task-123:subscribe") {
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-123", "status": {"state": "TASK_STATE_COMPLETED"}}}\n\n`));
+            controller.close();
+          }
+        });
+        return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+      }
+      return new Response("Not Found", { status: 404 });
+    },
+  });
+
+  try {
+    let capturedTaskId = "";
+    const result = await subscribeToA2ATask(
+      `http://localhost:${server.port}`,
+      "task-123",
+      {
+        onTaskId: (id) => { capturedTaskId = id; }
+      }
+    );
+    expect(result.statusUpdate?.status.state).toBe("TASK_STATE_COMPLETED");
+    expect(capturedTaskId).toBe("task-123");
+  } finally {
+    server.stop();
+  }
+});
+
+test("getA2ATask should fetch task successfully", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (req.method === "GET" && new URL(req.url).pathname === "/tasks/task-456") {
+        return new Response(JSON.stringify({
+          id: "task-456",
+          status: { state: "TASK_STATE_WORKING" }
+        }), { headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("Not Found", { status: 404 });
+    },
+  });
+
+  try {
+    const task = await getA2ATask(`http://localhost:${server.port}`, "task-456");
+    expect(task.id).toBe("task-456");
+    expect(task.status.state).toBe("TASK_STATE_WORKING");
+  } finally {
+    server.stop();
+  }
+});
+
+test("getA2ATask should throw on 404 response", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response("Not Found", { status: 404, statusText: "Not Found" });
+    },
+  });
+  try {
+    await expect(getA2ATask(`http://localhost:${server.port}`, "no-such-task"))
+      .rejects.toThrow("A2A GetTask failed: 404 Not Found");
+  } finally {
+    server.stop();
+  }
+});
+
+test("sendA2AMessage should ignore non-string taskId in message and not call onTaskId", async () => {
+  let taskIdCalled: string | null = null;
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"message": {"role": "ROLE_AGENT", "parts": [{"text": "hello"}], "taskId": 123}}\n\n'));
+          controller.close();
+        }
+      });
+      return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+    },
+  });
+
+  try {
+    await sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, {
+      onTaskId: (id) => { taskIdCalled = id; }
+    });
+    expect(taskIdCalled).toBeNull();
+  } finally {
+    server.stop();
+  }
+});
+
+test("sendA2AMessage should accept string taskId in message and call onTaskId", async () => {
+  let taskIdCalled: string | null = null;
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"message": {"role": "ROLE_AGENT", "parts": [{"text": "hello"}], "taskId": "task-abc"}}\n\n'));
+          controller.close();
+        }
+      });
+      return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+    },
+  });
+
+  try {
+    await sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, {
+      onTaskId: (id) => { taskIdCalled = id; }
+    });
+    expect(taskIdCalled).toBe("task-abc");
+  } finally {
+    server.stop();
+  }
+});
+
+test("sendA2AMessage should ignore empty or whitespace taskId and call onTaskId only with first real ID", async () => {
+  let capturedTaskIds: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"statusUpdate": {"taskId": "  ", "status": {"state": "TASK_STATE_WORKING"}}}\n\n'));
+          controller.enqueue(new TextEncoder().encode('data: {"statusUpdate": {"taskId": "", "status": {"state": "TASK_STATE_WORKING"}}}\n\n'));
+          controller.enqueue(new TextEncoder().encode('data: {"statusUpdate": {"taskId": "task-real", "status": {"state": "TASK_STATE_WORKING"}}}\n\n'));
+          controller.enqueue(new TextEncoder().encode('data: {"statusUpdate": {"taskId": "task-ignored", "status": {"state": "TASK_STATE_COMPLETED"}}}\n\n'));
+          controller.close();
+        }
+      });
+      return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+    },
+  });
+
+  try {
+    await sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, {
+      onTaskId: (id) => { capturedTaskIds.push(id); }
+    });
+    expect(capturedTaskIds).toEqual(["task-real"]);
+  } finally {
+    server.stop();
+  }
+});
+
+test("geminiA2aPlugin should recover via polling when streaming and subscribe fail", async () => {
+  let pollCount = 0;
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/message:stream") {
+        // First request: return a statusUpdate with taskId, then fail the stream
+        const stream = new ReadableStream({
+          async start(controller) {
+            controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-recovery", "status": {"state": "TASK_STATE_WORKING"}}}\n\n`));
+            await new Promise(r => setTimeout(r, 10)); // Give it a moment to be processed
+            controller.error(new Error("Streaming connection lost"));
+          }
+        });
+        return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+      }
+      if (url.pathname === "/tasks/task-recovery:subscribe") {
+        // Subscribe request: fail immediately
+        return new Response("Subscribe failed", { status: 500 });
+      }
+      if (url.pathname === "/tasks/task-recovery") {
+        pollCount++;
+        if (pollCount < 3) {
+          return new Response(JSON.stringify({
+            id: "task-recovery",
+            status: { state: "TASK_STATE_WORKING" }
+          }), { headers: { "Content-Type": "application/json" } });
+        } else {
+          return new Response(JSON.stringify({
+            id: "task-recovery",
+            status: { state: "TASK_STATE_COMPLETED" },
+            artifacts: [{ artifactId: "art-1", parts: [{ text: "Recovered result" }] }]
+          }), { headers: { "Content-Type": "application/json" } });
+        }
+      }
+      return new Response("Not Found", { status: 404 });
+    },
+  });
+
+  try {
+    const plugin = await geminiA2aPlugin({}, { baseUrl: `http://localhost:${server.port}`, pollIntervalMs: 10 });
+    const result = await plugin.tool.delegate_to_gemini.execute({ taskDescription: "test recovery" });
+
+    expect(pollCount).toBe(3);
+    expect(result).toBe("Task completed by Gemini agent. Result:\nRecovered result");
   } finally {
     server.stop();
   }
