@@ -19,8 +19,11 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
                 role: "ROLE_USER",
                 parts: [{ text: taskDescription }]
               }
-            }, token, (text) => {
-              process.stdout.write(text);
+            }, {
+              token,
+              onProgress: (text) => {
+                process.stdout.write(text);
+              }
             });
 
             if (response.task && response.task.status.state === "TASK_STATE_COMPLETED") {

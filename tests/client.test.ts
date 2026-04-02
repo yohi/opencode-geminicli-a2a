@@ -27,10 +27,11 @@ test("sendA2AMessage should parse SSE stream and trigger onProgress for multiple
     const result = await sendA2AMessage(
       `http://localhost:${server.port}`,
       { message: { role: "ROLE_USER", parts: [{text: "hello"}] } },
-      undefined,
-      (text) => {
-        accumulated += text;
-        chunks.push(text);
+      {
+        onProgress: (text) => {
+          accumulated += text;
+          chunks.push(text);
+        }
       }
     );
 
@@ -90,7 +91,7 @@ test("sendA2AMessage sends Authorization header if token is provided", async () 
   });
 
   try {
-    await sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, "secret-token");
+    await sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, { token: "secret-token" });
     expect(authHeader).toBe("Bearer secret-token");
   } finally {
     server.stop();
@@ -126,7 +127,30 @@ test("sendA2AMessage throws on timeout with custom message", async () => {
   });
 
   try {
-    await expect(sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, undefined, undefined, 50)).rejects.toThrow("A2A Request timeout: Request took longer than 50ms");
+    await expect(sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, { timeoutMs: 50 })).rejects.toThrow("A2A Request timeout: Request took longer than 50ms");
+  } finally {
+    server.stop();
+  }
+});
+
+test("sendA2AMessage throws on timeout during stream reading", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const stream = new ReadableStream({
+        start(controller) {
+          setTimeout(() => {
+            controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-1", "status": {"state": "TASK_STATE_WORKING"}}}\n\n`));
+            controller.close();
+          }, 100);
+        }
+      });
+      return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+    },
+  });
+
+  try {
+    await expect(sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, { timeoutMs: 50 })).rejects.toThrow("A2A Request timeout: Request took longer than 50ms");
   } finally {
     server.stop();
   }

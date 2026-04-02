@@ -89,13 +89,21 @@ export function isValidStreamResponse(obj: any): obj is StreamResponse {
   return hasValidField;
 }
 
+export interface SendA2AMessageOptions {
+  token?: string;
+  onProgress?: (text: string) => void;
+  timeoutMs?: number;
+}
+
 export async function sendA2AMessage(
   baseUrl: string,
   request: SendMessageRequest,
-  token?: string,
-  onProgress?: (text: string) => void,
-  timeoutMs: number = 120_000
+  options?: SendA2AMessageOptions
 ): Promise<StreamResponse> {
+  const token = options?.token;
+  const onProgress = options?.onProgress;
+  const timeoutMs = options?.timeoutMs ?? 120_000;
+
   const headers: Record<string, string> = {
     "Content-Type": "application/a2a+json",
     "A2A-Version": "1.0",
