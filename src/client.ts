@@ -234,7 +234,7 @@ export async function sendA2AMessage(
       processStream().then(() => {
         if (!resolved) {
           resolved = true;
-          reject(new Error("Stream ended without a terminal task event"));
+          reject(new Error("Stream ended without a terminal event (task, statusUpdate, or message)"));
         }
       }).catch((err) => {
         if (!resolved) {

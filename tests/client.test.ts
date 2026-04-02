@@ -107,7 +107,7 @@ test("sendA2AMessage throws when stream ends without a terminal task event", asy
 
   try {
     // We now ignore invalid JSON parts. If only invalid parts exist, the stream ends without a terminal event.
-    await expect(sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } })).rejects.toThrow("Stream ended without a terminal task event");
+    await expect(sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } })).rejects.toThrow("Stream ended without a terminal event (task, statusUpdate, or message)");
   } finally {
     server.stop();
   }
