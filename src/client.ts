@@ -172,7 +172,8 @@ export async function sendA2AMessage(
                   resolve(data);
                 }
               }
-            } else if (data.message) {
+            }
+            if (data.message) {
               if (!resolved) {
                 resolved = true;
                 controller.abort();
