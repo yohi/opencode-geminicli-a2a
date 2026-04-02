@@ -98,6 +98,24 @@ test("sendA2AMessage sends Authorization header if token is provided", async () 
   }
 });
 
+test("sendA2AMessage sends Authorization header if legacy string token is provided", async () => {
+  let authHeader = "";
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      authHeader = req.headers.get("Authorization") || "";
+      return new Response(`data: {"message": {"role": "ROLE_AGENT", "parts": [{"text": "ok"}]}}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
+    },
+  });
+
+  try {
+    await sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, "secret-token-legacy");
+    expect(authHeader).toBe("Bearer secret-token-legacy");
+  } finally {
+    server.stop();
+  }
+});
+
 test("sendA2AMessage throws when stream contains malformed JSON", async () => {
   const server = Bun.serve({
     port: 0,

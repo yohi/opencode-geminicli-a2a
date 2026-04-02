@@ -98,7 +98,7 @@ export interface SendA2AMessageOptions {
 export async function sendA2AMessage(
   baseUrl: string,
   request: SendMessageRequest,
-  options?: SendA2AMessageOptions
+  options?: SendA2AMessageOptions | string
 ): Promise<StreamResponse> {
   if (typeof options === "string") {
     options = { token: options };
