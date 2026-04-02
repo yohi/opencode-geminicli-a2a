@@ -17,6 +17,7 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
           try {
             let currentTaskId: string | null = null;
             let finalTask: Task | undefined;
+            let finalMessage: StreamResponse["message"] | undefined;
 
             try {
               const response = await sendA2AMessage(baseUrl, {
@@ -34,6 +35,7 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
                 }
               });
               finalTask = response.task;
+              finalMessage = response.message;
             } catch (err: any) {
               if (!currentTaskId) {
                 throw err;
@@ -52,6 +54,7 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
                   }
                 });
                 finalTask = subResponse.task;
+                finalMessage = subResponse.message;
               } catch (subErr: any) {
                 process.stdout.write(`\nStreaming failed (${subErr.message}). Falling back to polling...\n`);
                 
@@ -66,7 +69,7 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
 
                   let task;
                   try {
-                    task = await getA2ATask(baseUrl, currentTaskId, { token });
+                    task = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
                     consecutiveErrorCount = 0;
                   } catch (e: any) {
                     consecutiveErrorCount++;
@@ -89,6 +92,11 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
                 }
                 process.stdout.write("\n");
               }
+            }
+
+            if (finalMessage) {
+               const resultText = finalMessage.parts.map(p => p.text ?? "").join("");
+               return `Gemini agent replied:\n${resultText}`;
             }
 
             // If we only got a statusUpdate but no full task, fetch the full task to get artifacts

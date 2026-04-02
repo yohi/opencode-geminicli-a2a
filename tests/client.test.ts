@@ -280,3 +280,53 @@ test("getA2ATask should throw on 404 response", async () => {
     server.stop();
   }
 });
+
+test("sendA2AMessage should ignore non-string taskId in message and not call onTaskId", async () => {
+  let taskIdCalled: string | null = null;
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"message": {"role": "ROLE_AGENT", "parts": [{"text": "hello"}], "taskId": 123}}\n\n'));
+          controller.close();
+        }
+      });
+      return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+    },
+  });
+
+  try {
+    await sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, {
+      onTaskId: (id) => { taskIdCalled = id; }
+    });
+    expect(taskIdCalled).toBeNull();
+  } finally {
+    server.stop();
+  }
+});
+
+test("sendA2AMessage should accept string taskId in message and call onTaskId", async () => {
+  let taskIdCalled: string | null = null;
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"message": {"role": "ROLE_AGENT", "parts": [{"text": "hello"}], "taskId": "task-abc"}}\n\n'));
+          controller.close();
+        }
+      });
+      return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+    },
+  });
+
+  try {
+    await sendA2AMessage(`http://localhost:${server.port}`, { message: { role: "ROLE_USER", parts: [] } }, {
+      onTaskId: (id) => { taskIdCalled = id; }
+    });
+    expect(taskIdCalled).toBe("task-abc");
+  } finally {
+    server.stop();
+  }
+});

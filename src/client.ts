@@ -221,7 +221,7 @@ async function processA2AStream(
           }
         }
         if (data.message) {
-          if (data.message.taskId) {
+          if (typeof data.message.taskId === "string") {
              notifyTaskId(data.message.taskId);
           }
           if (!resolved) {
