@@ -1,5 +1,5 @@
 import { createParser } from "eventsource-parser";
-import type { SendMessageRequest, StreamResponse, Task } from "./a2a-types";
+import type { SendMessageRequest, StreamResponse, Task, Part, Artifact } from "./a2a-types";
 
 const VALID_STATES = [
   "TASK_STATE_PENDING",
@@ -8,42 +8,47 @@ const VALID_STATES = [
   "TASK_STATE_FAILED",
   "TASK_STATE_SUBMITTED",
   "TASK_STATE_INPUT_REQUIRED",
-];
+] as const;
 
-const VALID_ROLES = ["ROLE_USER", "ROLE_AGENT"];
-
-function isValidPart(p: any): boolean {
-  return p && typeof p === "object" && (typeof p.text === "string" || typeof p.text === "undefined");
-}
-
-function isValidArtifact(a: any): boolean {
+function isValidPart(p: unknown): p is Part {
   return (
-    a &&
-    typeof a === "object" &&
-    typeof a.artifactId === "string" &&
-    Array.isArray(a.parts) &&
-    a.parts.every(isValidPart)
+    typeof p === "object" &&
+    p !== null &&
+    (typeof (p as Part).text === "string" || typeof (p as Part).text === "undefined")
   );
 }
 
-export function validateTask(t: any): { valid: true; task: Task } | { valid: false; errors: string[] } {
+function isValidArtifact(a: unknown): a is Artifact {
+  const artifact = a as Artifact;
+  return (
+    typeof a === "object" &&
+    a !== null &&
+    typeof artifact.artifactId === "string" &&
+    Array.isArray(artifact.parts) &&
+    artifact.parts.every(isValidPart)
+  );
+}
+
+export function validateTask(t: unknown): { valid: true; task: Task } | { valid: false; errors: string[] } {
   const errors: string[] = [];
   if (!t || typeof t !== "object") {
     errors.push("not an object");
     return { valid: false, errors };
   }
-  if (typeof t.id !== "string") {
+
+  const task = t as Task;
+  if (typeof task.id !== "string") {
     errors.push("missing or invalid 'id'");
   }
-  if (!t.status || typeof t.status !== "object") {
+  if (!task.status || typeof task.status !== "object") {
     errors.push("missing or invalid 'status'");
-  } else if (!VALID_STATES.includes(t.status.state)) {
-    errors.push(`invalid status.state '${t.status.state}'`);
+  } else if (!VALID_STATES.includes(task.status.state as any)) {
+    errors.push(`invalid status.state '${task.status.state}'`);
   }
-  if (t.artifacts !== undefined) {
-    if (!Array.isArray(t.artifacts)) {
+  if (task.artifacts !== undefined) {
+    if (!Array.isArray(task.artifacts)) {
       errors.push("artifacts is not an array");
-    } else if (!t.artifacts.every(isValidArtifact)) {
+    } else if (!task.artifacts.every(isValidArtifact)) {
       errors.push("failed validation in artifacts or parts");
     }
   }
@@ -51,15 +56,16 @@ export function validateTask(t: any): { valid: true; task: Task } | { valid: fal
   if (errors.length > 0) {
     return { valid: false, errors };
   }
-  return { valid: true, task: t as Task };
+  return { valid: true, task: task as Task };
 }
 
-export function isValidTask(t: any): t is Task {
+export function isValidTask(t: unknown): t is Task {
   return validateTask(t).valid;
 }
 
-export function isValidStreamResponse(obj: any): obj is StreamResponse {
-  return true;
+export function isValidStreamResponse(obj: unknown): obj is StreamResponse {
+  // 基本的にパースに成功していれば構造チェックに委ねる
+  return typeof obj === "object" && obj !== null;
 }
 
 export interface SendA2AMessageOptions {
@@ -82,7 +88,7 @@ async function processA2AStream(
   return await new Promise<StreamResponse>((resolve, reject) => {
     let resolved = false;
     let terminalData: StreamResponse | null = null;
-    let streamError: any = null;
+    let streamError: unknown = null;
     let receivedAnyText = false;
     const progressQueue: Promise<void>[] = [];
     let taskIdNotified = false;
@@ -109,7 +115,7 @@ async function processA2AStream(
       onEvent(event) {
         if (resolved) return;
         if (event.data === "") return;
-        let data: any;
+        let data: unknown;
         try {
           data = JSON.parse(event.data);
           if (!isValidStreamResponse(data)) {
@@ -129,16 +135,18 @@ async function processA2AStream(
           return;
         }
 
-        if (data.artifactUpdate) {
-          notifyTaskId(data.artifactUpdate.taskId);
+        const typedData = data as StreamResponse;
+
+        if (typedData.artifactUpdate) {
+          notifyTaskId(typedData.artifactUpdate.taskId);
           if (onProgress) {
-            const parts = data.artifactUpdate.artifact.parts;
+            const parts = typedData.artifactUpdate.artifact.parts;
             if (Array.isArray(parts)) {
               for (const part of parts) {
                 if (part.text) {
                   try {
                     const res = onProgress(part.text);
-                    if (res && typeof res.then === 'function') {
+                    if (res instanceof Promise) {
                       progressQueue.push(res.catch(e => {
                         if (!streamError) {
                           streamError = e;
@@ -165,9 +173,9 @@ async function processA2AStream(
           }
         }
 
-        const statusUpdate = data.statusUpdate || data.status_update;
+        const statusUpdate = typedData.statusUpdate;
         if (statusUpdate?.status) {
-          notifyTaskId(statusUpdate.taskId || statusUpdate.task_id);
+          notifyTaskId(statusUpdate.taskId);
 
           // A2A 1.0: Extract text content from message inside status update
           const message = statusUpdate.status.message;
@@ -178,7 +186,7 @@ async function processA2AStream(
                 receivedAnyText = true;
                 try {
                   const res = onProgress(text);
-                  if (res && typeof res.then === 'function') {
+                  if (res instanceof Promise) {
                     progressQueue.push(res);
                   }
                 } catch (e) {
@@ -189,36 +197,36 @@ async function processA2AStream(
           }
 
           const state = statusUpdate.status.state;
-          const isFinal = statusUpdate.final === true || statusUpdate.status.final === true;
+          const isFinal = statusUpdate.status.final === true;
           
           if (isFinal || state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED" || state === "input-required" || state === "completed" || state === "failed") {
             if (!resolved) {
               resolved = true;
-              terminalData = data;
+              terminalData = typedData;
               controller.abort();
             }
           }
         }
 
-        if (data.task?.status) {
-          notifyTaskId(data.task.id);
-          const state = data.task.status.state;
-          const isFinal = data.task.status.final === true;
+        if (typedData.task?.status) {
+          notifyTaskId(typedData.task.id);
+          const state = typedData.task.status.state;
+          const isFinal = typedData.task.status.final === true;
           if (isFinal || state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
             if (!resolved) {
               resolved = true;
-              terminalData = data;
+              terminalData = typedData;
               controller.abort();
             }
           }
         }
-        if (data.message) {
-          if (typeof data.message.taskId === "string") {
-             notifyTaskId(data.message.taskId);
+        if (typedData.message) {
+          if (typeof typedData.message.taskId === "string") {
+             notifyTaskId(typedData.message.taskId);
           }
           if (!resolved) {
             resolved = true;
-            terminalData = data;
+            terminalData = typedData;
             controller.abort();
           }
         }
@@ -244,7 +252,7 @@ async function processA2AStream(
           parser.feed(decoder.decode());
           parser.reset({ consume: true });
         }
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (!streamError) {
           streamError = e;
         }
@@ -263,7 +271,7 @@ async function processA2AStream(
         resolve(terminalData);
       } else if (receivedAnyText) {
         // Fallback for A2A 1.0 where stream might end without a formal terminal event but we got text
-        resolve({ statusUpdate: { status: { state: "TASK_STATE_COMPLETED" } } } as any);
+        resolve({ statusUpdate: { status: { state: "TASK_STATE_COMPLETED" } } } as StreamResponse);
       } else {
         reject(new Error("Stream ended without a terminal event (task, statusUpdate, or message)"));
       }
@@ -307,9 +315,9 @@ export async function sendA2AMessage(
         role: 1, // ROLE_USER
         content: (request.message.parts || []).map(p => ({ text: p.text })),
         messageId: request.message.messageId || `msg-${Date.now()}`,
-        contextId: request.message.contextId || "default-context",
-        metadata: request.metadata,
-        configuration: request.configuration
+        contextId: (request.message as any).contextId || "default-context",
+        metadata: (request as any).metadata,
+        configuration: (request as any).configuration
       }
     };
 
@@ -326,8 +334,8 @@ export async function sendA2AMessage(
       let errorBody = "";
       try {
         errorBody = await response.text();
-      } catch (e: any) {
-        if (e.name === "AbortError") {
+      } catch (e: unknown) {
+        if (e instanceof Error && e.name === "AbortError") {
           throw e;
         }
         errorBody = "Failed to read response body";
@@ -336,8 +344,8 @@ export async function sendA2AMessage(
     }
 
     return await processA2AStream(response, controller, options?.onProgress, options?.onTaskId);
-  } catch (error: any) {
-    if (error.name === "AbortError") {
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`A2A Request timeout: Request took longer than ${timeoutMs}ms`);
     }
     throw error;
@@ -383,8 +391,8 @@ export async function subscribeToA2ATask(
       let errorBody = "";
       try {
         errorBody = await response.text();
-      } catch (e: any) {
-        if (e.name === "AbortError") {
+      } catch (e: unknown) {
+        if (e instanceof Error && e.name === "AbortError") {
           throw e;
         }
         errorBody = "Failed to read response body";
@@ -393,8 +401,8 @@ export async function subscribeToA2ATask(
     }
 
     return await processA2AStream(response, controller, options?.onProgress, options?.onTaskId);
-  } catch (error: any) {
-    if (error.name === "AbortError") {
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`A2A Subscribe timeout: Request took longer than ${timeoutMs}ms`);
     }
     throw error;
@@ -405,14 +413,50 @@ export async function subscribeToA2ATask(
   }
 }
 
+export async function getA2ATask(
+  baseUrl: string,
+  taskId: string,
+  options: { token?: string; timeoutMs?: number } = {}
+): Promise<Task> {
+  const { token, timeoutMs = 30000 } = options;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "A2A-Version": "1.0",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Failed to fetch task ${taskId}: ${response.status} ${response.statusText} - ${errorBody}`);
+    }
+
+    const data = await response.json() as { task: Task };
+    return data.task;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export async function delegateTaskToGemini(
   baseUrl: string,
   taskDescription: string,
   options: {
     token?: string;
     pollIntervalMs?: number;
-    metadata?: any;
-    configuration?: any;
+    metadata?: Record<string, unknown>;
+    configuration?: Record<string, unknown>;
   } = {}
 ): Promise<string> {
   const { token, pollIntervalMs = 2000, metadata, configuration } = options;
@@ -429,7 +473,7 @@ export async function delegateTaskToGemini(
         },
         metadata,
         configuration
-      }, {
+      } as SendMessageRequest, {
         token,
         onProgress: (text) => {
           process.stdout.write(text);
@@ -440,7 +484,7 @@ export async function delegateTaskToGemini(
       });
       finalTask = response.task;
       finalMessage = response.message;
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (!currentTaskId) {
         throw err;
       }
@@ -459,8 +503,9 @@ export async function delegateTaskToGemini(
         });
         finalTask = subResponse.task;
         finalMessage = subResponse.message;
-      } catch (subErr: any) {
-        process.stdout.write(`\nStreaming failed (${subErr.message}). Falling back to polling...\n`);
+      } catch (subErr: unknown) {
+        const msg = subErr instanceof Error ? subErr.message : String(subErr);
+        process.stdout.write(`\nStreaming failed (${msg}). Falling back to polling...\n`);
         
         // Polling loop
         const maxPollingAttempts = 60; // Max 2 minutes
@@ -471,13 +516,14 @@ export async function delegateTaskToGemini(
             throw new Error(`Polling timed out after ${maxPollingAttempts} attempts for task ${currentTaskId}`);
           }
 
-          let task;
+          let task: Task;
           try {
             task = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
             consecutiveErrorCount = 0;
-          } catch (e: any) {
+          } catch (e: unknown) {
             consecutiveErrorCount++;
-            console.error(`\nError fetching task ${currentTaskId}: ${e.message}`);
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error(`\nError fetching task ${currentTaskId}: ${msg}`);
             if (consecutiveErrorCount > 5) {
               throw new Error(`Polling failed after ${consecutiveErrorCount} consecutive errors for task ${currentTaskId}`);
             }
@@ -536,8 +582,8 @@ export async function delegateTaskToGemini(
     }
 
     return `Task initiated, but returned unexpected state. Task: ${JSON.stringify(finalTask)}`;
-  } catch (error: any) {
-    throw new Error(`Error delegating task to Gemini: ${error?.message || String(error)}`);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    throw new Error(`Error delegating task to Gemini: ${msg}`);
   }
 }
-

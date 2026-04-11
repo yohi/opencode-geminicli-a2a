@@ -1,11 +1,20 @@
 import { Plugin, tool } from "@opencode-ai/plugin";
 import { delegateTaskToGemini, sendA2AMessage } from "./client";
-import type { LanguageModelV1, LanguageModelV1StreamPart } from "@ai-sdk/provider";
+import type { 
+  LanguageModelV3, 
+  LanguageModelV3CallOptions, 
+  LanguageModelV3GenerateResult, 
+  LanguageModelV3StreamResult,
+  LanguageModelV3StreamPart,
+  LanguageModelV3Usage,
+  LanguageModelV3FinishReason
+} from "@ai-sdk/provider";
+import type { SendMessageRequest } from "./a2a-types";
 
 /**
  * Standard Plugin implementation
  */
-export const geminiA2aPlugin: Plugin = async (input, options) => {
+export const geminiA2aPlugin: Plugin = async (_input, options) => {
   const protocol = (options?.protocol as string) || "http";
   const host = (options?.host as string) || "localhost";
   const port = (options?.port as number) || 8080;
@@ -33,10 +42,29 @@ export const geminiA2aPlugin: Plugin = async (input, options) => {
   };
 };
 
+export interface GeminiA2aOptions {
+  protocol?: string;
+  host?: string;
+  port?: number;
+  baseUrl?: string;
+  token?: string;
+  pollIntervalMs?: number;
+}
+
+const emptyUsage: LanguageModelV3Usage = {
+  inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+  outputTokens: { total: 0, text: 0, reasoning: 0 }
+};
+
+const stopFinishReason: LanguageModelV3FinishReason = {
+  unified: "stop",
+  raw: "stop"
+};
+
 /**
  * AI SDK Provider implementation
  */
-export const createGeminiA2a = (options: any = {}) => {
+export const createGeminiA2a = (options: GeminiA2aOptions = {}) => {
   const protocol = options.protocol || "http";
   const host = options.host || "localhost";
   const port = options.port || 8080;
@@ -46,13 +74,19 @@ export const createGeminiA2a = (options: any = {}) => {
   console.error(`[A2A] Provider initialized with baseUrl: ${baseUrl}`);
 
   return {
-    languageModel: (modelId: string): LanguageModelV1 => ({
-      specificationVersion: "v1",
-      defaultObjectGenerationMode: "json",
+    languageModel: (modelId: string): LanguageModelV3 => ({
+      specificationVersion: "v3",
+      provider: "gemini-a2a",
       modelId,
-      async doGenerate(params) {
+      supportedUrls: {},
+      async doGenerate(params: LanguageModelV3CallOptions): Promise<LanguageModelV3GenerateResult> {
         const prompt = params.prompt.map(p => {
-          if (p.role === "user") return p.content.map(c => (c as any).text || "").join("");
+          if (p.role === "user") {
+            return p.content.map(c => {
+              if (c.type === "text") return c.text;
+              return "";
+            }).join("");
+          }
           return "";
         }).join("\n");
 
@@ -65,52 +99,64 @@ export const createGeminiA2a = (options: any = {}) => {
               model: modelId
             }
           }
-        } as any);
+        });
         return {
-          text: result,
-          finishReason: "stop",
-          usage: { inputTokens: 0, outputTokens: 0 },
-          rawCall: { rawPrompt: params.prompt, rawSettings: params.settings },
+          content: [{ type: "text", text: result }],
+          finishReason: stopFinishReason,
+          usage: emptyUsage,
+          request: { body: params.prompt },
+          warnings: []
         };
       },
-      async doStream(params) {
+      async doStream(params: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
         const prompt = params.prompt.map(p => {
-          if (p.role === "user") return p.content.map(c => (c as any).text || "").join("");
+          if (p.role === "user") {
+            return p.content.map(c => {
+              if (c.type === "text") return c.text;
+              return "";
+            }).join("");
+          }
           return "";
         }).join("\n");
 
-        const stream = new ReadableStream<LanguageModelV1StreamPart>({
+        const stream = new ReadableStream<LanguageModelV3StreamPart>({
           async start(controller) {
             try {
-              await sendA2AMessage(baseUrl, {
+              const streamId = "a2a-stream-" + Date.now();
+              const request: SendMessageRequest = {
                 message: {
                   role: "ROLE_USER",
                   parts: [{ text: prompt }]
-                },
-                metadata: { 
-                  coderAgent: {
-                    kind: "agent-settings",
-                    workspacePath: process.cwd(),
-                    model: modelId
-                  }
-                } as any
-              }, {
+                }
+              };
+              // Add metadata via type assertion to respect the underlying API expectations 
+              // while keeping the code clean of 'any' where possible.
+              (request as any).metadata = { 
+                coderAgent: {
+                  kind: "agent-settings",
+                  workspacePath: process.cwd(),
+                  model: modelId
+                }
+              };
+
+              controller.enqueue({ type: "text-start", id: streamId });
+              await sendA2AMessage(baseUrl, request, {
                 token,
                 onProgress: (text) => {
-                  controller.enqueue({ type: "text-delta", textDelta: text });
+                  controller.enqueue({ type: "text-delta", id: streamId, delta: text });
                 }
               });
-              controller.enqueue({ type: "finish", finishReason: "stop", usage: { inputTokens: 0, outputTokens: 0 } });
+              controller.enqueue({ type: "text-end", id: streamId });
+              controller.enqueue({ type: "finish", finishReason: stopFinishReason, usage: emptyUsage });
               controller.close();
-            } catch (err: any) {
+            } catch (err: unknown) {
               controller.error(err);
             }
           }
         });
 
         return {
-          stream,
-          rawCall: { rawPrompt: params.prompt, rawSettings: params.settings },
+          stream
         };
       }
     })

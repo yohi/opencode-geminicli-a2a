@@ -1,10 +1,11 @@
 export interface Part {
   text?: string;
+  kind?: string; // For A2A 1.0 compatibility
   // 他のメディアタイプは拡張可能
 }
 
 export interface Message {
-  role: "ROLE_USER" | "ROLE_AGENT";
+  role: "ROLE_USER" | "ROLE_AGENT" | number;
   parts: Part[];
   messageId?: string;
   taskId?: string;
@@ -15,8 +16,10 @@ export interface SendMessageRequest {
 }
 
 export interface TaskStatus {
-  state: "TASK_STATE_PENDING" | "TASK_STATE_WORKING" | "TASK_STATE_COMPLETED" | "TASK_STATE_FAILED";
+  state: "TASK_STATE_PENDING" | "TASK_STATE_WORKING" | "TASK_STATE_COMPLETED" | "TASK_STATE_FAILED" | string;
   timestamp?: string;
+  message?: Message; // A2A 1.0: status can contain a message
+  final?: boolean;
 }
 
 export interface Artifact {
