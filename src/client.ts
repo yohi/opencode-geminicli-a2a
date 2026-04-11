@@ -64,8 +64,9 @@ export function isValidTask(t: unknown): t is Task {
 }
 
 export function isValidStreamResponse(obj: unknown): obj is StreamResponse {
-  // 基本的にパースに成功していれば構造チェックに委ねる
-  return typeof obj === "object" && obj !== null;
+  if (typeof obj !== "object" || obj === null) return false;
+  const o = obj as Record<string, unknown>;
+  return "task" in o || "message" in o || "statusUpdate" in o || "artifactUpdate" in o;
 }
 
 export interface SendA2AMessageOptions {
@@ -306,18 +307,15 @@ export async function sendA2AMessage(
   const controller = new AbortController();
   const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
 
-  console.error(`[A2A] Sending request to: ${baseUrl}/v1/message:stream`);
-  console.error(`[A2A] Headers: ${JSON.stringify(headers)}`);
-
   try {
     const restRequest = {
       message: {
-        role: 1, // ROLE_USER
-        content: (request.message.parts || []).map(p => ({ text: p.text })),
+        role: 1, // 1: User (Refer to A2A Message Role enum)
+        parts: request.message.parts,
         messageId: request.message.messageId || `msg-${Date.now()}`,
-        contextId: (request.message as any).contextId || "default-context",
-        metadata: (request as any).metadata,
-        configuration: (request as any).configuration
+        contextId: (request.message as Message & { contextId?: string }).contextId || "default-context",
+        metadata: (request as SendMessageRequest & { metadata?: Record<string, unknown> }).metadata,
+        configuration: (request as SendMessageRequest & { configuration?: Record<string, unknown> }).configuration
       }
     };
 
@@ -327,8 +325,6 @@ export async function sendA2AMessage(
       body: JSON.stringify(restRequest),
       signal: controller.signal,
     });
-
-    console.error(`[A2A] Response received: ${response.status} ${response.statusText}`);
 
     if (!response.ok) {
       let errorBody = "";

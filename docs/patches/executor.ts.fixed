@@ -461,23 +461,6 @@ export class CoderAgentExecutor implements AgentExecutor {
       return;
     }
 
-    if (this.executingTasks.has(taskId)) {
-      logger.info(
-        `[CoderAgentExecutor] Task ${taskId} has a pending execution. Processing message and yielding.`,
-      );
-      currentTask.eventBus = eventBus;
-      for await (const _ of currentTask.acceptUserMessage(
-        requestContext,
-        abortController.signal,
-      )) {
-        logger.info(
-          `[CoderAgentExecutor] Processing user message ${userMessage.messageId} in secondary execution loop for task ${taskId}.`,
-        );
-      }
-      // End this execution-- the original/source will be resumed.
-      return;
-    }
-
     // Check if this is the primary/initial execution for this task
     const isPrimaryExecution = !this.executingTasks.has(taskId);
 

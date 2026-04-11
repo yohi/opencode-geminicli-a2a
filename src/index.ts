@@ -22,8 +22,6 @@ export const geminiA2aPlugin: Plugin = async (_input, options) => {
   const token = options?.token as string | undefined;
   const pollIntervalMs = (options?.pollIntervalMs as number) || 2000;
 
-  console.error(`[A2A] Plugin initialized with baseUrl: ${baseUrl}`);
-
   return {
     tool: {
       delegate_to_gemini: tool({
@@ -70,8 +68,6 @@ export const createGeminiA2a = (options: GeminiA2aOptions = {}) => {
   const port = options.port || 8080;
   const baseUrl = options.baseUrl || `${protocol}://${host}:${port}`;
   const token = options.token;
-
-  console.error(`[A2A] Provider initialized with baseUrl: ${baseUrl}`);
 
   return {
     languageModel: (modelId: string): LanguageModelV3 => ({
@@ -129,11 +125,10 @@ export const createGeminiA2a = (options: GeminiA2aOptions = {}) => {
                   parts: [{ text: prompt }]
                 }
               };
-              // Add metadata via type assertion to respect the underlying API expectations 
+              // Add metadata via type assertion to respect the underlying API expectations
               // while keeping the code clean of 'any' where possible.
-              (request as any).metadata = { 
-                coderAgent: {
-                  kind: "agent-settings",
+              (request as SendMessageRequest & { metadata?: Record<string, unknown> }).metadata = {
+                coderAgent: {                  kind: "agent-settings",
                   workspacePath: process.cwd(),
                   model: modelId
                 }
