@@ -305,6 +305,7 @@ export class CoderAgentExecutor implements AgentExecutor {
     requestContext: RequestContext,
     eventBus: ExecutionEventBus,
   ): Promise<void> {
+    let terminalUpdateSent = false;
     const userMessage = requestContext.userMessage;
     const sdkTask = requestContext.task;
 
@@ -552,6 +553,7 @@ export class CoderAgentExecutor implements AgentExecutor {
               undefined,
               true,
             );
+            terminalUpdateSent = true;
           } else {
             logger.info(
               `[CoderAgentExecutor] Task ${taskId}: Found ${completedTools.length} completed tool calls. Sending results back to LLM.`,
@@ -577,13 +579,15 @@ export class CoderAgentExecutor implements AgentExecutor {
       const stateChange: StateChange = {
         kind: CoderAgentEvent.StateChangeEvent,
       };
-      currentTask.setTaskStateAndPublishUpdate(
-        'input-required',
-        stateChange,
-        undefined,
-        undefined,
-        true,
-      );
+      if (!terminalUpdateSent) {
+        currentTask.setTaskStateAndPublishUpdate(
+          'input-required',
+          stateChange,
+          undefined,
+          undefined,
+          true,
+        );
+      }
     } catch (error) {
       if (abortSignal.aborted) {
         logger.warn(`[CoderAgentExecutor] Task ${taskId} execution aborted.`);
