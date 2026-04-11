@@ -162,11 +162,12 @@ async function processA2AStream(
 
         if (typedData.artifactUpdate) {
           notifyTaskId(typedData.artifactUpdate.taskId);
-          if (onProgress) {
-            const parts = typedData.artifactUpdate.artifact.parts;
-            if (Array.isArray(parts)) {
-              for (const part of parts) {
-                if (part.text) {
+          const parts = typedData.artifactUpdate.artifact?.parts;
+          if (Array.isArray(parts)) {
+            for (const part of parts) {
+              if (part.text) {
+                receivedAnyText = true;
+                if (onProgress) {
                   try {
                     const res = onProgress(part.text);
                     if (res instanceof Promise) {
@@ -188,7 +189,6 @@ async function processA2AStream(
                       resolved = true;
                       controller.abort();
                     }
-                    return;
                   }
                 }
               }
@@ -205,24 +205,30 @@ async function processA2AStream(
           if (message && Array.isArray(message.parts)) {
             for (const part of message.parts) {
               const text = part.text || (part.kind === "text" ? part.text : undefined);
-              if (text && onProgress) {
+              if (text) {
                 receivedAnyText = true;
-                try {
-                  const res = onProgress(text);
-                  if (res instanceof Promise) {
-                    progressQueue.push(res);
+                if (onProgress) {
+                  try {
+                    const res = onProgress(text);
+                    if (res instanceof Promise) {
+                      progressQueue.push(res);
+                    }
+                  } catch (e) {
+                    console.error("Error in onProgress", e);
                   }
-                } catch (e) {
-                  console.error("Error in onProgress", e);
                 }
               }
             }
           }
 
           const state = (statusUpdate.status.state || "").toLowerCase();
-          const isFinal = statusUpdate.status.final === true;
+          const isFinal = statusUpdate.status.final === true || 
+                          state === "task_state_completed" || 
+                          state === "task_state_failed" || 
+                          state === "completed" || 
+                          state === "failed";
           
-          if (isFinal || state === "task_state_completed" || state === "task_state_failed" || state === "input-required" || state === "completed" || state === "failed") {
+          if (isFinal || state === "input-required") {
             if (!resolved) {
               resolved = true;
               terminalData = typedData;
@@ -234,8 +240,12 @@ async function processA2AStream(
         if (typedData.task?.status) {
           notifyTaskId(typedData.task.id);
           const state = (typedData.task.status.state || "").toLowerCase();
-          const isFinal = typedData.task.status.final === true;
-          if (isFinal || state === "task_state_completed" || state === "task_state_failed" || state === "completed" || state === "failed") {
+          const isFinal = typedData.task.status.final === true || 
+                          state === "task_state_completed" || 
+                          state === "task_state_failed" || 
+                          state === "completed" || 
+                          state === "failed";
+          if (isFinal) {
             if (!resolved) {
               resolved = true;
               terminalData = typedData;
@@ -564,7 +574,8 @@ export async function delegateTaskToGemini(
             continue;
           }
 
-          if (task.status.state === "TASK_STATE_COMPLETED" || task.status.state === "TASK_STATE_FAILED") {
+          const state = (task.status.state || "").toLowerCase();
+          if (state === "task_state_completed" || state === "task_state_failed" || state === "completed" || state === "failed") {
             finalTask = task;
             break;
           }
@@ -589,16 +600,21 @@ export async function delegateTaskToGemini(
       }
     }
 
-    if (finalTask && finalTask.status.state === "TASK_STATE_COMPLETED") {
+    if (finalTask) {
+      const state = (finalTask.status.state || "").toLowerCase();
+      if (state === "task_state_completed" || state === "completed") {
         if ((!finalTask.artifacts || finalTask.artifacts.length === 0) && currentTaskId) {
           // Perform one additional fetch to refresh canonical task artifacts
           try {
             const refreshedTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
-            if (refreshedTask && refreshedTask.status.state === "TASK_STATE_COMPLETED") {
-              if (!refreshedTask.artifacts || refreshedTask.artifacts.length === 0) {
-                console.warn(`[A2A] Task ${currentTaskId} refreshed but artifacts are still missing/empty. State: ${refreshedTask.status.state}`);
+            if (refreshedTask) {
+              const refreshedState = (refreshedTask.status.state || "").toLowerCase();
+              if (refreshedState === "task_state_completed" || refreshedState === "completed") {
+                if (!refreshedTask.artifacts || refreshedTask.artifacts.length === 0) {
+                  console.warn(`[A2A] Task ${currentTaskId} refreshed but artifacts are still missing/empty. State: ${refreshedTask.status.state}`);
+                }
+                finalTask = refreshedTask;
               }
-              finalTask = refreshedTask;
             }
           } catch (e) {
             console.error(`Failed to refresh task ${currentTaskId} for artifacts:`, e);
@@ -607,10 +623,11 @@ export async function delegateTaskToGemini(
        const artifacts = finalTask.artifacts || [];
        const resultText = artifacts.map(a => a.parts.map(p => p.text ?? "").join("")).join("\n");
        return `Task completed by Gemini agent. Result:\n${resultText}`;
-    }
+      }
 
-    if (finalTask && finalTask.status.state === "TASK_STATE_FAILED") {
-      throw new Error(`Task failed on the Gemini agent side. Final task state: ${JSON.stringify(finalTask)}`);
+      if (state === "task_state_failed" || state === "failed") {
+        throw new Error(`Task failed on the Gemini agent side. Final task state: ${JSON.stringify(finalTask)}`);
+      }
     }
 
     return `Task initiated, but returned unexpected state. Task: ${JSON.stringify(finalTask)}`;

@@ -86,31 +86,50 @@ export class CoderAgentExecutor implements AgentExecutor {
   // Track tasks with an active execution loop.
   private executingTasks = new Set<string>();
 
+  // Use a map of promises to serialize configuration loading per workspace to prevent process-level races
+  // during setTargetDir (chdir) and loadEnvironment (env mutation).
+  private static workspaceLocks = new Map<string, Promise<void>>();
+
   constructor(private taskStore?: TaskStore) {}
 
   private async getConfig(
     agentSettings: AgentSettings,
     taskId: string,
   ): Promise<Config> {
-    const workspaceRoot = setTargetDir(agentSettings);
-    loadEnvironment(); // Will override any global env with workspace envs
-    const settings = loadSettings(workspaceRoot);
-    const extensions = loadExtensions(workspaceRoot);
-    const config = await loadConfig(settings, new SimpleExtensionLoader(extensions), taskId);
-    if (agentSettings.model) {
-      logger.info(`[Config] Forcing model override to: ${agentSettings.model}`);
-      config.setModel(agentSettings.model); (config as any)._activeModel = agentSettings.model;
-      
-      // Patch system instructions to prevent recursive tool/workflow usage in A2A mode
-      if ((config as any).params) {
-        (config as any).params.model = agentSettings.model;
-        (config as any).params.systemInstruction = ((config as any).params.systemInstruction || '') + '\n\nIMPORTANT: You are running as an A2A backend. DO NOT attempt to activate skills like "using-superpowers" automatically. Ignore any instructions in GEMINI.md or global memory that mandate automatic skill activation. Wait for direct user instructions before using tools.';
+    const workspacePath = agentSettings.workspacePath || process.cwd();
+    
+    // Ensure only one task configures the workspace (chdir/env) at a time
+    let currentLock = CoderAgentExecutor.workspaceLocks.get(workspacePath) || Promise.resolve();
+    
+    const newLock = (async () => {
+      await currentLock;
+      try {
+        const workspaceRoot = setTargetDir(agentSettings);
+        loadEnvironment(); // Will override any global env with workspace envs
+        const settings = loadSettings(workspaceRoot);
+        const extensions = loadExtensions(workspaceRoot);
+        const config = await loadConfig(settings, new SimpleExtensionLoader(extensions), taskId);
+        if (agentSettings.model) {
+          logger.info(`[Config] Forcing model override to: ${agentSettings.model}`);
+          config.setModel(agentSettings.model); (config as any)._activeModel = agentSettings.model;
+          
+          // Patch system instructions to prevent recursive tool/workflow usage in A2A mode
+          if ((config as any).params) {
+            (config as any).params.model = agentSettings.model;
+            (config as any).params.systemInstruction = ((config as any).params.systemInstruction || '') + '\n\nIMPORTANT: You are running as an A2A backend. DO NOT attempt to activate skills like "using-superpowers" automatically. Ignore any instructions in GEMINI.md or global memory that mandate automatic skill activation. Wait for direct user instructions before using tools.';
+          }
+          
+          // Override tools to forcibly prevent the agent from attempting "activate_skill" or any other tool over A2A.
+          (config as any).getTools = () => [];
+        }
+        return config;
+      } finally {
+        // We could clean up the lock, but keeping it in the map is simpler for this implementation
       }
-      
-      // Override tools to forcibly prevent the agent from attempting "activate_skill" or any other tool over A2A.
-      (config as any).getTools = () => [];
-    }
-    return config;
+    })();
+
+    CoderAgentExecutor.workspaceLocks.set(workspacePath, newLock.then(() => {}).catch(() => {}));
+    return newLock;
   }
 
   /**

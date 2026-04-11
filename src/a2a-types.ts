@@ -15,8 +15,20 @@ export interface SendMessageRequest {
   message: Message;
 }
 
+export type TaskState = 
+  | "TASK_STATE_PENDING" 
+  | "TASK_STATE_WORKING" 
+  | "TASK_STATE_COMPLETED" 
+  | "TASK_STATE_FAILED"
+  | "task_state_completed"
+  | "task_state_failed"
+  | "input-required"
+  | "submitted"
+  | "completed"
+  | "failed";
+
 export interface TaskStatus {
-  state: "TASK_STATE_PENDING" | "TASK_STATE_WORKING" | "TASK_STATE_COMPLETED" | "TASK_STATE_FAILED" | string;
+  state: TaskState;
   timestamp?: string;
   message?: Message; // A2A 1.0: status can contain a message
   final?: boolean;
