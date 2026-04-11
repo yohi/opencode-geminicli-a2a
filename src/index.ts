@@ -60,6 +60,34 @@ const stopFinishReason: LanguageModelV3FinishReason = {
 };
 
 /**
+ * Builds a comprehensive prompt string from the provided message history.
+ * Iterates through system, assistant, and user messages, adding appropriate prefixes.
+ */
+function buildPrompt(prompt: LanguageModelV3CallOptions["prompt"]): string {
+  return prompt
+    .map((msg) => {
+      const rolePrefix = msg.role.toUpperCase() + ": ";
+      let content = "";
+
+      if (typeof msg.content === "string") {
+        content = msg.content;
+      } else if (Array.isArray(msg.content)) {
+        content = (msg.content as Array<any>)
+          .map((c) => {
+            if (c.type === "text") return c.text;
+            return "";
+          })
+          .filter(Boolean)
+          .join("\n");
+      }
+
+      return content ? `${rolePrefix}${content}` : "";
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/**
  * AI SDK Provider implementation
  */
 export const createGeminiA2a = (options: GeminiA2aOptions = {}) => {
@@ -76,15 +104,7 @@ export const createGeminiA2a = (options: GeminiA2aOptions = {}) => {
       modelId,
       supportedUrls: {},
       async doGenerate(params: LanguageModelV3CallOptions): Promise<LanguageModelV3GenerateResult> {
-        const prompt = params.prompt.map(p => {
-          if (p.role === "user") {
-            return p.content.map(c => {
-              if (c.type === "text") return c.text;
-              return "";
-            }).join("");
-          }
-          return "";
-        }).join("\n");
+        const prompt = buildPrompt(params.prompt);
 
         const result = await delegateTaskToGemini(baseUrl, prompt, { 
           token,
@@ -105,15 +125,7 @@ export const createGeminiA2a = (options: GeminiA2aOptions = {}) => {
         };
       },
       async doStream(params: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
-        const prompt = params.prompt.map(p => {
-          if (p.role === "user") {
-            return p.content.map(c => {
-              if (c.type === "text") return c.text;
-              return "";
-            }).join("");
-          }
-          return "";
-        }).join("\n");
+        const prompt = buildPrompt(params.prompt);
 
         const stream = new ReadableStream<LanguageModelV3StreamPart>({
           async start(controller) {

@@ -1,5 +1,5 @@
 import { createParser } from "eventsource-parser";
-import type { SendMessageRequest, StreamResponse, Task, Part, Artifact } from "./a2a-types";
+import type { SendMessageRequest, StreamResponse, Task, Part, Artifact, Message } from "./a2a-types";
 
 const VALID_STATES = [
   "TASK_STATE_PENDING",
