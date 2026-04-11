@@ -70,8 +70,8 @@ class TaskWrapper {
         timestamp: new Date().toISOString(),
       },
       metadata: setPersistedState({}, persistedState),
-      history: [],
-      artifacts: [],
+      history: this.task.history || [],
+      artifacts: this.task.artifacts || [],
     };
     sdkTask.metadata!['_contextId'] = this.task.contextId;
     return sdkTask;
