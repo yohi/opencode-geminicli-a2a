@@ -320,10 +320,14 @@ export class CoderAgentExecutor implements AgentExecutor {
       `[CoderAgentExecutor] Executing for taskId: ${taskId}, contextId: ${contextId}`,
     );
     logger.info(
-      `[CoderAgentExecutor] userMessage: ${JSON.stringify(userMessage)}`,
+      `[CoderAgentExecutor] userMessage: id=${userMessage.messageId}, taskId=${userMessage.taskId}`,
     );
     eventBus.on('event', (event: AgentExecutionEvent) =>
-      logger.info('[EventBus event]: ', event),
+      logger.info(
+        `[EventBus event]: type=${event.type}${
+          (event as any).timestamp ? `, timestamp=${(event as any).timestamp}` : ''
+        }`,
+      ),
     );
 
     const store = requestStorage.getStore();
