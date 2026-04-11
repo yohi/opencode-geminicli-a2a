@@ -65,8 +65,30 @@ export function isValidTask(t: unknown): t is Task {
 
 export function isValidStreamResponse(obj: unknown): obj is StreamResponse {
   if (typeof obj !== "object" || obj === null) return false;
-  const o = obj as Record<string, unknown>;
-  return "task" in o || "message" in o || "statusUpdate" in o || "artifactUpdate" in o;
+  const o = obj as Record<string, any>;
+  
+  if (o.task) {
+    return typeof o.task.id === "string";
+  }
+  if (o.message) {
+    return Array.isArray(o.message.parts);
+  }
+  if (o.statusUpdate) {
+    return (
+      typeof o.statusUpdate.taskId === "string" &&
+      o.statusUpdate.status &&
+      typeof o.statusUpdate.status.state === "string"
+    );
+  }
+  if (o.artifactUpdate) {
+    return (
+      typeof o.artifactUpdate.taskId === "string" &&
+      o.artifactUpdate.artifact &&
+      Array.isArray(o.artifactUpdate.artifact.parts)
+    );
+  }
+  
+  return false;
 }
 
 export interface SendA2AMessageOptions {
@@ -197,10 +219,10 @@ async function processA2AStream(
             }
           }
 
-          const state = statusUpdate.status.state;
+          const state = (statusUpdate.status.state || "").toLowerCase();
           const isFinal = statusUpdate.status.final === true;
           
-          if (isFinal || state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED" || state === "input-required" || state === "completed" || state === "failed") {
+          if (isFinal || state === "task_state_completed" || state === "task_state_failed" || state === "input-required" || state === "completed" || state === "failed") {
             if (!resolved) {
               resolved = true;
               terminalData = typedData;
@@ -211,9 +233,9 @@ async function processA2AStream(
 
         if (typedData.task?.status) {
           notifyTaskId(typedData.task.id);
-          const state = typedData.task.status.state;
+          const state = (typedData.task.status.state || "").toLowerCase();
           const isFinal = typedData.task.status.final === true;
-          if (isFinal || state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
+          if (isFinal || state === "task_state_completed" || state === "task_state_failed" || state === "completed" || state === "failed") {
             if (!resolved) {
               resolved = true;
               terminalData = typedData;
@@ -225,6 +247,23 @@ async function processA2AStream(
           if (typeof typedData.message.taskId === "string") {
              notifyTaskId(typedData.message.taskId);
           }
+          
+          // Stream message parts to onProgress before aborting
+          if (onProgress && Array.isArray(typedData.message.parts)) {
+            for (const part of typedData.message.parts) {
+              if (part.text) {
+                try {
+                  const res = onProgress(part.text);
+                  if (res instanceof Promise) {
+                    progressQueue.push(res);
+                  }
+                } catch (e) {
+                  console.error("Error in onProgress for terminal message", e);
+                }
+              }
+            }
+          }
+
           if (!resolved) {
             resolved = true;
             terminalData = typedData;
@@ -270,11 +309,8 @@ async function processA2AStream(
         reject(streamError);
       } else if (terminalData) {
         resolve(terminalData);
-      } else if (receivedAnyText) {
-        // Fallback for A2A 1.0 where stream might end without a formal terminal event but we got text
-        resolve({ statusUpdate: { status: { state: "TASK_STATE_COMPLETED" } } } as StreamResponse);
       } else {
-        reject(new Error("Stream ended without a terminal event (task, statusUpdate, or message)"));
+        reject(new Error("Unexpected end of stream: No terminal event received (task, statusUpdate, or message)"));
       }
     };
 
