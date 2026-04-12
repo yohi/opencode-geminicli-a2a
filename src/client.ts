@@ -98,6 +98,73 @@ export interface SendA2AMessageOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Validates the base URL for SSRF protection.
+ */
+function validateBaseUrl(baseUrl: string): void {
+  try {
+    const url = new URL(baseUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error("Only http and https protocols are supported");
+    }
+  } catch (e) {
+    throw new Error(`Invalid base URL: ${baseUrl}${e instanceof Error ? ` - ${e.message}` : ""}`);
+  }
+}
+
+/**
+ * Constructs common A2A headers.
+ */
+function getA2AHeaders(token?: string, extra: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = {
+    "A2A-Version": "1.0",
+    ...extra,
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+/**
+ * Shared fetch execution with timeout and error handling.
+ */
+async function executeA2AFetch(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  actionName: string
+): Promise<{ response: Response; controller: AbortController; timeoutId: NodeJS.Timeout | undefined }> {
+  const controller = new AbortController();
+  const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      let errorBody = "";
+      try {
+        errorBody = await response.text();
+      } catch (e: unknown) {
+        if (e instanceof Error && e.name === "AbortError") throw e;
+        errorBody = "Failed to read response body";
+      }
+      throw new Error(`A2A ${actionName} failed: ${response.status} ${response.statusText} - ${errorBody}`);
+    }
+
+    return { response, controller, timeoutId };
+  } catch (error: unknown) {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`A2A ${actionName} timeout: Request took longer than ${timeoutMs}ms`);
+    }
+    throw error;
+  }
+}
+
 async function processA2AStream(
   response: Response,
   controller: AbortController,
@@ -335,66 +402,36 @@ export async function sendA2AMessage(
   request: SendMessageRequest,
   options?: SendA2AMessageOptions | string
 ): Promise<StreamResponse> {
-  if (typeof options === "string") {
-    options = { token: options };
-  }
+  validateBaseUrl(baseUrl);
+  const opt = typeof options === "string" ? { token: options } : options;
+  const timeoutMs = opt?.timeoutMs ?? 120_000;
 
-  const token = options?.token;
-  const timeoutMs = options?.timeoutMs ?? 120_000;
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "A2A-Version": "1.0",
+  const restRequest = {
+    message: {
+      role: 1, // 1: User
+      parts: request.message.parts,
+      messageId: request.message.messageId || `msg-${Date.now()}`,
+      contextId: (request.message as Message & { contextId?: string }).contextId || "default-context",
+      metadata: (request as SendMessageRequest & { metadata?: Record<string, unknown> }).metadata,
+      configuration: (request as SendMessageRequest & { configuration?: Record<string, unknown> }).configuration
+    }
   };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
 
-  const controller = new AbortController();
-  const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+  const { response, controller, timeoutId } = await executeA2AFetch(
+    `${baseUrl}/v1/message:stream`,
+    {
+      method: "POST",
+      headers: getA2AHeaders(opt?.token, { "Content-Type": "application/json" }),
+      body: JSON.stringify(restRequest),
+    },
+    timeoutMs,
+    "Request"
+  );
 
   try {
-    const restRequest = {
-      message: {
-        role: 1, // 1: User (Refer to A2A Message Role enum)
-        parts: request.message.parts,
-        messageId: request.message.messageId || `msg-${Date.now()}`,
-        contextId: (request.message as Message & { contextId?: string }).contextId || "default-context",
-        metadata: (request as SendMessageRequest & { metadata?: Record<string, unknown> }).metadata,
-        configuration: (request as SendMessageRequest & { configuration?: Record<string, unknown> }).configuration
-      }
-    };
-
-    const response = await fetch(`${baseUrl}/v1/message:stream`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(restRequest),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      let errorBody = "";
-      try {
-        errorBody = await response.text();
-      } catch (e: unknown) {
-        if (e instanceof Error && e.name === "AbortError") {
-          throw e;
-        }
-        errorBody = "Failed to read response body";
-      }
-      throw new Error(`A2A Request failed: ${response.status} ${response.statusText} - ${errorBody}`);
-    }
-
-    return await processA2AStream(response, controller, options?.onProgress, options?.onTaskId);
-  } catch (error: unknown) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`A2A Request timeout: Request took longer than ${timeoutMs}ms`);
-    }
-    throw error;
+    return await processA2AStream(response, controller, opt?.onProgress, opt?.onTaskId);
   } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 
@@ -403,55 +440,24 @@ export async function subscribeToA2ATask(
   taskId: string,
   options?: SendA2AMessageOptions | string
 ): Promise<StreamResponse> {
-  if (typeof options === "string") {
-    options = { token: options };
-  }
+  validateBaseUrl(baseUrl);
+  const opt = typeof options === "string" ? { token: options } : options;
+  const timeoutMs = opt?.timeoutMs ?? 120_000;
 
-  const token = options?.token;
-  const timeoutMs = options?.timeoutMs ?? 120_000;
-
-  const headers: Record<string, string> = {
-    "Accept": "text/event-stream",
-    "A2A-Version": "1.0",
-  };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
-  const controller = new AbortController();
-  const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+  const { response, controller, timeoutId } = await executeA2AFetch(
+    `${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`,
+    {
+      method: "GET",
+      headers: getA2AHeaders(opt?.token, { "Accept": "text/event-stream" }),
+    },
+    timeoutMs,
+    "Subscribe"
+  );
 
   try {
-    const response = await fetch(`${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`, {
-      method: "GET",
-      headers,
-      signal: controller.signal,
-    });
-
-
-    if (!response.ok) {
-      let errorBody = "";
-      try {
-        errorBody = await response.text();
-      } catch (e: unknown) {
-        if (e instanceof Error && e.name === "AbortError") {
-          throw e;
-        }
-        errorBody = "Failed to read response body";
-      }
-      throw new Error(`A2A Subscribe failed: ${response.status} ${response.statusText} - ${errorBody}`);
-    }
-
-    return await processA2AStream(response, controller, options?.onProgress, options?.onTaskId);
-  } catch (error: unknown) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`A2A Subscribe timeout: Request took longer than ${timeoutMs}ms`);
-    }
-    throw error;
+    return await processA2AStream(response, controller, opt?.onProgress, opt?.onTaskId);
   } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 
@@ -460,35 +466,63 @@ export async function getA2ATask(
   taskId: string,
   options: { token?: string; timeoutMs?: number } = {}
 ): Promise<Task> {
+  validateBaseUrl(baseUrl);
   const { token, timeoutMs = 30000 } = options;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "A2A-Version": "1.0",
-  };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const { response, timeoutId } = await executeA2AFetch(
+    `${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`,
+    {
+      method: "GET",
+      headers: getA2AHeaders(token, { "Content-Type": "application/json" }),
+    },
+    timeoutMs,
+    "Fetch Task"
+  );
 
   try {
-    const response = await fetch(`${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`, {
-      method: "GET",
-      headers,
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`Failed to fetch task ${taskId}: ${response.status} ${response.statusText} - ${errorBody}`);
-    }
-
     const data = await response.json() as { task: Task };
     return data.task;
   } finally {
-    clearTimeout(timeoutId);
+    if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+/**
+ * Polls for task completion.
+ */
+async function pollA2ATask(
+  baseUrl: string,
+  taskId: string,
+  token?: string,
+  pollIntervalMs: number = 2000
+): Promise<Task> {
+  const maxPollingAttempts = 60; // Max 2 minutes
+  let pollingAttempts = 0;
+  let consecutiveErrorCount = 0;
+
+  while (pollingAttempts < maxPollingAttempts) {
+    try {
+      const task = await getA2ATask(baseUrl, taskId, { token, timeoutMs: 5000 });
+      consecutiveErrorCount = 0;
+      
+      const state = (task.status.state || "").toLowerCase();
+      if (state === "task_state_completed" || state === "task_state_failed" || state === "completed" || state === "failed") {
+        return task;
+      }
+      process.stdout.write("."); // tick
+    } catch (e: unknown) {
+      consecutiveErrorCount++;
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`\nError fetching task ${taskId}: ${msg}`);
+      if (consecutiveErrorCount > 5) {
+        throw new Error(`Polling failed after ${consecutiveErrorCount} consecutive errors for task ${taskId}`);
+      }
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+    pollingAttempts++;
+  }
+  throw new Error(`Polling timed out after ${maxPollingAttempts} attempts for task ${taskId}`);
 }
 
 export async function delegateTaskToGemini(
@@ -501,88 +535,36 @@ export async function delegateTaskToGemini(
     configuration?: Record<string, unknown>;
   } = {}
 ): Promise<string> {
+  validateBaseUrl(baseUrl);
   const { token, pollIntervalMs = 2000, metadata, configuration } = options;
   let currentTaskId: string | null = null;
   let finalTask: Task | undefined;
   let finalMessage: StreamResponse["message"] | undefined;
 
+  const onProgress = (text: string) => { process.stdout.write(text); };
+  const onTaskId = (id: string) => { currentTaskId = id; };
+
   try {
     try {
       const response = await sendA2AMessage(baseUrl, {
-        message: {
-          role: "ROLE_USER",
-          parts: [{ text: taskDescription }]
-        },
+        message: { role: "ROLE_USER", parts: [{ text: taskDescription }] },
         metadata,
         configuration
-      } as SendMessageRequest, {
-        token,
-        onProgress: (text) => {
-          process.stdout.write(text);
-        },
-        onTaskId: (id) => {
-          currentTaskId = id;
-        }
-      });
+      } as SendMessageRequest, { token, onProgress, onTaskId });
       finalTask = response.task;
       finalMessage = response.message;
     } catch (err: unknown) {
-      if (!currentTaskId) {
-        throw err;
-      }
+      if (!currentTaskId) throw err;
       
       process.stdout.write("\nConnection lost. Attempting to re-attach to task...\n");
-      
       try {
-        const subResponse = await subscribeToA2ATask(baseUrl, currentTaskId, {
-          token,
-          onProgress: (text) => {
-            process.stdout.write(text);
-          },
-          onTaskId: (id) => {
-            currentTaskId = id;
-          }
-        });
+        const subResponse = await subscribeToA2ATask(baseUrl, currentTaskId, { token, onProgress, onTaskId });
         finalTask = subResponse.task;
         finalMessage = subResponse.message;
       } catch (subErr: unknown) {
         const msg = subErr instanceof Error ? subErr.message : String(subErr);
         process.stdout.write(`\nStreaming failed (${msg}). Falling back to polling...\n`);
-        
-        // Polling loop
-        const maxPollingAttempts = 60; // Max 2 minutes
-        let pollingAttempts = 0;
-        let consecutiveErrorCount = 0;
-        while (true) {
-          if (pollingAttempts >= maxPollingAttempts) {
-            throw new Error(`Polling timed out after ${maxPollingAttempts} attempts for task ${currentTaskId}`);
-          }
-
-          let task: Task;
-          try {
-            task = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
-            consecutiveErrorCount = 0;
-          } catch (e: unknown) {
-            consecutiveErrorCount++;
-            const msg = e instanceof Error ? e.message : String(e);
-            console.error(`\nError fetching task ${currentTaskId}: ${msg}`);
-            if (consecutiveErrorCount > 5) {
-              throw new Error(`Polling failed after ${consecutiveErrorCount} consecutive errors for task ${currentTaskId}`);
-            }
-            await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
-            pollingAttempts++;
-            continue;
-          }
-
-          const state = (task.status.state || "").toLowerCase();
-          if (state === "task_state_completed" || state === "task_state_failed" || state === "completed" || state === "failed") {
-            finalTask = task;
-            break;
-          }
-          process.stdout.write("."); // tick
-          await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
-          pollingAttempts++;
-        }
+        finalTask = await pollA2ATask(baseUrl, currentTaskId, token, pollIntervalMs);
         process.stdout.write("\n");
       }
     }
@@ -592,30 +574,17 @@ export async function delegateTaskToGemini(
        return `Gemini agent replied:\n${resultText}`;
     }
 
-    // If we only got a statusUpdate but no full task, fetch the full task to get artifacts
     if (!finalTask && currentTaskId) {
       finalTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
-      if (!finalTask || !finalTask.status) {
-        throw new Error(`Failed to fetch valid task for ${currentTaskId}: ${JSON.stringify(finalTask)}`);
-      }
     }
 
     if (finalTask) {
       const state = (finalTask.status.state || "").toLowerCase();
       if (state === "task_state_completed" || state === "completed") {
         if ((!finalTask.artifacts || finalTask.artifacts.length === 0) && currentTaskId) {
-          // Perform one additional fetch to refresh canonical task artifacts
           try {
             const refreshedTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
-            if (refreshedTask) {
-              const refreshedState = (refreshedTask.status.state || "").toLowerCase();
-              if (refreshedState === "task_state_completed" || refreshedState === "completed") {
-                if (!refreshedTask.artifacts || refreshedTask.artifacts.length === 0) {
-                  console.warn(`[A2A] Task ${currentTaskId} refreshed but artifacts are still missing/empty. State: ${refreshedTask.status.state}`);
-                }
-                finalTask = refreshedTask;
-              }
-            }
+            if (refreshedTask) finalTask = refreshedTask;
           } catch (e) {
             console.error(`Failed to refresh task ${currentTaskId} for artifacts:`, e);
           }
