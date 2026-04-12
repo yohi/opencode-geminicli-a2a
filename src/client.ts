@@ -163,11 +163,17 @@ async function validateBaseUrl(baseUrl: string, trustedHostnames: string[] = [])
          throw new Error(`Access to private IP address is disallowed: ${hostname}`);
       }
     } else {
-      const { address } = await dns.lookup(hostname);
-      if (isPrivateIP(address) && !isLocal) {
-        throw new Error(`Hostname ${hostname} resolves to a private IP ${address} which is disallowed`);
+      const addresses = await dns.lookup(hostname, { all: true });
+      if (addresses.length === 0) {
+        throw new Error(`Hostname ${hostname} could not be resolved`);
+      }
+      for (const record of addresses) {
+        if (isPrivateIP(record.address) && !isLocal) {
+          throw new Error(`Hostname ${hostname} resolves to a private IP ${record.address} which is disallowed`);
+        }
       }
     }
+
   } catch (e) {
     throw new Error(`Invalid base URL: ${baseUrl}${e instanceof Error ? ` - ${e.message}` : ""}`);
   }
@@ -469,7 +475,7 @@ export async function sendA2AMessage(
 
   const restRequest = {
     message: {
-      role: 1 as const, // 1: User
+      role: request.message.role,
       parts: request.message.parts,
       messageId: request.message.messageId || `msg-${Date.now()}`,
       contextId: (request.message as Message & { contextId?: string }).contextId || "default-context",
@@ -569,7 +575,8 @@ async function pollA2ATask(
       consecutiveErrorCount = 0;
       
       const state = (task.status.state || "").toString().toUpperCase();
-      if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED" || state === "COMPLETED" || state === "FAILED") {
+      if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED" || state === "TASK_STATE_INPUT_REQUIRED" ||
+          state === "COMPLETED" || state === "FAILED" || state === "INPUT-REQUIRED" || state === "INPUT_REQUIRED") {
         return task;
       }
       if (onProgress) onProgress(".");
@@ -649,7 +656,7 @@ export async function delegateTaskToGemini(
       if (state === "TASK_STATE_COMPLETED" || state === "COMPLETED") {
         if ((!finalTask.artifacts || finalTask.artifacts.length === 0) && currentTaskId) {
           try {
-            const refreshedTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
+            const refreshedTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000, trustedHostnames });
             if (refreshedTask) finalTask = refreshedTask;
           } catch (e) {
             // Ignore refresh error if we already have some state
