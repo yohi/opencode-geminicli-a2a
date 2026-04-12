@@ -1,4 +1,6 @@
 import { createParser } from "eventsource-parser";
+import { promises as dns } from "dns";
+import { isIP } from "net";
 import type { SendMessageRequest, StreamResponse, Task, Part, Artifact, Message } from "./a2a-types";
 
 const VALID_STATES = [
@@ -8,6 +10,10 @@ const VALID_STATES = [
   "TASK_STATE_FAILED",
   "TASK_STATE_SUBMITTED",
   "TASK_STATE_INPUT_REQUIRED",
+  "INPUT-REQUIRED",
+  "SUBMITTED",
+  "COMPLETED",
+  "FAILED",
 ] as const;
 
 function isValidPart(p: unknown): p is Part {
@@ -42,8 +48,11 @@ export function validateTask(t: unknown): { valid: true; task: Task } | { valid:
   }
   if (!task.status || typeof task.status !== "object") {
     errors.push("missing or invalid 'status'");
-  } else if (!VALID_STATES.includes(task.status.state as any)) {
-    errors.push(`invalid status.state '${task.status.state}'`);
+  } else {
+    const normalized = (task.status.state || "").toString().toUpperCase();
+    if (!VALID_STATES.includes(normalized as any)) {
+      errors.push(`invalid status.state '${task.status.state}'`);
+    }
   }
   if (task.artifacts !== undefined) {
     if (!Array.isArray(task.artifacts)) {
@@ -96,16 +105,68 @@ export interface SendA2AMessageOptions {
   onProgress?: (text: string) => Promise<void> | void;
   onTaskId?: (taskId: string) => void;
   timeoutMs?: number;
+  trustedHostnames?: string[];
+}
+
+/**
+ * Validates if an IP address is in a private or reserved range for SSRF protection.
+ */
+function isPrivateIP(ip: string): boolean {
+  // IPv4 Private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16
+  // IPv6 Private/Reserved: ::1, fc00::/7, fe80::/10
+  if (isIP(ip) === 4) {
+    const parts = ip.split(".").map(Number);
+    return (
+      parts[0] === 10 ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+      (parts[0] === 192 && parts[1] === 168) ||
+      parts[0] === 127 ||
+      (parts[0] === 169 && parts[1] === 254)
+    );
+  } else if (isIP(ip) === 6) {
+    return (
+      ip === "::1" ||
+      ip.toLowerCase().startsWith("fc00:") ||
+      ip.toLowerCase().startsWith("fd00:") ||
+      ip.toLowerCase().startsWith("fe80:")
+    );
+  }
+  return false;
 }
 
 /**
  * Validates the base URL for SSRF protection.
  */
-function validateBaseUrl(baseUrl: string): void {
+async function validateBaseUrl(baseUrl: string, trustedHostnames: string[] = []): Promise<void> {
   try {
     const url = new URL(baseUrl);
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       throw new Error("Only http and https protocols are supported");
+    }
+
+    const hostname = url.hostname;
+    const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+
+    // Enforce allowlist for external domains
+    if (!isLocal) {
+      const isTrusted = trustedHostnames.some(trusted => 
+        hostname === trusted || hostname.endsWith(`.${trusted}`)
+      );
+      if (!isTrusted) {
+        throw new Error(`Hostname '${hostname}' is not in the trusted allowlist`);
+      }
+    }
+    
+    // Resolve DNS and check for private IPs for extra safety (DNS Rebinding prevention)
+    if (isIP(hostname)) {
+      if (isPrivateIP(hostname) && !isLocal) {
+         throw new Error(`Access to private IP address is disallowed: ${hostname}`);
+      }
+    } else {
+      const { address } = await dns.lookup(hostname);
+      if (isPrivateIP(address) && !isLocal) {
+        throw new Error(`Hostname ${hostname} resolves to a private IP ${address} which is disallowed`);
+      }
     }
   } catch (e) {
     throw new Error(`Invalid base URL: ${baseUrl}${e instanceof Error ? ` - ${e.message}` : ""}`);
@@ -402,13 +463,13 @@ export async function sendA2AMessage(
   request: SendMessageRequest,
   options?: SendA2AMessageOptions | string
 ): Promise<StreamResponse> {
-  validateBaseUrl(baseUrl);
   const opt = typeof options === "string" ? { token: options } : options;
+  await validateBaseUrl(baseUrl, opt?.trustedHostnames);
   const timeoutMs = opt?.timeoutMs ?? 120_000;
 
   const restRequest = {
     message: {
-      role: 1, // 1: User
+      role: 1 as const, // 1: User
       parts: request.message.parts,
       messageId: request.message.messageId || `msg-${Date.now()}`,
       contextId: (request.message as Message & { contextId?: string }).contextId || "default-context",
@@ -418,7 +479,7 @@ export async function sendA2AMessage(
   };
 
   const { response, controller, timeoutId } = await executeA2AFetch(
-    `${baseUrl}/v1/message:stream`,
+    `${baseUrl}/message:stream`,
     {
       method: "POST",
       headers: getA2AHeaders(opt?.token, { "Content-Type": "application/json" }),
@@ -440,14 +501,14 @@ export async function subscribeToA2ATask(
   taskId: string,
   options?: SendA2AMessageOptions | string
 ): Promise<StreamResponse> {
-  validateBaseUrl(baseUrl);
   const opt = typeof options === "string" ? { token: options } : options;
+  await validateBaseUrl(baseUrl, opt?.trustedHostnames);
   const timeoutMs = opt?.timeoutMs ?? 120_000;
 
   const { response, controller, timeoutId } = await executeA2AFetch(
-    `${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`,
+    `${baseUrl}/tasks/${encodeURIComponent(taskId)}:subscribe`,
     {
-      method: "GET",
+      method: "POST",
       headers: getA2AHeaders(opt?.token, { "Accept": "text/event-stream" }),
     },
     timeoutMs,
@@ -464,13 +525,13 @@ export async function subscribeToA2ATask(
 export async function getA2ATask(
   baseUrl: string,
   taskId: string,
-  options: { token?: string; timeoutMs?: number } = {}
+  options: { token?: string; timeoutMs?: number; trustedHostnames?: string[] } = {}
 ): Promise<Task> {
-  validateBaseUrl(baseUrl);
-  const { token, timeoutMs = 30000 } = options;
+  const { token, timeoutMs = 30000, trustedHostnames } = options;
+  await validateBaseUrl(baseUrl, trustedHostnames);
 
   const { response, timeoutId } = await executeA2AFetch(
-    `${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`,
+    `${baseUrl}/tasks/${encodeURIComponent(taskId)}`,
     {
       method: "GET",
       headers: getA2AHeaders(token, { "Content-Type": "application/json" }),
@@ -494,7 +555,9 @@ async function pollA2ATask(
   baseUrl: string,
   taskId: string,
   token?: string,
-  pollIntervalMs: number = 2000
+  pollIntervalMs: number = 2000,
+  onProgress?: (text: string) => void,
+  trustedHostnames?: string[]
 ): Promise<Task> {
   const maxPollingAttempts = 60; // Max 2 minutes
   let pollingAttempts = 0;
@@ -502,20 +565,18 @@ async function pollA2ATask(
 
   while (pollingAttempts < maxPollingAttempts) {
     try {
-      const task = await getA2ATask(baseUrl, taskId, { token, timeoutMs: 5000 });
+      const task = await getA2ATask(baseUrl, taskId, { token, timeoutMs: 5000, trustedHostnames });
       consecutiveErrorCount = 0;
       
-      const state = (task.status.state || "").toLowerCase();
-      if (state === "task_state_completed" || state === "task_state_failed" || state === "completed" || state === "failed") {
+      const state = (task.status.state || "").toString().toUpperCase();
+      if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED" || state === "COMPLETED" || state === "FAILED") {
         return task;
       }
-      process.stdout.write("."); // tick
+      if (onProgress) onProgress(".");
     } catch (e: unknown) {
       consecutiveErrorCount++;
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`\nError fetching task ${taskId}: ${msg}`);
       if (consecutiveErrorCount > 5) {
-        throw new Error(`Polling failed after ${consecutiveErrorCount} consecutive errors for task ${taskId}`);
+        throw new Error(`Polling failed after ${consecutiveErrorCount} consecutive errors for task ${taskId}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     
@@ -533,16 +594,21 @@ export async function delegateTaskToGemini(
     pollIntervalMs?: number;
     metadata?: Record<string, unknown>;
     configuration?: Record<string, unknown>;
+    onProgress?: (text: string) => void;
+    onTaskId?: (id: string) => void;
+    trustedHostnames?: string[];
   } = {}
 ): Promise<string> {
-  validateBaseUrl(baseUrl);
-  const { token, pollIntervalMs = 2000, metadata, configuration } = options;
+  const { token, pollIntervalMs = 2000, metadata, configuration, onProgress, onTaskId, trustedHostnames } = options;
+  await validateBaseUrl(baseUrl, trustedHostnames);
   let currentTaskId: string | null = null;
   let finalTask: Task | undefined;
   let finalMessage: StreamResponse["message"] | undefined;
 
-  const onProgress = (text: string) => { process.stdout.write(text); };
-  const onTaskId = (id: string) => { currentTaskId = id; };
+  const handleTaskId = (id: string) => {
+    currentTaskId = id;
+    if (onTaskId) onTaskId(id);
+  };
 
   try {
     try {
@@ -550,22 +616,22 @@ export async function delegateTaskToGemini(
         message: { role: "ROLE_USER", parts: [{ text: taskDescription }] },
         metadata,
         configuration
-      } as SendMessageRequest, { token, onProgress, onTaskId });
+      } as SendMessageRequest, { token, onProgress, onTaskId: handleTaskId, trustedHostnames });
       finalTask = response.task;
       finalMessage = response.message;
     } catch (err: unknown) {
       if (!currentTaskId) throw err;
       
-      process.stdout.write("\nConnection lost. Attempting to re-attach to task...\n");
+      if (onProgress) onProgress("\nConnection lost. Attempting to re-attach to task...\n");
       try {
-        const subResponse = await subscribeToA2ATask(baseUrl, currentTaskId, { token, onProgress, onTaskId });
+        const subResponse = await subscribeToA2ATask(baseUrl, currentTaskId, { token, onProgress, onTaskId: handleTaskId, trustedHostnames });
         finalTask = subResponse.task;
         finalMessage = subResponse.message;
       } catch (subErr: unknown) {
         const msg = subErr instanceof Error ? subErr.message : String(subErr);
-        process.stdout.write(`\nStreaming failed (${msg}). Falling back to polling...\n`);
-        finalTask = await pollA2ATask(baseUrl, currentTaskId, token, pollIntervalMs);
-        process.stdout.write("\n");
+        if (onProgress) onProgress(`\nStreaming failed (${msg}). Falling back to polling...\n`);
+        finalTask = await pollA2ATask(baseUrl, currentTaskId, token, pollIntervalMs, onProgress, trustedHostnames);
+        if (onProgress) onProgress("\n");
       }
     }
 
@@ -575,18 +641,18 @@ export async function delegateTaskToGemini(
     }
 
     if (!finalTask && currentTaskId) {
-      finalTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
+      finalTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000, trustedHostnames });
     }
 
     if (finalTask) {
-      const state = (finalTask.status.state || "").toLowerCase();
-      if (state === "task_state_completed" || state === "completed") {
+      const state = (finalTask.status.state || "").toString().toUpperCase();
+      if (state === "TASK_STATE_COMPLETED" || state === "COMPLETED") {
         if ((!finalTask.artifacts || finalTask.artifacts.length === 0) && currentTaskId) {
           try {
             const refreshedTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000 });
             if (refreshedTask) finalTask = refreshedTask;
           } catch (e) {
-            console.error(`Failed to refresh task ${currentTaskId} for artifacts:`, e);
+            // Ignore refresh error if we already have some state
           }
        }
        const artifacts = finalTask.artifacts || [];
@@ -594,7 +660,7 @@ export async function delegateTaskToGemini(
        return `Task completed by Gemini agent. Result:\n${resultText}`;
       }
 
-      if (state === "task_state_failed" || state === "failed") {
+      if (state === "TASK_STATE_FAILED" || state === "FAILED") {
         throw new Error(`Task failed on the Gemini agent side. Final task state: ${JSON.stringify(finalTask)}`);
       }
     }

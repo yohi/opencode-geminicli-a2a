@@ -1,5 +1,9 @@
 import { Plugin, tool } from "@opencode-ai/plugin";
 import { delegateTaskToGemini, sendA2AMessage } from "./client";
+/**
+ * Note: This package intentionally implements a provider for the Vercel AI SDK (@ai-sdk/provider).
+ * This allows Gemini CLI A2A functionality to be used within the AI SDK ecosystem.
+ */
 import type { 
   LanguageModelV3, 
   LanguageModelV3CallOptions, 
@@ -21,6 +25,7 @@ export const geminiA2aPlugin: Plugin = async (_input, options) => {
   const baseUrl = (options?.baseUrl as string) || `${protocol}://${host}:${port}`;
   const token = options?.token as string | undefined;
   const pollIntervalMs = (options?.pollIntervalMs as number) || 2000;
+  const trustedHostnames = options?.trustedHostnames as string[] | undefined;
 
   return {
     tool: {
@@ -33,6 +38,12 @@ export const geminiA2aPlugin: Plugin = async (_input, options) => {
           return await delegateTaskToGemini(baseUrl, taskDescription, {
             token,
             pollIntervalMs,
+            trustedHostnames,
+            onProgress: (text) => {
+              if (typeof process !== "undefined" && process.stdout) {
+                process.stdout.write(text);
+              }
+            }
           });
         },
       }),
@@ -47,6 +58,7 @@ export interface GeminiA2aOptions {
   baseUrl?: string;
   token?: string;
   pollIntervalMs?: number;
+  trustedHostnames?: string[];
 }
 
 const emptyUsage: LanguageModelV3Usage = {
@@ -58,6 +70,12 @@ const stopFinishReason: LanguageModelV3FinishReason = {
   unified: "stop",
   raw: "stop"
 };
+
+type PromptElement = { type: "text"; text: string } | { type: string; [key: string]: any };
+
+function isTextPart(part: any): part is { type: "text"; text: string } {
+  return part && part.type === "text" && typeof part.text === "string";
+}
 
 /**
  * Builds a comprehensive prompt string from the provided message history.
@@ -72,9 +90,9 @@ function buildPrompt(prompt: LanguageModelV3CallOptions["prompt"]): string {
       if (typeof msg.content === "string") {
         content = msg.content;
       } else if (Array.isArray(msg.content)) {
-        content = (msg.content as Array<any>)
+        content = msg.content
           .map((c) => {
-            if (c.type === "text") return c.text;
+            if (isTextPart(c)) return c.text;
             return "";
           })
           .filter(Boolean)
@@ -96,6 +114,7 @@ export const createGeminiA2a = (options: GeminiA2aOptions = {}) => {
   const port = options.port || 8080;
   const baseUrl = options.baseUrl || `${protocol}://${host}:${port}`;
   const token = options.token;
+  const trustedHostnames = options.trustedHostnames;
 
   return {
     languageModel: (modelId: string): LanguageModelV3 => ({
@@ -108,6 +127,7 @@ export const createGeminiA2a = (options: GeminiA2aOptions = {}) => {
 
         const result = await delegateTaskToGemini(baseUrl, prompt, { 
           token,
+          trustedHostnames,
           metadata: { 
             coderAgent: {
               kind: "agent-settings",
@@ -149,6 +169,7 @@ export const createGeminiA2a = (options: GeminiA2aOptions = {}) => {
               controller.enqueue({ type: "text-start", id: streamId });
               await sendA2AMessage(baseUrl, request, {
                 token,
+                trustedHostnames,
                 onProgress: (text) => {
                   controller.enqueue({ type: "text-delta", id: streamId, delta: text });
                 }
