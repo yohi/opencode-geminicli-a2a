@@ -72,7 +72,6 @@ const stopFinishReason: LanguageModelV3FinishReason = {
 };
 
 type TextPart = { type: "text"; text: string };
-type ContentPart = TextPart | { type: string; [key: string]: unknown };
 
 function isTextPart(part: unknown): part is TextPart {
   return (
@@ -90,7 +89,7 @@ function isTextPart(part: unknown): part is TextPart {
 function buildPrompt(prompt: LanguageModelV3CallOptions["prompt"]): string {
   return prompt
     .map((msg) => {
-      const rolePrefix = msg.role.toUpperCase() + ": ";
+      const rolePrefix = `${msg.role.toUpperCase()}: `;
       let content = "";
 
       if (typeof msg.content === "string") {
@@ -156,7 +155,7 @@ export const createGeminiA2a = (options: GeminiA2aOptions = {}) => {
         const stream = new ReadableStream<LanguageModelV3StreamPart>({
           async start(controller) {
             try {
-              const streamId = "a2a-stream-" + Date.now();
+              const streamId = `a2a-stream-${Date.now()}`;
               const request: SendMessageRequest = {
                 message: {
                   role: "ROLE_USER",

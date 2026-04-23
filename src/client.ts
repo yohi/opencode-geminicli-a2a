@@ -1,6 +1,6 @@
 import { createParser } from "eventsource-parser";
-import { promises as dns } from "dns";
-import { isIP } from "net";
+import { promises as dns } from "node:dns";
+import { isIP } from "node:net";
 import type { SendMessageRequest, StreamResponse, Task, Part, Artifact, Message } from "./a2a-types";
 
 const VALID_STATES = [
@@ -50,7 +50,7 @@ export function validateTask(t: unknown): { valid: true; task: Task } | { valid:
     errors.push("missing or invalid 'status'");
   } else {
     const normalized = (task.status.state || "").toString().toUpperCase();
-    if (!VALID_STATES.includes(normalized as any)) {
+    if (!VALID_STATES.includes(normalized as typeof VALID_STATES[number])) {
       errors.push(`invalid status.state '${task.status.state}'`);
     }
   }
@@ -74,26 +74,30 @@ export function isValidTask(t: unknown): t is Task {
 
 export function isValidStreamResponse(obj: unknown): obj is StreamResponse {
   if (typeof obj !== "object" || obj === null) return false;
-  const o = obj as Record<string, any>;
+  const o = obj as Record<string, unknown>;
   
-  if (o.task) {
-    return typeof o.task.id === "string";
+  if (o.task && typeof o.task === "object") {
+    return typeof (o.task as Record<string, unknown>).id === "string";
   }
-  if (o.message) {
-    return Array.isArray(o.message.parts);
+  if (o.message && typeof o.message === "object") {
+    return Array.isArray((o.message as Record<string, unknown>).parts);
   }
-  if (o.statusUpdate) {
+  if (o.statusUpdate && typeof o.statusUpdate === "object") {
+    const su = o.statusUpdate as Record<string, unknown>;
+    const status = su.status as Record<string, unknown> | undefined;
     return (
-      typeof o.statusUpdate.taskId === "string" &&
-      o.statusUpdate.status &&
-      typeof o.statusUpdate.status.state === "string"
+      typeof su.taskId === "string" &&
+      !!status &&
+      typeof status.state === "string"
     );
   }
-  if (o.artifactUpdate) {
+  if (o.artifactUpdate && typeof o.artifactUpdate === "object") {
+    const au = o.artifactUpdate as Record<string, unknown>;
+    const artifact = au.artifact as Record<string, unknown> | undefined;
     return (
-      typeof o.artifactUpdate.taskId === "string" &&
-      o.artifactUpdate.artifact &&
-      Array.isArray(o.artifactUpdate.artifact.parts)
+      typeof au.taskId === "string" &&
+      !!artifact &&
+      Array.isArray(artifact.parts)
     );
   }
   
@@ -132,7 +136,7 @@ function isPrivateIP(ip: string): boolean {
     // Handling cases like "fe80::..." or "2001:db8:..."
     const firstBlock = v6.split(":")[0] || "0";
     const first = parseInt(firstBlock, 16);
-    if (isNaN(first)) return false;
+    if (Number.isNaN(first)) return false;
 
     return (
       (first & 0xfe00) === 0xfc00 || // fc00::/7
@@ -146,6 +150,10 @@ function isPrivateIP(ip: string): boolean {
  * Validates the base URL for SSRF protection.
  */
 async function validateBaseUrl(baseUrl: string, trustedHostnames: string[] = []): Promise<void> {
+  if (!baseUrl) {
+    throw new Error("Base URL is required");
+  }
+
   try {
     const url = new URL(baseUrl);
     if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -153,11 +161,18 @@ async function validateBaseUrl(baseUrl: string, trustedHostnames: string[] = [])
     }
 
     const hostname = url.hostname;
+    if (!hostname) {
+      throw new Error("Invalid URL: Hostname is missing");
+    }
+
     // Standard local check
     const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "0.0.0.0";
 
     // Enforce allowlist for external domains
     if (!isLocal) {
+      if (trustedHostnames.length === 0) {
+        throw new Error(`Hostname '${hostname}' is external but no trusted hostnames were provided. Access denied for security.`);
+      }
       const isTrusted = trustedHostnames.some(trusted => 
         hostname === trusted || hostname.endsWith(`.${trusted}`)
       );
@@ -199,7 +214,7 @@ function getA2AHeaders(token?: string, extra: Record<string, string> = {}): Reco
     ...extra,
   };
   if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+    headers.Authorization = `Bearer ${token}`;
   }
   return headers;
 }
@@ -257,8 +272,7 @@ async function processA2AStream(
     let resolved = false;
     let terminalData: StreamResponse | null = null;
     let streamError: unknown = null;
-    let receivedAnyText = false;
-    const progressQueue: Promise<void>[] = [];
+    const progressQueue: Promise<void>[]=[];
     let taskIdNotified = false;
 
     const notifyTaskId = (taskId: string) => {
@@ -311,7 +325,6 @@ async function processA2AStream(
           if (Array.isArray(parts)) {
             for (const part of parts) {
               if (part.text) {
-                receivedAnyText = true;
                 if (onProgress) {
                   try {
                     const res = onProgress(part.text);
@@ -351,7 +364,6 @@ async function processA2AStream(
             for (const part of message.parts) {
               const text = part.text || (part.kind === "text" ? part.text : undefined);
               if (text) {
-                receivedAnyText = true;
                 if (onProgress) {
                   try {
                     const res = onProgress(text);
@@ -675,7 +687,7 @@ export async function delegateTaskToGemini(
           try {
             const refreshedTask = await getA2ATask(baseUrl, currentTaskId, { token, timeoutMs: 5000, trustedHostnames });
             if (refreshedTask) finalTask = refreshedTask;
-          } catch (e) {
+          } catch {
             // Ignore refresh error if we already have some state
           }
        }
