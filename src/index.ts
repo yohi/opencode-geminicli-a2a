@@ -1,8 +1,8 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable */
 // noscan
 // skipcq: JS-0376
 // codacy:ignore-line
-import { Plugin, tool } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin";
 import { delegateTaskToGemini } from "./client";
 
 /**
@@ -23,22 +23,21 @@ export type {
 /**
  * Standard Plugin implementation
  */
-const PluginClass: any = Plugin;
-export const a2aPlugin: any = new PluginClass({
-  name: "gemini-cli-a2a",
-  description: "Delegates tasks to other Gemini agents via A2A protocol",
-  tools: {
-    delegate: tool({
-      description: "Delegates a complex task to another Gemini agent that has specific capabilities",
-      parameters: {
-        task: { type: "string", description: "The task description to delegate" },
-        baseUrl: { type: "string", description: "The base URL of the target Gemini agent" }
-      },
-      execute: async ({ task, baseUrl }: any, { context }: any) => {
-        const token = context?.auth?.token;
-        const trustedHostnames = context?.configuration?.trustedHostnames || [];
-        return await delegateTaskToGemini(baseUrl, task, { token, trustedHostnames });
-      }
-    } as any)
-  }
-});
+export const server: any = async () => {
+  return {
+    tool: {
+      delegate: tool({
+        description: "Delegates a complex task to another Gemini agent that has specific capabilities",
+        args: {
+          task: { type: "string", description: "The task description to delegate" } as any,
+          baseUrl: { type: "string", description: "The base URL of the target Gemini agent" } as any
+        },
+        execute: async ({ task, baseUrl }: any, context: any) => {
+          const token = context?.auth?.token;
+          const trustedHostnames = context?.configuration?.trustedHostnames || [];
+          return await delegateTaskToGemini(baseUrl, task, { token, trustedHostnames });
+        }
+      })
+    }
+  };
+};
