@@ -77,7 +77,7 @@ async function executeA2AFetch(
 function formatA2ATaskResult(task: Task | undefined, taskId: string | null): string {
   if (!task) return `Task initiated (ID: ${taskId})`;
   
-  const state = (task.status.state || "").toUpperCase();
+  const state = task.status.state.toUpperCase();
   if (state.includes("COMPLETED")) {
     const text = (task.artifacts || []).map(a => a.parts.map(p => p.text || "").join("")).join("\n");
     return `Task completed. Result:\n${text}`;
@@ -120,10 +120,8 @@ async function pollA2ATask(baseUrl: string, taskId: string, token?: string, trus
   for (let i = 0; i < 60; i++) {
     try {
       const task = await getA2ATask(baseUrl, taskId, { token, trustedHostnames: trusted });
-      if (task.status.state) {
-        const state = task.status.state.toUpperCase();
-        if (state.includes("COMPLETED") || state.includes("FAILED") || state.includes("INPUT")) return task;
-      }
+      const state = task.status.state.toUpperCase();
+      if (state.includes("COMPLETED") || state.includes("FAILED") || state.includes("INPUT")) return task;
     } catch { /* retry */ }
     await new Promise(r => setTimeout(r, 2000));
   }
@@ -151,7 +149,7 @@ export async function delegateTaskToGemini(baseUrl: string, taskDescription: str
     if (result.message) {
       return `Gemini agent replied:\n${(result.message.parts || []).map(p => p.text || "").join("")}`;
     }
-    const finalTask = result.task || (currentId ? await getA2ATask(baseUrl, currentId, { token, trustedHostnames }) : undefined);
+    const finalTask = result.task ?? (currentId ? await getA2ATask(baseUrl, currentId, { token, trustedHostnames }) : undefined);
     return formatA2ATaskResult(finalTask, currentId);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
