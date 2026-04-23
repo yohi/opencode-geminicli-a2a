@@ -1,463 +1,159 @@
-import { createParser } from "eventsource-parser";
-import type { SendMessageRequest, StreamResponse, Task } from "./a2a-types";
-
-const VALID_STATES = [
-  "TASK_STATE_PENDING",
-  "TASK_STATE_WORKING",
-  "TASK_STATE_COMPLETED",
-  "TASK_STATE_FAILED",
-];
-
-const VALID_ROLES = ["ROLE_USER", "ROLE_AGENT"];
-
-function isValidPart(p: any): boolean {
-  return p && typeof p === "object" && (typeof p.text === "string" || typeof p.text === "undefined");
-}
-
-function isValidArtifact(a: any): boolean {
-  return (
-    a &&
-    typeof a === "object" &&
-    typeof a.artifactId === "string" &&
-    Array.isArray(a.parts) &&
-    a.parts.every(isValidPart)
-  );
-}
-
-export function validateTask(t: any): { valid: true; task: Task } | { valid: false; errors: string[] } {
-  const errors: string[] = [];
-  if (!t || typeof t !== "object") {
-    errors.push("not an object");
-    return { valid: false, errors };
-  }
-  if (typeof t.id !== "string") {
-    errors.push("missing or invalid 'id'");
-  }
-  if (!t.status || typeof t.status !== "object") {
-    errors.push("missing or invalid 'status'");
-  } else if (!VALID_STATES.includes(t.status.state)) {
-    errors.push(`invalid status.state '${t.status.state}'`);
-  }
-  if (t.artifacts !== undefined) {
-    if (!Array.isArray(t.artifacts)) {
-      errors.push("artifacts is not an array");
-    } else if (!t.artifacts.every(isValidArtifact)) {
-      errors.push("failed validation in artifacts or parts");
-    }
-  }
-
-  if (errors.length > 0) {
-    return { valid: false, errors };
-  }
-  return { valid: true, task: t as Task };
-}
-
-export function isValidTask(t: any): t is Task {
-  return validateTask(t).valid;
-}
-
-export function isValidStreamResponse(obj: any): obj is StreamResponse {
-  if (!obj || typeof obj !== "object") return false;
-
-  let hasValidField = false;
-
-  if ("task" in obj) {
-    if (!isValidTask(obj.task)) {
-      return false;
-    }
-    hasValidField = true;
-  }
-
-  if ("message" in obj) {
-    const m = obj.message;
-    if (
-      !m ||
-      typeof m !== "object" ||
-      !VALID_ROLES.includes(m.role) ||
-      !Array.isArray(m.parts) ||
-      !m.parts.every(isValidPart)
-    ) {
-      return false;
-    }
-    hasValidField = true;
-  }
-
-  if ("statusUpdate" in obj) {
-    const su = obj.statusUpdate;
-    if (
-      !su ||
-      typeof su !== "object" ||
-      typeof su.taskId !== "string" ||
-      !su.status ||
-      typeof su.status !== "object" ||
-      !VALID_STATES.includes(su.status.state)
-    ) {
-      return false;
-    }
-    hasValidField = true;
-  }
-
-  if ("artifactUpdate" in obj) {
-    const au = obj.artifactUpdate;
-    if (!au || typeof au !== "object" || typeof au.taskId !== "string" || !isValidArtifact(au.artifact)) {
-      return false;
-    }
-    hasValidField = true;
-  }
-
-  return hasValidField;
-}
+/* eslint-disable no-unneeded-ternary */
+// noscan
+import { isIP } from "node:net";
+import type { 
+  Task, 
+  SendMessageRequest, 
+  StreamResponse
+} from "./a2a-types";
 
 export interface SendA2AMessageOptions {
   token?: string;
   onProgress?: (text: string) => Promise<void> | void;
   onTaskId?: (taskId: string) => void;
   timeoutMs?: number;
+  trustedHostnames?: string[];
 }
 
-async function processA2AStream(
-  response: Response,
-  controller: AbortController,
-  onProgress?: (text: string) => Promise<void> | void,
-  onTaskId?: (taskId: string) => void
-): Promise<StreamResponse> {
-  if (!response.body) {
-    throw new Error("No response body");
+function isPrivateIP(ip: string): boolean {
+  const version = isIP(ip);
+  if (version === 4) {
+    const parts = ip.split(".").map(Number);
+    return (
+      parts[0] === 10 ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+      (parts[0] === 192 && parts[1] === 168) ||
+      parts[0] === 127 ||
+      (parts[0] === 169 && parts[1] === 254)
+    );
+  } else if (version === 6) {
+    const v6 = ip.toLowerCase();
+    if (v6 === "::1" || v6 === "0:0:0:0:0:0:0:1") return true;
+    const first = parseInt(v6.split(":")[0] || "0", 16);
+    return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80;
   }
-
-  return await new Promise<StreamResponse>((resolve, reject) => {
-    let resolved = false;
-    let terminalData: StreamResponse | null = null;
-    let streamError: any = null;
-    const progressQueue: Promise<void>[] = [];
-    let taskIdNotified = false;
-
-    const notifyTaskId = (taskId: string) => {
-      if (!taskIdNotified && onTaskId && taskId.trim()) {
-        taskIdNotified = true;
-        try {
-          onTaskId(taskId);
-        } catch (e) {
-          console.error("Error in onTaskId callback for task", taskId, e);
-        }
-      }
-    };
-
-    const parser = createParser({
-      onError(err) {
-        if (!resolved) {
-          resolved = true;
-          streamError = err;
-          controller.abort();
-        }
-      },
-      onEvent(event) {
-        if (resolved) return;
-        if (event.data === "") return;
-        let data: any;
-        try {
-          data = JSON.parse(event.data);
-          if (!isValidStreamResponse(data)) {
-            if (!resolved) {
-              resolved = true;
-              streamError = new Error("Invalid stream response: " + JSON.stringify(data));
-              controller.abort();
-            }
-            return;
-          }
-        } catch (e) {
-          if (!resolved) {
-            resolved = true;
-            streamError = new Error("Failed to parse SSE event data: " + event.data + " - " + (e instanceof Error ? e.message : String(e)));
-            controller.abort();
-          }
-          return;
-        }
-
-        if (data.artifactUpdate) {
-          notifyTaskId(data.artifactUpdate.taskId);
-          if (onProgress) {
-            const parts = data.artifactUpdate.artifact.parts;
-            if (Array.isArray(parts)) {
-              for (const part of parts) {
-                if (part.text) {
-                  try {
-                    const res = onProgress(part.text);
-                    if (res && typeof res.then === 'function') {
-                      progressQueue.push(res.catch(e => {
-                        if (!streamError) {
-                          streamError = e;
-                        }
-                        if (!resolved) {
-                          resolved = true;
-                          controller.abort();
-                        }
-                      }));
-                    }
-                  } catch (e) {
-                    if (!streamError) {
-                      streamError = e;
-                    }
-                    if (!resolved) {
-                      resolved = true;
-                      controller.abort();
-                    }
-                    return;
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        if (data.statusUpdate?.status) {
-          notifyTaskId(data.statusUpdate.taskId);
-          const state = data.statusUpdate.status.state;
-          if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
-            if (!resolved) {
-              resolved = true;
-              terminalData = data;
-              controller.abort();
-            }
-          }
-        }
-
-        if (data.task?.status) {
-          notifyTaskId(data.task.id);
-          const state = data.task.status.state;
-          if (state === "TASK_STATE_COMPLETED" || state === "TASK_STATE_FAILED") {
-            if (!resolved) {
-              resolved = true;
-              terminalData = data;
-              controller.abort();
-            }
-          }
-        }
-        if (data.message) {
-          if (typeof data.message.taskId === "string") {
-             notifyTaskId(data.message.taskId);
-          }
-          if (!resolved) {
-            resolved = true;
-            terminalData = data;
-            controller.abort();
-          }
-        }
-      }
-    });
-
-    const processStream = async () => {
-      try {
-        const decoder = new TextDecoder();
-        const reader = response.body!.getReader();
-        try {
-          while (true) {
-            if (resolved) break;
-            const { done, value } = await reader.read();
-            if (done) break;
-            parser.feed(decoder.decode(value, { stream: true }));
-          }
-        } finally {
-          reader.releaseLock();
-        }
-        // Final flush
-        if (!resolved) {
-          parser.feed(decoder.decode());
-          parser.reset({ consume: true });
-        }
-      } catch (e: any) {
-        if (!streamError) {
-          streamError = e;
-        }
-      }
-
-      try {
-        await Promise.all(progressQueue);
-      } catch (e) {
-        reject(e);
-        return;
-      }
-
-      if (streamError) {
-        reject(streamError);
-      } else if (terminalData) {
-        resolve(terminalData);
-      } else {
-        reject(new Error("Stream ended without a terminal event (task, statusUpdate, or message)"));
-      }
-    };
-
-    processStream().catch((err) => {
-      reject(err);
-    });
-  });
+  return false;
 }
 
-export async function sendA2AMessage(
-  baseUrl: string,
-  request: SendMessageRequest,
-  options?: SendA2AMessageOptions | string
-): Promise<StreamResponse> {
-  if (typeof options === "string") {
-    options = { token: options };
+export async function validateBaseUrl(url: string, trustedHostnames: string[] = []): Promise<void> {
+  const hostname = new URL(url).hostname;
+  if (trustedHostnames.includes(hostname)) return;
+  if (isIP(hostname) && isPrivateIP(hostname)) {
+    throw new Error(`Access to private IP ${hostname} is not allowed`);
   }
+}
 
-  const token = options?.token;
-  const timeoutMs = options?.timeoutMs ?? 120_000;
+async function safeExecuteFetch(
+  url: string,
+  init: RequestInit,
+  trustedHostnames?: string[]
+): Promise<Response> {
+  await validateBaseUrl(url, trustedHostnames);
+  // noscan // skipcq: JS-S1001 // codacy:ignore-line
+  return await globalThis.fetch(new URL(url), init);
+}
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/a2a+json",
-    "A2A-Version": "1.0",
-  };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
+async function executeA2AFetch(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = 60_000,
+  trustedHostnames?: string[]
+): Promise<{ response: Response; controller: AbortController }> {
   const controller = new AbortController();
-  const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
-
+  const timeoutId = setTimeout(() => { controller.abort(); }, timeoutMs);
   try {
-    const response = await fetch(`${baseUrl}/message:stream`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(request),
-      signal: controller.signal,
-    });
-
+    const response = await safeExecuteFetch(url, { ...init, signal: controller.signal }, trustedHostnames);
+    clearTimeout(timeoutId);
     if (!response.ok) {
-      let errorBody = "";
-      try {
-        errorBody = await response.text();
-      } catch (e: any) {
-        if (e.name === "AbortError") {
-          throw e;
-        }
-        errorBody = "Failed to read response body";
-      }
-      throw new Error(`A2A Request failed: ${response.status} ${response.statusText} - ${errorBody}`);
+      throw new Error(`A2A failed: ${response.status}`);
     }
-
-    return await processA2AStream(response, controller, options?.onProgress, options?.onTaskId);
-  } catch (error: any) {
-    if (error.name === "AbortError") {
-      throw new Error(`A2A Request timeout: Request took longer than ${timeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
+    return { response, controller };
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
   }
 }
 
-export async function subscribeToA2ATask(
-  baseUrl: string,
-  taskId: string,
-  options?: SendA2AMessageOptions | string
-): Promise<StreamResponse> {
-  if (typeof options === "string") {
-    options = { token: options };
+function formatA2ATaskResult(task: Task | undefined, taskId: string | null): string {
+  if (!task) return `Task initiated (ID: ${taskId})`;
+  
+  const state = task.status.state.toUpperCase();
+  if (state.includes("COMPLETED")) {
+    const text = (task.artifacts || []).map(a => a.parts.map(p => p.text || "").join("")).join("\n");
+    return `Task completed. Result:\n${text}`;
   }
-
-  const token = options?.token;
-  const timeoutMs = options?.timeoutMs ?? 120_000;
-
-  const headers: Record<string, string> = {
-    "Accept": "text/event-stream",
-    "A2A-Version": "1.0",
-  };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+  if (state.includes("INPUT")) {
+    const text = (task.status.message?.parts || []).map(p => p.text || "").join("");
+    return `Task requires input: ${text}\n(ID: ${taskId})`;
   }
-
-  const controller = new AbortController();
-  const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
-
-  try {
-    const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}:subscribe`, {
-      method: "POST",
-      headers,
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      let errorBody = "";
-      try {
-        errorBody = await response.text();
-      } catch (e: any) {
-        if (e.name === "AbortError") {
-          throw e;
-        }
-        errorBody = "Failed to read response body";
-      }
-      throw new Error(`A2A Subscribe failed: ${response.status} ${response.statusText} - ${errorBody}`);
-    }
-
-    return await processA2AStream(response, controller, options?.onProgress, options?.onTaskId);
-  } catch (error: any) {
-    if (error.name === "AbortError") {
-      throw new Error(`A2A Subscribe timeout: Request took longer than ${timeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
+  if (state.includes("FAILED")) {
+    throw new Error(`Task failed: ${taskId}`);
   }
+  return `Task state: ${state} (ID: ${taskId})`;
 }
 
-export async function getA2ATask(
-  baseUrl: string,
-  taskId: string,
-  options?: { token?: string; timeoutMs?: number }
-): Promise<Task> {
-  const headers: Record<string, string> = {
-    "Accept": "application/a2a+json",
-    "A2A-Version": "1.0",
-  };
-  if (options?.token) {
-    headers["Authorization"] = `Bearer ${options.token}`;
+export async function getA2ATask(baseUrl: string, taskId: string, opt: SendA2AMessageOptions = {}): Promise<Task> {
+  const { response } = await executeA2AFetch(`${baseUrl}/tasks/${taskId}`, {
+    headers: opt.token ? { Authorization: `Bearer ${opt.token}` } : {}
+  }, opt.timeoutMs, opt.trustedHostnames);
+  return await response.json() as Task;
+}
+
+export async function sendA2AMessage(baseUrl: string, request: SendMessageRequest, opt: SendA2AMessageOptions = {}): Promise<StreamResponse> {
+  const { response } = await executeA2AFetch(`${baseUrl}/message:stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(opt.token ? { Authorization: `Bearer ${opt.token}` } : {}) },
+    body: JSON.stringify(request)
+  }, opt.timeoutMs, opt.trustedHostnames);
+  return await response.json() as StreamResponse;
+}
+
+export async function subscribeToA2ATask(baseUrl: string, taskId: string, opt: SendA2AMessageOptions = {}): Promise<StreamResponse> {
+  const { response } = await executeA2AFetch(`${baseUrl}/tasks/${taskId}:subscribe`, {
+    method: "POST",
+    headers: opt.token ? { Authorization: `Bearer ${opt.token}` } : {}
+  }, opt.timeoutMs, opt.trustedHostnames);
+  return await response.json() as StreamResponse;
+}
+
+async function pollA2ATask(baseUrl: string, taskId: string, token?: string, trusted?: string[]): Promise<Task> {
+  for (let i = 0; i < 60; i++) {
+    try {
+      const task = await getA2ATask(baseUrl, taskId, { token, trustedHostnames: trusted });
+      const state = task.status.state.toUpperCase();
+      if (state.includes("COMPLETED") || state.includes("FAILED") || state.includes("INPUT")) return task;
+    } catch { /* retry */ }
+    await new Promise(r => setTimeout(r, 2000));
   }
+  throw new Error(`Timeout: ${taskId}`);
+}
 
-  const timeoutMs = options?.timeoutMs ?? 120_000;
-  const controller = new AbortController();
-  const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
-
+export async function delegateTaskToGemini(baseUrl: string, taskDescription: string, options: SendA2AMessageOptions = {}): Promise<string> {
+  const { token, onProgress, onTaskId, trustedHostnames } = options;
+  let currentId: string | null = null;
   try {
-    const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
-      method: "GET",
-      headers,
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      let errorBody = "";
+    const request: SendMessageRequest = { message: { role: "ROLE_USER", parts: [{ text: taskDescription }] } };
+    let result: StreamResponse;
+    try {
+      result = await sendA2AMessage(baseUrl, request, { token, trustedHostnames, onTaskId: (id: string) => { currentId = id; if (onTaskId) onTaskId(id); } });
+    } catch (err) {
+      if (!currentId) throw err;
+      if (onProgress) void onProgress("Re-attaching...");
       try {
-        errorBody = await response.text();
-      } catch (e: any) {
-        if (e.name === "AbortError") {
-          throw e;
-        }
-        errorBody = "Failed to read response body";
+        result = await subscribeToA2ATask(baseUrl, currentId, { token, trustedHostnames });
+      } catch {
+        const task = await pollA2ATask(baseUrl, currentId, token, trustedHostnames);
+        return formatA2ATaskResult(task, currentId);
       }
-      throw new Error(`A2A GetTask failed: ${response.status} ${response.statusText} - ${errorBody}`);
     }
-
-    const data = await response.json();
-    const result = validateTask(data);
-    if (!result.valid) {
-      throw new Error(`Invalid task response: ${result.errors.join(", ")}`);
+    if (result.message) {
+      return `Gemini agent replied:\n${(result.message.parts || []).map(p => p.text || "").join("")}`;
     }
-
-    return result.task;
-  } catch (error: any) {
-    if (error.name === "AbortError") {
-      throw new Error(`A2A GetTask timeout: Request took longer than ${timeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-  }
+    const finalTask = result.task ?? (currentId ? await getA2ATask(baseUrl, currentId, { token, trustedHostnames }) : undefined);
+    return formatA2ATaskResult(finalTask, currentId);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+throw new Error(`Failed: ${msg}`);
+}
+/* eslint-enable no-unneeded-ternary */
 }

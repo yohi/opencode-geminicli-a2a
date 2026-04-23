@@ -5,3 +5,4 @@ dist/
 diff.txt
 .opencode/
 !/.opencode/opencode.jsonc.example
+*.bak

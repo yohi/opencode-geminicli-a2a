@@ -4,6 +4,7 @@
   "main": "dist/index.js",
   "type": "module",
   "dependencies": {
+    "@ai-sdk/provider": "^3.0.8",
     "@opencode-ai/plugin": "^1.2.24",
     "eventsource-parser": "^3.0.6",
     "zod": "^3.23.0"

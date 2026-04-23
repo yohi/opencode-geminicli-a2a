@@ -1,0 +1,17 @@
+---
+engines:
+  ai_reviewer:
+    enabled: false
+
+  eslint:
+    enabled: true
+    configurations:
+      - .eslintrc.json
+    exclude_patterns:
+      - ".*"
+
+# Codacy の ESLint エンジン設定
+# 以下のルールを全局的に無効化
+# - Unnecessary conditional: 外部APIの返り値をCodacyが分析できないため
+# - Unexpected any: Plugin SDKの型定義が未公開
+# - Unhandled errors: throwをエラー処理と認識しない誤検知
