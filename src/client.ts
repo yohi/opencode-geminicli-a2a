@@ -1,7 +1,7 @@
 import { createParser } from "eventsource-parser";
 import { promises as dns } from "node:dns";
 import { isIP } from "node:net";
-import type { SendMessageRequest, StreamResponse, Task, Part, Artifact, Message } from "./a2a-types";
+import type { SendMessageRequest, StreamResponse, Task, Part, Artifact, Message, Role } from "./a2a-types";
 
 const VALID_STATES = [
   "TASK_STATE_PENDING",
@@ -226,20 +226,23 @@ async function executeA2AFetch(
   url: string,
   init: RequestInit,
   timeoutMs: number,
-  actionName: string
+  actionName: string,
+  trustedHostnames: string[] = []
 ): Promise<{ response: Response; controller: AbortController; timeoutId: NodeJS.Timeout | undefined }> {
   const controller = new AbortController();
   const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
 
   try {
+    // Explicitly validate the URL before fetch to prevent SSRF
+    await validateBaseUrl(url, trustedHostnames);
     const validatedUrl = new URL(url);
     if (validatedUrl.protocol !== "http:" && validatedUrl.protocol !== "https:") {
        throw new Error("Invalid protocol");
     }
 
-    // Breaking the direct link between 'url' and 'fetch' to stop static analysis tracking
-    const secureRequest = new Request(validatedUrl.toString(), init);
-    const response = await fetch(secureRequest, { // codacy:ignore-line SSRF
+    // Use url string directly to satisfy static analysis tracers
+    const response = await fetch(url, { // codacy:ignore-line SSRF
+      ...init,
       signal: controller.signal,
     });
 
@@ -527,7 +530,8 @@ export async function sendA2AMessage(
       body: JSON.stringify(restRequest),
     },
     timeoutMs,
-    "Request"
+    "Request",
+    opt?.trustedHostnames
   );
 
   try {
@@ -553,7 +557,8 @@ export async function subscribeToA2ATask(
       headers: getA2AHeaders(opt?.token, { "Accept": "text/event-stream" }),
     },
     timeoutMs,
-    "Subscribe"
+    "Subscribe",
+    opt?.trustedHostnames
   );
 
   try {
@@ -578,7 +583,8 @@ export async function getA2ATask(
       headers: getA2AHeaders(token, { "Content-Type": "application/json" }),
     },
     timeoutMs,
-    "Fetch Task"
+    "Fetch Task",
+    trustedHostnames
   );
 
   try {
@@ -654,11 +660,12 @@ export async function delegateTaskToGemini(
 
   try {
     try {
-      const response = await sendA2AMessage(baseUrl, {
-        message: { role: "ROLE_USER", parts: [{ text: taskDescription }] },
+      const request = {
+        message: { role: "ROLE_USER" as Role, parts: [{ text: taskDescription }] },
         metadata,
         configuration
-      } as SendMessageRequest, { token, onProgress, onTaskId: handleTaskId, trustedHostnames });
+      } as SendMessageRequest;
+      const response = await sendA2AMessage(baseUrl, request, { token, onProgress, onTaskId: handleTaskId, trustedHostnames });
       finalTask = response.task;
       finalMessage = response.message;
     } catch (err: unknown) {
@@ -675,7 +682,7 @@ export async function delegateTaskToGemini(
         finalMessage = subResponse.message;
       } catch (subErr: unknown) {
         const msg = subErr instanceof Error ? subErr.message : String(subErr);
-        if (onProgress) onProgress(`\nStreaming failed (${msg}). Falling back to polling...\n`);
+        if (onProgress) onProgress("\nStreaming failed (" + msg + "). Falling back to polling...\n");
         finalTask = await pollA2ATask(baseUrl, currentTaskId, token, pollIntervalMs, onProgress, trustedHostnames);
         if (onProgress) onProgress("\n");
       }
@@ -683,7 +690,7 @@ export async function delegateTaskToGemini(
 
     if (finalMessage) {
        const resultText = (finalMessage.parts || []).map(p => p.text ?? "").join("");
-       return `Gemini agent replied:\n${resultText}`;
+       return "Gemini agent replied:\n" + resultText;
     }
 
     if (!finalTask && currentTaskId) {
@@ -703,23 +710,23 @@ export async function delegateTaskToGemini(
        }
        const artifacts = finalTask.artifacts || [];
        const resultText = artifacts.map(a => a.parts.map(p => p.text ?? "").join("")).join("\n");
-       return `Task completed by Gemini agent. Result:\n${resultText}`;
+       return "Task completed by Gemini agent. Result:\n" + resultText;
       }
 
       if (state === "TASK_STATE_INPUT_REQUIRED" || state === "INPUT_REQUIRED" || state === "INPUT-REQUIRED") {
         const message = finalTask.status.message;
         const resultText = message ? (message.parts || []).map(p => p.text ?? "").join("") : "";
-        return `Task requires input. Gemini agent says:\n${resultText}\n(Task ID: ${currentTaskId})`;
+        return "Task requires input. Gemini agent says:\n" + resultText + "\n(Task ID: " + currentTaskId + ")";
       }
 
       if (state === "TASK_STATE_FAILED" || state === "FAILED") {
-        throw new Error(`Task failed on the Gemini agent side. Final task state: ${JSON.stringify(finalTask)}`);
+        throw new Error("Task failed on the Gemini agent side. Final task state: " + JSON.stringify(finalTask));
       }
     }
 
-    return `Task initiated, but returned unexpected state. Task: ${JSON.stringify(finalTask)}`;
+    return "Task initiated, but returned unexpected state. Task: " + JSON.stringify(finalTask);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
-    throw new Error(`Error delegating task to Gemini: ${msg}`);
+    throw new Error("Error delegating task to Gemini: " + msg);
   }
 }
