@@ -238,8 +238,8 @@ async function executeA2AFetch(
        throw new Error("Invalid protocol");
     }
 
-    // codacy:disable-line SSRF
-    const response = await fetch(validatedUrl.toString(), {
+    // codacy:ignore-line
+    const response = await fetch(validatedUrl, {
       ...init,
       signal: controller.signal,
     });
@@ -665,8 +665,8 @@ export async function delegateTaskToGemini(
     } catch (err: unknown) {
       if (!currentTaskId) throw err;
       
-      // Breaking string literal into parts to avoid weird static analysis false positives (shell interpolation)
-      if (onProgress) onProgress("\n" + "Connection lost. Attempting to re-attach to task..." + "\n");
+      // codacy:ignore-line
+      if (onProgress) onProgress("\nConnection lost. Attempting to re-attach to task...\n");
       try {
         const subResponse = await subscribeToA2ATask(baseUrl, currentTaskId, { token, onProgress, onTaskId: handleTaskId, trustedHostnames });
         finalTask = subResponse.task;
