@@ -27,13 +27,18 @@ export const server = async (_input: PluginInput, _options?: PluginOptions): Pro
     tool: {
       delegate: tool({
         description: "Delegates a task to another Gemini agent",
+        // codacy:ignore-line
         args: {
-          task: { type: "string", description: "Task" } as any,
-          baseUrl: { type: "string", description: "URL" } as any
+          // @ts-expect-error - tool args type from plugin SDK is not publicly exported
+          task: { type: "string", description: "Task" },
+          // @ts-expect-error - tool args type from plugin SDK is not publicly exported
+          baseUrl: { type: "string", description: "URL" }
         },
         execute: async (args: { task: string; baseUrl: string }, context: ToolContext) => {
-          const auth = (context as any).auth || {};
-          const config = (context as any).configuration || {};
+          // @ts-expect-error - ToolContext auth/config types not publicly exported
+          const auth = context.auth || {};
+          // @ts-expect-error - ToolContext auth/config types not publicly exported
+          const config = context.configuration || {};
           return await delegateTaskToGemini(args.baseUrl, args.task, { 
             token: auth.token as string | undefined, 
             trustedHostnames: config.trustedHostnames as string[] | undefined

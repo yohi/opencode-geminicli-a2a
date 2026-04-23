@@ -138,7 +138,7 @@ export async function delegateTaskToGemini(baseUrl: string, taskDescription: str
       result = await sendA2AMessage(baseUrl, request, { token, trustedHostnames, onTaskId: (id: string) => { currentId = id; if (onTaskId) onTaskId(id); } });
     } catch (err) {
       if (!currentId) throw err;
-      if (onProgress) onProgress("Re-attaching...");
+      if (onProgress) void onProgress("Re-attaching...");
       try {
         result = await subscribeToA2ATask(baseUrl, currentId, { token, trustedHostnames });
       } catch {

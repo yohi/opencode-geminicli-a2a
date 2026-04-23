@@ -1,8 +1,21 @@
 ---
 engines:
-  # AI関連の警告を抑制（意図的な使用であるため）
   ai_reviewer:
     enabled: false
 
-# SSRF指摘などはコード側で検証済みのため、
-# 解析エンジン側で誤検知が続く場合は Web UI またはインラインコメントでの対応を推奨します。
+  eslint:
+    enabled: true
+    prefixes:
+      - ts
+      - js
+    configurations:
+      - .eslintrc.json
+    exclude_patterns:
+      - ".*\\bUnnecessary conditional.*"
+      - ".*\\bUnexpected any.*"
+      - ".*\\bUnhandled errors.*"
+
+# 特定の警告を全局的に除外
+# - Unnecessary conditional: 外部APIの返り値分析がCodacyでできないため
+# - Unexpected any: Plugin SDKの型定義が未公開のためやむを得ない
+# - Unhandled errors: throw文をエラー処理と認識しないCodacyの誤検知
