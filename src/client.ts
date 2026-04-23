@@ -682,11 +682,6 @@ export async function delegateTaskToGemini(
   let finalTask: Task | undefined;
   let finalMessage: Message | undefined;
 
-  const handleTaskId = (id: string) => {
-    currentTaskId = id;
-    if (onTaskId) onTaskId(id);
-  };
-
   try {
     try {
       const request = {
@@ -694,7 +689,15 @@ export async function delegateTaskToGemini(
         metadata,
         configuration
       } as SendMessageRequest;
-      const sendOptions: SendA2AMessageOptions = { token, onProgress, onTaskId: handleTaskId, trustedHostnames };
+      const sendOptions: SendA2AMessageOptions = { 
+        token, 
+        onProgress, 
+        onTaskId: (id: string) => { 
+          currentTaskId = id; 
+          if (onTaskId) onTaskId(id); 
+        }, 
+        trustedHostnames 
+      };
       // noscan // skipcq: JS-S1001 // codacy:ignore-line
       const response = await sendA2AMessage(baseUrl, request, sendOptions);
       finalTask = response.task;
@@ -708,7 +711,15 @@ export async function delegateTaskToGemini(
         onProgress(" ");
       }
       try {
-        const subResponse = await subscribeToA2ATask(baseUrl, currentTaskId, { token, onProgress, onTaskId: handleTaskId, trustedHostnames });
+        const subResponse = await subscribeToA2ATask(baseUrl, currentTaskId, { 
+          token, 
+          onProgress, 
+          onTaskId: (id: string) => {
+            currentTaskId = id;
+            if (onTaskId) onTaskId(id);
+          }, 
+          trustedHostnames 
+        });
         finalTask = subResponse.task;
         finalMessage = subResponse.message;
       } catch (subErr: unknown) {

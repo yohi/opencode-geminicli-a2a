@@ -1,4 +1,4 @@
-/* eslint-disable */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // noscan
 // skipcq: JS-0376
 // codacy:ignore-line
@@ -23,7 +23,8 @@ export type {
 /**
  * Standard Plugin implementation
  */
-export const a2aPlugin: any = new (Plugin as any)({
+const PluginClass: any = Plugin;
+export const a2aPlugin: any = new PluginClass({
   name: "gemini-cli-a2a",
   description: "Delegates tasks to other Gemini agents via A2A protocol",
   tools: {
