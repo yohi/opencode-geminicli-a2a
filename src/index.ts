@@ -2,7 +2,7 @@
 // noscan
 // skipcq: JS-0376
 // codacy:ignore-line
-import { tool } from "@opencode-ai/plugin";
+import { tool, type ToolContext, type Hooks, type PluginInput, type PluginOptions } from "@opencode-ai/plugin";
 import { delegateTaskToGemini } from "./client";
 
 /**
@@ -22,7 +22,7 @@ export type {
 /**
  * Standard Plugin implementation
  */
-export const server = async (input: any): Promise<any> => {
+export const server = async (_input: PluginInput, _options?: PluginOptions): Promise<Hooks> => {
   return {
     tool: {
       delegate: tool({
@@ -31,12 +31,12 @@ export const server = async (input: any): Promise<any> => {
           task: { type: "string", description: "Task" } as any,
           baseUrl: { type: "string", description: "URL" } as any
         },
-        execute: async (args: any, context: any) => {
-          const auth = context?.auth || {};
-          const config = context?.configuration || {};
+        execute: async (args: { task: string; baseUrl: string }, context: ToolContext) => {
+          const auth = (context as any).auth || {};
+          const config = (context as any).configuration || {};
           return await delegateTaskToGemini(args.baseUrl, args.task, { 
-            token: auth.token, 
-            trustedHostnames: config.trustedHostnames 
+            token: auth.token as string | undefined, 
+            trustedHostnames: config.trustedHostnames as string[] | undefined
           });
         }
       })

@@ -58,7 +58,7 @@ async function executeA2AFetch(
   trustedHostnames?: string[]
 ): Promise<{ response: Response; controller: AbortController }> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutId = setTimeout(() => { controller.abort(); }, timeoutMs);
   try {
     const response = await safeExecuteFetch(url, { ...init, signal: controller.signal }, trustedHostnames);
     clearTimeout(timeoutId);
@@ -90,14 +90,14 @@ function formatA2ATaskResult(task: Task | undefined, taskId: string | null): str
   return `Task state: ${state} (ID: ${taskId})`;
 }
 
-export async function getA2ATask(baseUrl: string, taskId: string, opt: any = {}): Promise<Task> {
+export async function getA2ATask(baseUrl: string, taskId: string, opt: SendA2AMessageOptions = {}): Promise<Task> {
   const { response } = await executeA2AFetch(`${baseUrl}/tasks/${taskId}`, {
     headers: opt.token ? { Authorization: `Bearer ${opt.token}` } : {}
   }, opt.timeoutMs, opt.trustedHostnames);
   return await response.json() as Task;
 }
 
-export async function sendA2AMessage(baseUrl: string, request: SendMessageRequest, opt: any = {}): Promise<StreamResponse> {
+export async function sendA2AMessage(baseUrl: string, request: SendMessageRequest, opt: SendA2AMessageOptions = {}): Promise<StreamResponse> {
   const { response } = await executeA2AFetch(`${baseUrl}/message:stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(opt.token ? { Authorization: `Bearer ${opt.token}` } : {}) },
@@ -106,7 +106,7 @@ export async function sendA2AMessage(baseUrl: string, request: SendMessageReques
   return await response.json() as StreamResponse;
 }
 
-export async function subscribeToA2ATask(baseUrl: string, taskId: string, opt: any = {}): Promise<StreamResponse> {
+export async function subscribeToA2ATask(baseUrl: string, taskId: string, opt: SendA2AMessageOptions = {}): Promise<StreamResponse> {
   const { response } = await executeA2AFetch(`${baseUrl}/tasks/${taskId}:subscribe`, {
     method: "POST",
     headers: opt.token ? { Authorization: `Bearer ${opt.token}` } : {}
@@ -118,15 +118,17 @@ async function pollA2ATask(baseUrl: string, taskId: string, token?: string, trus
   for (let i = 0; i < 60; i++) {
     try {
       const task = await getA2ATask(baseUrl, taskId, { token, trustedHostnames: trusted });
-      const state = (task.status.state || "").toUpperCase();
-      if (state.includes("COMPLETED") || state.includes("FAILED") || state.includes("INPUT")) return task;
+      if (task.status.state) {
+        const state = task.status.state.toUpperCase();
+        if (state.includes("COMPLETED") || state.includes("FAILED") || state.includes("INPUT")) return task;
+      }
     } catch { /* retry */ }
     await new Promise(r => setTimeout(r, 2000));
   }
   throw new Error(`Timeout: ${taskId}`);
 }
 
-export async function delegateTaskToGemini(baseUrl: string, taskDescription: string, options: any = {}): Promise<string> {
+export async function delegateTaskToGemini(baseUrl: string, taskDescription: string, options: SendA2AMessageOptions = {}): Promise<string> {
   const { token, onProgress, onTaskId, trustedHostnames } = options;
   let currentId: string | null = null;
   try {
@@ -140,14 +142,17 @@ export async function delegateTaskToGemini(baseUrl: string, taskDescription: str
       try {
         result = await subscribeToA2ATask(baseUrl, currentId, { token, trustedHostnames });
       } catch {
-        return formatA2ATaskResult(await pollA2ATask(baseUrl, currentId, token, trustedHostnames), currentId);
+        const task = await pollA2ATask(baseUrl, currentId, token, trustedHostnames);
+        return formatA2ATaskResult(task, currentId);
       }
     }
     if (result.message) {
       return `Gemini agent replied:\n${(result.message.parts || []).map(p => p.text || "").join("")}`;
     }
-    return formatA2ATaskResult(result.task || (currentId ? await getA2ATask(baseUrl, currentId, { token, trustedHostnames }) : undefined), currentId);
-  } catch (error: any) {
-    throw new Error(`Failed: ${error.message}`);
+    const finalTask = result.task || (currentId ? await getA2ATask(baseUrl, currentId, { token, trustedHostnames }) : undefined);
+    return formatA2ATaskResult(finalTask, currentId);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed: ${msg}`);
   }
 }
