@@ -71,10 +71,16 @@ const stopFinishReason: LanguageModelV3FinishReason = {
   raw: "stop"
 };
 
-type PromptElement = { type: "text"; text: string } | { type: string; [key: string]: any };
+type TextPart = { type: "text"; text: string };
+type ContentPart = TextPart | { type: string; [key: string]: unknown };
 
-function isTextPart(part: any): part is { type: "text"; text: string } {
-  return part && part.type === "text" && typeof part.text === "string";
+function isTextPart(part: unknown): part is TextPart {
+  return (
+    typeof part === "object" &&
+    part !== null &&
+    (part as Record<string, unknown>).type === "text" &&
+    typeof (part as Record<string, unknown>).text === "string"
+  );
 }
 
 /**
@@ -90,7 +96,7 @@ function buildPrompt(prompt: LanguageModelV3CallOptions["prompt"]): string {
       if (typeof msg.content === "string") {
         content = msg.content;
       } else if (Array.isArray(msg.content)) {
-        content = msg.content
+        content = (msg.content as unknown[])
           .map((c) => {
             if (isTextPart(c)) return c.text;
             return "";

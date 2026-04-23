@@ -1,4 +1,9 @@
-export type A2ARoleNumeric = 0 | 1;
+export enum A2ARole {
+  USER = 0,
+  AGENT = 1
+}
+
+export type A2ARoleNumeric = A2ARole.USER | A2ARole.AGENT;
 export type Role = "ROLE_USER" | "ROLE_AGENT" | A2ARoleNumeric;
 
 export interface Part {

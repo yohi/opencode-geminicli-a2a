@@ -112,9 +112,9 @@ export interface SendA2AMessageOptions {
  * Validates if an IP address is in a private or reserved range for SSRF protection.
  */
 function isPrivateIP(ip: string): boolean {
-  // IPv4 Private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16
-  // IPv6 Private/Reserved: ::1, fc00::/7, fe80::/10
-  if (isIP(ip) === 4) {
+  const version = isIP(ip);
+  if (version === 4) {
+    // IPv4 Private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16
     const parts = ip.split(".").map(Number);
     return (
       parts[0] === 10 ||
@@ -123,12 +123,20 @@ function isPrivateIP(ip: string): boolean {
       parts[0] === 127 ||
       (parts[0] === 169 && parts[1] === 254)
     );
-  } else if (isIP(ip) === 6) {
+  } else if (version === 6) {
+    // IPv6 Private/Reserved: ::1, fc00::/7 (ULA), fe80::/10 (Link-local)
+    const v6 = ip.toLowerCase();
+    if (v6 === "::1" || v6 === "0:0:0:0:0:0:0:1") return true;
+
+    // Normalize and extract the first block
+    // Handling cases like "fe80::..." or "2001:db8:..."
+    const firstBlock = v6.split(":")[0] || "0";
+    const first = parseInt(firstBlock, 16);
+    if (isNaN(first)) return false;
+
     return (
-      ip === "::1" ||
-      ip.toLowerCase().startsWith("fc00:") ||
-      ip.toLowerCase().startsWith("fd00:") ||
-      ip.toLowerCase().startsWith("fe80:")
+      (first & 0xfe00) === 0xfc00 || // fc00::/7
+      (first & 0xffc0) === 0xfe80    // fe80::/10
     );
   }
   return false;
@@ -145,7 +153,8 @@ async function validateBaseUrl(baseUrl: string, trustedHostnames: string[] = [])
     }
 
     const hostname = url.hostname;
-    const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    // Standard local check
+    const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "0.0.0.0";
 
     // Enforce allowlist for external domains
     if (!isLocal) {
@@ -158,11 +167,13 @@ async function validateBaseUrl(baseUrl: string, trustedHostnames: string[] = [])
     }
     
     // Resolve DNS and check for private IPs for extra safety (DNS Rebinding prevention)
-    if (isIP(hostname)) {
+    const ipVersion = isIP(hostname);
+    if (ipVersion !== 0) {
       if (isPrivateIP(hostname) && !isLocal) {
          throw new Error(`Access to private IP address is disallowed: ${hostname}`);
       }
     } else {
+      // Use dns.lookup with { all: true } to check ALL resolved addresses
       const addresses = await dns.lookup(hostname, { all: true });
       if (addresses.length === 0) {
         throw new Error(`Hostname ${hostname} could not be resolved`);
@@ -355,14 +366,17 @@ async function processA2AStream(
             }
           }
 
-          const state = (statusUpdate.status.state || "").toLowerCase();
-          const isFinal = statusUpdate.status.final === true || 
-                          state === "task_state_completed" || 
-                          state === "task_state_failed" || 
-                          state === "completed" || 
-                          state === "failed";
+          const state = (statusUpdate.status.state || "").toString().toUpperCase();
+          const isTerminal = statusUpdate.status.final === true || 
+                          state === "TASK_STATE_COMPLETED" || 
+                          state === "TASK_STATE_FAILED" || 
+                          state === "TASK_STATE_INPUT_REQUIRED" ||
+                          state === "COMPLETED" || 
+                          state === "FAILED" ||
+                          state === "INPUT-REQUIRED" ||
+                          state === "INPUT_REQUIRED";
           
-          if (isFinal || state === "input-required") {
+          if (isTerminal) {
             if (!resolved) {
               resolved = true;
               terminalData = typedData;
@@ -373,13 +387,16 @@ async function processA2AStream(
 
         if (typedData.task?.status) {
           notifyTaskId(typedData.task.id);
-          const state = (typedData.task.status.state || "").toLowerCase();
-          const isFinal = typedData.task.status.final === true || 
-                          state === "task_state_completed" || 
-                          state === "task_state_failed" || 
-                          state === "completed" || 
-                          state === "failed";
-          if (isFinal) {
+          const state = (typedData.task.status.state || "").toString().toUpperCase();
+          const isTerminal = typedData.task.status.final === true || 
+                          state === "TASK_STATE_COMPLETED" || 
+                          state === "TASK_STATE_FAILED" || 
+                          state === "TASK_STATE_INPUT_REQUIRED" ||
+                          state === "COMPLETED" || 
+                          state === "FAILED" ||
+                          state === "INPUT-REQUIRED" ||
+                          state === "INPUT_REQUIRED";
+          if (isTerminal) {
             if (!resolved) {
               resolved = true;
               terminalData = typedData;
@@ -665,6 +682,12 @@ export async function delegateTaskToGemini(
        const artifacts = finalTask.artifacts || [];
        const resultText = artifacts.map(a => a.parts.map(p => p.text ?? "").join("")).join("\n");
        return `Task completed by Gemini agent. Result:\n${resultText}`;
+      }
+
+      if (state === "TASK_STATE_INPUT_REQUIRED" || state === "INPUT_REQUIRED" || state === "INPUT-REQUIRED") {
+        const message = finalTask.status.message;
+        const resultText = message ? (message.parts || []).map(p => p.text ?? "").join("") : "";
+        return `Task requires input. Gemini agent says:\n${resultText}\n(Task ID: ${currentTaskId})`;
       }
 
       if (state === "TASK_STATE_FAILED" || state === "FAILED") {
