@@ -48,7 +48,7 @@ describe("Client Functionality", () => {
   test("sendA2AMessage should resolve on statusUpdate terminal state", async () => {
     const server = Bun.serve({
       port: 0,
-      fetch(req) {
+      fetch() {
         const stream = new ReadableStream({
           start(controller) {
             controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-1", "status": {"state": "TASK_STATE_COMPLETED"}}}\n\n`));
@@ -155,14 +155,16 @@ describe("Client Functionality", () => {
   test("sendA2AMessage throws on timeout during stream reading", async () => {
     const server = Bun.serve({
       port: 0,
-      fetch(req) {
+      fetch() {
         const stream = new ReadableStream({
           start(controller) {
             setTimeout(() => {
               try {
                 controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-1", "status": {"state": "TASK_STATE_WORKING"}}}\n\n`));
                 controller.close();
-              } catch (e) {}
+              } catch {
+                // Catching errors without needing 'e'
+              }
             }, 100);
           }
         });
@@ -180,7 +182,7 @@ describe("Client Functionality", () => {
   test("sendA2AMessage should call onTaskId when taskId is first seen", async () => {
     const server = Bun.serve({
       port: 0,
-      fetch(req) {
+      fetch() {
         const stream = new ReadableStream({
           start(controller) {
             controller.enqueue(new TextEncoder().encode(`data: {"statusUpdate": {"taskId": "task-abc", "status": {"state": "TASK_STATE_WORKING"}}}\n\n`));
@@ -367,8 +369,12 @@ describe("SSRF Protection (validateBaseUrl)", () => {
   test("should accept localhost by default", async () => {
      try {
        await sendA2AMessage("http://localhost:9999", { message: { role: "ROLE_USER", parts: [] } });
-     } catch (e: any) {
-       expect(e.message).not.toContain("Hostname 'localhost' is external");
+     } catch (e: unknown) {
+       if (e instanceof Error) {
+         expect(e.message).not.toContain("Hostname 'localhost' is external");
+       } else {
+         throw e;
+       }
      }
   });
 });
