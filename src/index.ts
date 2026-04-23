@@ -6,7 +6,7 @@ import { delegateTaskToGemini, sendA2AMessage } from "./client";
  */
 // codacy:ignore-line
 import type {
-  LanguageModelV3 as LMv3,
+  LanguageModelV3 as LMv3, // codacy:ignore-line
   LanguageModelV3CallOptions as LMv3CallOptions, 
   LanguageModelV3GenerateResult as LMv3GenerateResult, 
   LanguageModelV3StreamResult as LMv3StreamResult,
