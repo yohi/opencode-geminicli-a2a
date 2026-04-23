@@ -4,9 +4,9 @@ import { delegateTaskToGemini, sendA2AMessage } from "./client";
  * Note: This package intentionally implements a provider for the Vercel AI SDK (@ai-sdk/provider).
  * This allows Gemini CLI A2A functionality to be used within the AI SDK ecosystem.
  */
-// codacy:ignore-line
+// skipcq: JS-0376
 import type {
-  LanguageModelV3 as LMv3, // codacy:ignore-line
+  LanguageModelV3 as LMv3, // skipcq: JS-0376
   LanguageModelV3CallOptions as LMv3CallOptions, 
   LanguageModelV3GenerateResult as LMv3GenerateResult, 
   LanguageModelV3StreamResult as LMv3StreamResult,
