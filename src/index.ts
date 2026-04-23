@@ -29,14 +29,13 @@ export const server = async (_input: PluginInput, _options?: PluginOptions): Pro
       delegate: tool({
         description: "Delegates a complex task to another Gemini agent that has specific capabilities",
         args: {
-          task: { type: "string", description: "The task description to delegate" } as any,
-          baseUrl: { type: "string", description: "The base URL of the target Gemini agent" } as any
+          task: { type: "string", description: "The task description to delegate" } as unknown as any,
+          baseUrl: { type: "string", description: "The base URL of the target Gemini agent" } as unknown as any
         },
         execute: async (args: { task: string; baseUrl: string }, context: ToolContext) => {
-          const ctx = context as any;
-          const token = ctx?.auth?.token as string | undefined;
-          const config = ctx?.configuration as any;
-          const trustedHostnames = (config?.trustedHostnames || []) as string[];
+          const ctx = context as unknown as { auth?: { token?: string }, configuration?: { trustedHostnames?: string[] } };
+          const token = ctx?.auth?.token;
+          const trustedHostnames = ctx?.configuration?.trustedHostnames || [];
           return await delegateTaskToGemini(args.baseUrl, args.task, { token, trustedHostnames });
         }
       })
