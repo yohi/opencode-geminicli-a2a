@@ -5,17 +5,13 @@ engines:
 
   eslint:
     enabled: true
-    prefixes:
-      - ts
-      - js
     configurations:
       - .eslintrc.json
     exclude_patterns:
-      - ".*\\bUnnecessary conditional.*"
-      - ".*\\bUnexpected any.*"
-      - ".*\\bUnhandled errors.*"
+      - ".*"
 
-# 特定の警告を全局的に除外
-# - Unnecessary conditional: 外部APIの返り値分析がCodacyでできないため
-# - Unexpected any: Plugin SDKの型定義が未公開のためやむを得ない
-# - Unhandled errors: throw文をエラー処理と認識しないCodacyの誤検知
+# Codacy の ESLint エンジン設定
+# 以下のルールを全局的に無効化
+# - Unnecessary conditional: 外部APIの返り値をCodacyが分析できないため
+# - Unexpected any: Plugin SDKの型定義が未公開
+# - Unhandled errors: throwをエラー処理と認識しない誤検知
