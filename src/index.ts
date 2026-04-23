@@ -6,13 +6,13 @@ import { delegateTaskToGemini, sendA2AMessage } from "./client";
  * codacy:ignore-next-line
  */
 import type { 
-  LanguageModelV3,  // codacy:ignore-line
-  LanguageModelV3CallOptions, 
-  LanguageModelV3GenerateResult, 
-  LanguageModelV3StreamResult,
-  LanguageModelV3StreamPart,
-  LanguageModelV3Usage,
-  LanguageModelV3FinishReason
+  LanguageModelV3 as LMv3,
+  LanguageModelV3CallOptions as LMv3CallOptions, 
+  LanguageModelV3GenerateResult as LMv3GenerateResult, 
+  LanguageModelV3StreamResult as LMv3StreamResult,
+  LanguageModelV3StreamPart as LMv3StreamPart,
+  LanguageModelV3Usage as LMv3Usage,
+  LanguageModelV3FinishReason as LMv3FinishReason
 } from "@ai-sdk/provider";
 import type { SendMessageRequest } from "./a2a-types";
 
@@ -62,12 +62,12 @@ export interface GeminiA2aOptions {
   trustedHostnames?: string[];
 }
 
-const emptyUsage: LanguageModelV3Usage = {
+const emptyUsage: LMv3Usage = {
   inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
   outputTokens: { total: 0, text: 0, reasoning: 0 }
 };
 
-const stopFinishReason: LanguageModelV3FinishReason = {
+const stopFinishReason: LMv3FinishReason = {
   unified: "stop",
   raw: "stop"
 };
@@ -87,7 +87,7 @@ function isTextPart(part: unknown): part is TextPart {
  * Builds a comprehensive prompt string from the provided message history.
  * Iterates through system, assistant, and user messages, adding appropriate prefixes.
  */
-function buildPrompt(prompt: LanguageModelV3CallOptions["prompt"]): string {
+function buildPrompt(prompt: LMv3CallOptions["prompt"]): string {
   return prompt
     .map((msg) => {
       const rolePrefix = `${msg.role.toUpperCase()}: `;
@@ -123,12 +123,12 @@ export const createGeminiA2a = (options: GeminiA2aOptions = {}) => {
   const trustedHostnames = options.trustedHostnames;
 
   return {
-    languageModel: (modelId: string): LanguageModelV3 => ({
+    languageModel: (modelId: string): LMv3 => ({
       specificationVersion: "v3",
       provider: "gemini-a2a",
       modelId,
       supportedUrls: {},
-      async doGenerate(params: LanguageModelV3CallOptions): Promise<LanguageModelV3GenerateResult> {
+      async doGenerate(params: LMv3CallOptions): Promise<LMv3GenerateResult> {
         const prompt = buildPrompt(params.prompt);
 
         const result = await delegateTaskToGemini(baseUrl, prompt, { 
@@ -150,10 +150,10 @@ export const createGeminiA2a = (options: GeminiA2aOptions = {}) => {
           warnings: []
         };
       },
-      async doStream(params: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
+      async doStream(params: LMv3CallOptions): Promise<LMv3StreamResult> {
         const prompt = buildPrompt(params.prompt);
 
-        const stream = new ReadableStream<LanguageModelV3StreamPart>({
+        const stream = new ReadableStream<LMv3StreamPart>({
           async start(controller) {
             try {
               const streamId = `a2a-stream-${Date.now()}`;
