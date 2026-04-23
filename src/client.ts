@@ -2,8 +2,7 @@ import { isIP } from "node:net";
 import type { 
   Task, 
   SendMessageRequest, 
-  StreamResponse,
-  Message
+  StreamResponse
 } from "./a2a-types";
 
 export interface SendA2AMessageOptions {
@@ -45,7 +44,7 @@ function isPrivateIP(ip: string): boolean {
 export async function validateBaseUrl(url: string, trustedHostnames: string[] = []): Promise<void> {
   const parsed = new URL(url);
   const hostname = parsed.hostname;
-  if (trustedHostnames.includes(hostname)) return;
+  if (trustedHostnames.indexOf(hostname) !== -1) return;
   if (isIP(hostname) && isPrivateIP(hostname)) {
     throw new Error(`Access to private IP ${hostname} is not allowed`);
   }
@@ -84,7 +83,7 @@ async function executeA2AFetch(
 
   try {
     const response = await safeExecuteFetch(url, { ...init, signal: controller.signal }, trustedHostnames);
-    if (timeoutId) clearTimeout(timeoutId);
+    if (typeof timeoutId !== "undefined") clearTimeout(timeoutId);
 
     if (!response.ok) {
       const body = await response.text().catch(() => "Failed to read body");
@@ -92,7 +91,7 @@ async function executeA2AFetch(
     }
     return { response, controller };
   } catch (err) {
-    if (timeoutId) clearTimeout(timeoutId);
+    if (typeof timeoutId !== "undefined") clearTimeout(timeoutId);
     throw err;
   }
 }
@@ -101,21 +100,23 @@ async function executeA2AFetch(
  * Helper to handle the final state of an A2A task and return the result string.
  */
 function formatA2ATaskResult(task: Task | undefined, taskId: string | null): string {
-  if (!task) return `Task initiated, but returned unexpected state. (ID: ${taskId})`;
+  if (typeof task === "undefined" || task === null) return `Task initiated, but returned unexpected state. (ID: ${taskId})`;
   
-  const state = (task.status.state || "").toString().toUpperCase();
+  const status = task.status;
+  const state = (status.state || "").toString().toUpperCase();
   
-  if (state === "TASK_STATE_COMPLETED" || state === "COMPLETED") {
+  if (state.indexOf("COMPLETED") !== -1) {
     const artifacts = task.artifacts || [];
     const text = artifacts.map(a => a.parts.map(p => p.text ?? "").join("")).join("\n");
     return `Task completed by Gemini agent. Result:\n${text}`;
   }
-  if (state === "TASK_STATE_INPUT_REQUIRED" || state === "INPUT_REQUIRED" || state === "INPUT-REQUIRED") {
-    const msg = task.status.message;
-    const text = msg ? (msg.parts || []).map(p => p.text ?? "").join("") : "";
+  if (state.indexOf("INPUT") !== -1) {
+    const msg = status.message;
+    const parts = (msg !== undefined && msg !== null) ? (msg.parts || []) : [];
+    const text = parts.map(p => p.text ?? "").join("");
     return `Task requires input. Gemini agent says:\n${text}\n(Task ID: ${taskId})`;
   }
-  if (state === "TASK_STATE_FAILED" || state === "FAILED") {
+  if (state.indexOf("FAILED") !== -1) {
     throw new Error(`Task failed: ${JSON.stringify(task)}`);
   }
   return `Task state: ${state}. Task ID: ${taskId}`;
@@ -171,7 +172,7 @@ async function pollA2ATask(
     try {
       const task = await getA2ATask(baseUrl, taskId, { token, trustedHostnames });
       const state = (task.status.state || "").toString().toUpperCase();
-      const isDone = state.includes("COMPLETED") || state.includes("FAILED") || state.includes("INPUT");
+      const isDone = state.indexOf("COMPLETED") !== -1 || state.indexOf("FAILED") !== -1 || state.indexOf("INPUT") !== -1;
       if (isDone) {
         return task;
       }
@@ -180,7 +181,7 @@ async function pollA2ATask(
     }
     await new Promise(r => setTimeout(r, interval));
   }
-  throw new Error(`Polling timed out for ${taskId}`);
+  return Promise.reject(new Error(`Polling timed out for ${taskId}`));
 }
 
 export async function delegateTaskToGemini(
@@ -210,7 +211,9 @@ export async function delegateTaskToGemini(
         onTaskId: (id) => { currentId = id; if (onTaskId) onTaskId(id); }
       });
     } catch (err) {
-      if (!currentId) throw err;
+      if (currentId === null) {
+        throw err;
+      }
       if (onProgress) onProgress("Connection lost. Re-attaching...");
       try {
         result = await subscribeToA2ATask(baseUrl, currentId, { token, trustedHostnames });
@@ -221,14 +224,23 @@ export async function delegateTaskToGemini(
     }
 
     const msg = result.message;
-    if (msg) {
+    if (typeof msg !== "undefined" && msg !== null) {
       const parts = msg.parts || [];
       const text = parts.map(p => p.text ?? "").join("");
       return `Gemini agent replied:\n${text}`;
     }
 
-    const finalTask = result.task || (currentId ? await getA2ATask(baseUrl, currentId, { token, trustedHostnames }) : undefined);
-    return formatA2ATaskResult(finalTask, currentId);
+    const finalTask = result.task;
+    if (typeof finalTask !== "undefined" && finalTask !== null) {
+      return formatA2ATaskResult(finalTask, currentId);
+    }
+    
+    if (currentId !== null) {
+      const task = await getA2ATask(baseUrl, currentId, { token, trustedHostnames });
+      return formatA2ATaskResult(task, currentId);
+    }
+
+    return formatA2ATaskResult(undefined, currentId);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Delegation failed: ${message}`);
